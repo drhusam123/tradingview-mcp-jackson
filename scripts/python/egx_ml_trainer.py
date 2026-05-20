@@ -3701,35 +3701,56 @@ def phase51_tomorrow_forecast():
     print(f"[Ph51] OOS Accuracy={acc:.3f}  AUC_OVR={auc_ovr:.3f}", flush=True)
 
     # ── 7. Train final model ──────────────────────────────────────────────────
-    raw_model = lgb.LGBMClassifier(**BASE_PARAMS)
-    raw_model.fit(X_scaled, y)
+    # Split: IS (80%) for training, cal (20%) for calibration — time-aware
+    cal_start   = int(len(X_scaled) * 0.80)
+    X_is        = X_scaled[:cal_start];  y_is  = y[:cal_start]
+    X_cal       = X_scaled[cal_start:];  y_cal = y[cal_start:]
 
-    # ── 8. Isotonic probability calibration ───────────────────────────────────
-    # Split off 20% for calibration (time-aware: latest 20% as cal set)
-    cal_start = int(len(X_scaled) * 0.80)
-    X_cal, y_cal = X_scaled[cal_start:], y[cal_start:]
+    # Train on IS split only (preserves cal set as true holdout for calibration)
+    raw_model = lgb.LGBMClassifier(**BASE_PARAMS)
+    raw_model.fit(X_is, y_is)
+
+    # Also train on full data for final raw model (used if calibration fails)
+    raw_model_full = lgb.LGBMClassifier(**BASE_PARAMS)
+    raw_model_full.fit(X_scaled, y)
+
+    # ── 8. Isotonic probability calibration via prefit ────────────────────────
+    # Use cv='prefit': calibrates the EXISTING raw_model on the holdout cal set
+    # — no re-training, calibrator sees truly fresh data.
     calibrated = False
-    final_model = raw_model
+    final_model = raw_model_full  # default: use full-data model
 
     if len(X_cal) >= 30:
         try:
-            cal_model = CalibratedClassifierCV(
-                lgb.LGBMClassifier(**BASE_PARAMS),
-                method='isotonic', cv=3
-            )
-            cal_model.fit(X_scaled, y)
-            # Measure calibration gain via ECE (Expected Calibration Error) proxy
-            raw_probs  = raw_model.predict_proba(X_cal)
-            cal_probs  = cal_model.predict_proba(X_cal)
             from sklearn.metrics import log_loss as sk_log_loss
-            raw_ll     = sk_log_loss(y_cal, raw_probs)
-            cal_ll     = sk_log_loss(y_cal, cal_probs)
-            if cal_ll < raw_ll:       # calibration helps
+            from sklearn.calibration import CalibratedClassifierCV as _CCV
+
+            raw_probs = raw_model.predict_proba(X_cal)
+            raw_ll    = sk_log_loss(y_cal, raw_probs)
+
+            # Prefit calibration — fits sigmoid on raw_model's holdout probabilities
+            cal_model = _CCV(raw_model, method='sigmoid', cv='prefit')
+            cal_model.fit(X_cal, y_cal)
+            cal_probs = cal_model.predict_proba(X_cal)
+            cal_ll    = sk_log_loss(y_cal, cal_probs)
+
+            if cal_ll < raw_ll:
                 final_model = cal_model
                 calibrated  = True
-                print(f"[Ph51] Isotonic calibration: raw_ll={raw_ll:.4f} → cal_ll={cal_ll:.4f} ✓", flush=True)
+                print(f"[Ph51] Calibration (sigmoid/prefit): raw={raw_ll:.4f} → cal={cal_ll:.4f} ✓", flush=True)
             else:
-                print(f"[Ph51] Isotonic calibration: no improvement ({cal_ll:.4f} ≥ {raw_ll:.4f}), keeping raw", flush=True)
+                # Try isotonic as fallback
+                cal_iso = _CCV(raw_model, method='isotonic', cv='prefit')
+                cal_iso.fit(X_cal, y_cal)
+                iso_probs = cal_iso.predict_proba(X_cal)
+                iso_ll    = sk_log_loss(y_cal, iso_probs)
+                if iso_ll < raw_ll:
+                    final_model = cal_iso
+                    calibrated  = True
+                    print(f"[Ph51] Calibration (isotonic/prefit): raw={raw_ll:.4f} → iso={iso_ll:.4f} ✓", flush=True)
+                else:
+                    # Neither helped — use full-data raw model
+                    print(f"[Ph51] Calibration: no improvement (raw={raw_ll:.4f} sig={cal_ll:.4f} iso={iso_ll:.4f}), using full-data raw", flush=True)
         except Exception as e:
             print(f"[Ph51] Calibration failed ({e}), using raw model", flush=True)
     else:
@@ -3764,6 +3785,9 @@ def phase51_tomorrow_forecast():
     exp_move_hi = (p_up   * (np.percentile(up_rets,   80) if len(up_rets)   else 1.0)
                  + p_flat * _cond(flat_rets, 0.0)
                  + p_down * (np.percentile(down_rets,  20) if len(down_rets) else -0.8))
+    # Ensure lo ≤ hi (can swap when p_down is large and down distribution is wide)
+    if exp_move_lo > exp_move_hi:
+        exp_move_lo, exp_move_hi = exp_move_hi, exp_move_lo
 
     # Volatility regime + gap-up probability
     try:
