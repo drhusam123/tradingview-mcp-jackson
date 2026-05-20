@@ -532,15 +532,16 @@ def cmd_run(quick=False):
     except Exception:
         pass
 
-    # ── Step 19h (Deep): Ph77 — tsfresh Symbol Features (~5s) ───────────────────
-    # استخراج خفيف يومي لميزات tsfresh لأعلى الأسهم احتمالاً (extract_symbols فقط).
-    # الاستخراج الثقيل (extract_explosions) يُشغَّل أسبوعياً فقط في weekly_deep.
+    # ── Step 19h (Deep): Ph77 — tsfresh Daily Store (~1s) ────────────────────────
+    # كل ليلة: يحسب 10 مميزات إحصائية لكل 253 رمز ويخزنها في tsfresh_daily.
+    # بعد 30 يوم، يُصبح Ph55 يستخدم هذه المميزات تلقائياً في التدريب.
+    # الاستخراج الثقيل (extract_explosions) يُشغَّل أسبوعياً في weekly_deep.
     if not quick:
         try:
             rc77n, out77n, _, dur77n = run_script(
                 "tsfresh_features.py",
-                "extract_symbols",
-                '{"min_prob":0.65,"max_syms":15,"lookback":20}',
+                "daily_store",
+                '{"lookback":20}',
                 timeout=60,
             )
             _ph77n_status = get_script_status(rc77n)
@@ -548,22 +549,23 @@ def cmd_run(quick=False):
             try:
                 for line in reversed(out77n.splitlines()):
                     line = line.strip()
-                    if line.startswith('{') and '"n_symbols"' in line:
+                    if line.startswith('{') and '"n_stored"' in line:
                         _ph77n_info = json.loads(line)
                         break
             except Exception:
                 pass
-            step_results['tsfresh_symbols'] = {
+            step_results['tsfresh_daily'] = {
                 'status':    _ph77n_status,
                 'duration':  round(dur77n, 1),
-                'n_symbols': _ph77n_info.get('n_symbols'),
-                'n_features_top': _ph77n_info.get('n_features_top'),
+                'n_stored':  _ph77n_info.get('n_stored'),
+                'n_skipped': _ph77n_info.get('n_skipped'),
+                'trade_date':_ph77n_info.get('trade_date'),
             }
-            print(f"[night_lab] 🔬 Ph77 tsfresh: {_ph77n_status} "
-                  f"syms={_ph77n_info.get('n_symbols','?')} "
-                  f"feats={_ph77n_info.get('n_features_top','?')} ({dur77n:.1f}s)", flush=True)
+            print(f"[night_lab] 🔬 Ph77 tsfresh_daily: {_ph77n_status} "
+                  f"stored={_ph77n_info.get('n_stored','?')} "
+                  f"skipped={_ph77n_info.get('n_skipped','?')} ({dur77n:.1f}s)", flush=True)
         except Exception as e77n:
-            step_results['tsfresh_symbols'] = {'status': f'exception:{e77n}', 'duration': 0}
+            step_results['tsfresh_daily'] = {'status': f'exception:{e77n}', 'duration': 0}
             print(f"[night_lab] Ph77: skipped ({e77n})", flush=True)
 
     # ── Step 20: Ph47 — QMC Portfolio Risk (Sobol sequences) ─────────────────

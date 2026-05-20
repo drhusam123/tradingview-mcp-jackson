@@ -7070,7 +7070,13 @@ _PH55_FEATURES = [
     # Ph57 Closing Pressure features
     'cp_close_pos', 'cp_vol_surge', 'cp_pressure',
     'cp_gap_potential', 'cp_reversal',
+    # Ph77 tsfresh statistical features (added when tsfresh_daily has ≥30 days)
+    'ts_autocorr1', 'ts_entropy', 'ts_skew', 'ts_kurtosis', 'ts_vol_std',
 ]
+
+# Ph77 features — only added to training if tsfresh_daily has ≥30 days of data
+_PH77_FEATURES = ['ts_autocorr1', 'ts_entropy', 'ts_skew', 'ts_kurtosis', 'ts_vol_std']
+_PH77_MIN_DAYS  = 30   # minimum days of tsfresh_daily data required
 
 _HPO55_CACHE_PATH = MODELS / 'phase55_hpo_params.json'
 
@@ -7318,6 +7324,38 @@ def phase55_stock_forecast():
     ohlcv['cp_pressure']      = ohlcv['cp_pressure'].fillna(0.5)
     ohlcv['cp_gap_potential'] = ohlcv['cp_gap_potential'].fillna(0)
     ohlcv['cp_reversal']      = ohlcv['cp_reversal'].fillna(0)
+
+    # ── 5d. Ph77 tsfresh statistical features ─────────────────────────────────
+    _use_ph77 = False
+    try:
+        _n_ts_dates = conn.execute(
+            "SELECT COUNT(DISTINCT trade_date) FROM tsfresh_daily"
+        ).fetchone()[0]
+        if _n_ts_dates >= _PH77_MIN_DAYS:
+            ts77 = pd.read_sql_query("""
+                SELECT symbol, trade_date,
+                       feat_autocorr1 AS ts_autocorr1,
+                       feat_entropy   AS ts_entropy,
+                       feat_skew      AS ts_skew,
+                       feat_kurtosis  AS ts_kurtosis,
+                       vol_std        AS ts_vol_std
+                FROM tsfresh_daily
+            """, conn)
+            ts77['trade_date'] = pd.to_datetime(ts77['trade_date'])
+            ohlcv = ohlcv.merge(ts77, on=['symbol', 'trade_date'], how='left')
+            _use_ph77 = True
+            print(f"[Ph55] Ph77 tsfresh features joined: {_n_ts_dates} dates available", flush=True)
+        else:
+            print(f"[Ph55] Ph77 skipped: only {_n_ts_dates}/{_PH77_MIN_DAYS} tsfresh_daily dates", flush=True)
+    except Exception as _ts_e:
+        print(f"[Ph55] Ph77 join failed: {_ts_e}", flush=True)
+
+    if not _use_ph77:
+        for _tf in _PH77_FEATURES:
+            ohlcv[_tf] = 0.0
+
+    for _tf in _PH77_FEATURES:
+        ohlcv[_tf] = ohlcv[_tf].fillna(0.0)
 
     # ── 6. Build training labels (next-day return) ─────────────────────────────
     print("[Ph55] Building training labels …", flush=True)
