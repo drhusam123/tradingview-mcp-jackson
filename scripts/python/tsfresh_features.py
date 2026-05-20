@@ -459,13 +459,15 @@ def cmd_daily_store(params):
         feat_std     = float(np.std(arr))   if len(arr) > 1 else 0.0
         feat_median  = float(np.median(arr))
         feat_energy  = float(np.sum(arr ** 2))
-        # Sample entropy approximation via autocorrelation structure
+        # Autocorrelation at lag 1 (momentum persistence, bounded -1..1)
         feat_autocorr1 = float(np.corrcoef(arr[:-1], arr[1:])[0, 1]) if len(arr) > 2 else 0.0
         feat_skew    = float(pd.Series(arr).skew()) if len(arr) > 2 else 0.0
         feat_kurtosis= float(pd.Series(arr).kurtosis()) if len(arr) > 2 else 0.0
-        # Approx entropy via coefficient of variation of changes
+        # Entropy = CV of |changes| (stable: std_of_changes / mean_of_|changes|)
+        # Bounded ~0-10: low = consistent trend, high = erratic/choppy market
         changes = np.diff(arr)
-        feat_entropy = float(np.std(changes) / (np.abs(np.mean(changes)) + 1e-10)) \
+        mean_abs_change = float(np.mean(np.abs(changes))) + 1e-10
+        feat_entropy = float(np.std(changes) / mean_abs_change) \
                        if len(changes) > 1 else 0.0
         # volume-based features
         vol_mean = float(np.mean(vol_arr))

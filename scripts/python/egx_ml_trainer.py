@@ -3225,6 +3225,33 @@ def _load_breadth_for_ph51(conn) -> 'pd.DataFrame | None':
                              ('mkt_reversal_pct', 0.0)]:
             enh[_col] = enh[_col].fillna(_fill)
 
+        # ── Ph77 tsfresh market-level aggregates ──────────────────────────────
+        try:
+            n_ts51 = conn.execute("SELECT COUNT(DISTINCT trade_date) FROM tsfresh_daily").fetchone()[0]
+            if n_ts51 >= 30:
+                ts_agg = pd.read_sql_query("""
+                    SELECT trade_date,
+                           AVG(feat_autocorr1) AS mkt_ts_autocorr1,
+                           AVG(feat_entropy)   AS mkt_ts_entropy,
+                           AVG(feat_skew)      AS mkt_ts_skew,
+                           AVG(vol_std / NULLIF(vol_mean, 0)) AS mkt_ts_vol_cv
+                    FROM tsfresh_daily
+                    GROUP BY trade_date
+                    ORDER BY trade_date
+                """, conn)
+                ts_agg['trade_date'] = pd.to_datetime(ts_agg['trade_date'])
+                enh = enh.merge(ts_agg, on='trade_date', how='left')
+            else:
+                raise ValueError(f"only {n_ts51} tsfresh dates")
+        except Exception:
+            enh['mkt_ts_autocorr1'] = 0.75
+            enh['mkt_ts_entropy']   = 2.0
+            enh['mkt_ts_skew']      = 0.0
+            enh['mkt_ts_vol_cv']    = 1.0
+        for _col, _fill in [('mkt_ts_autocorr1', 0.75), ('mkt_ts_entropy', 2.0),
+                             ('mkt_ts_skew', 0.0),       ('mkt_ts_vol_cv', 1.0)]:
+            enh[_col] = enh[_col].fillna(_fill)
+
         enh.attrs['source'] = 'market_breadth_enhanced'
         return enh
 
@@ -3364,6 +3391,32 @@ def _load_breadth_for_ph51(conn) -> 'pd.DataFrame | None':
     for _col, _fill in [('mkt_close_pos_med', 0.5), ('mkt_cp_pressure_med', 0.5),
                          ('mkt_vol_surge_med', 1.0), ('mkt_gap_pct', 0.0),
                          ('mkt_reversal_pct', 0.0)]:
+        daily[_col] = daily[_col].fillna(_fill)
+
+    # ── Ph77 tsfresh market-level aggregates (slow path) ─────────────────────
+    try:
+        n_ts51s = conn.execute("SELECT COUNT(DISTINCT trade_date) FROM tsfresh_daily").fetchone()[0]
+        if n_ts51s >= 30:
+            ts_agg_s = pd.read_sql_query("""
+                SELECT trade_date,
+                       AVG(feat_autocorr1) AS mkt_ts_autocorr1,
+                       AVG(feat_entropy)   AS mkt_ts_entropy,
+                       AVG(feat_skew)      AS mkt_ts_skew,
+                       AVG(vol_std / NULLIF(vol_mean, 0)) AS mkt_ts_vol_cv
+                FROM tsfresh_daily
+                GROUP BY trade_date ORDER BY trade_date
+            """, conn)
+            ts_agg_s['trade_date'] = pd.to_datetime(ts_agg_s['trade_date'])
+            daily = daily.merge(ts_agg_s, on='trade_date', how='left')
+        else:
+            raise ValueError(f"only {n_ts51s} tsfresh dates")
+    except Exception:
+        daily['mkt_ts_autocorr1'] = 0.75
+        daily['mkt_ts_entropy']   = 2.0
+        daily['mkt_ts_skew']      = 0.0
+        daily['mkt_ts_vol_cv']    = 1.0
+    for _col, _fill in [('mkt_ts_autocorr1', 0.75), ('mkt_ts_entropy', 2.0),
+                         ('mkt_ts_skew', 0.0),       ('mkt_ts_vol_cv', 1.0)]:
         daily[_col] = daily[_col].fillna(_fill)
 
     daily.attrs['source'] = 'ohlcv_history'
@@ -3532,6 +3585,8 @@ def phase51_tomorrow_forecast():
         # Ph57 Closing Pressure — market-level aggregates
         'mkt_close_pos_med', 'mkt_cp_pressure_med', 'mkt_vol_surge_med',
         'mkt_gap_pct', 'mkt_reversal_pct',
+        # Ph77 tsfresh — market-level statistical dynamics
+        'mkt_ts_autocorr1', 'mkt_ts_entropy', 'mkt_ts_skew', 'mkt_ts_vol_cv',
     ]
 
     df_train = daily.dropna(subset=FEATURE_COLS + ['next_mkt_ret']).copy()
