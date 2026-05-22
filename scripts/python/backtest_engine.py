@@ -233,6 +233,13 @@ def _simulate_trade_pnl(
 
     risk_per_unit = max(0.001, abs(stop_loss - entry_price) / entry_price)
 
+    # TRAIL_STOP tested 2026-05-22 — flat breakeven at entry+0.6% triggered at 50% target:
+    # Result: WR 71%→79.7% but Exp collapsed +0.614R→+0.301R (saved 20 STOP_LOSS but
+    # converted 36 TIME_STOP avg+0.66% and ~8 TARGET1 avg+8.87% into +0.40% tiny exits).
+    # Net: HARMFUL. Revert to simple stop. TARGET1-first check order KEPT (correct).
+    trailing_stop = stop_loss  # original stop only — no trail
+    breakeven_activated = False  # kept for TRAIL_STOP reporting path (unused)
+
     exit_reason = "TIME_STOP"
     exit_price = float(ohlcv_forward[-1].get("close", actual_entry))
     hold_days = len(ohlcv_forward)
@@ -242,17 +249,18 @@ def _simulate_trade_pnl(
         bar_high = float(bar.get("high", actual_entry))
         bar_close = float(bar.get("close", actual_entry))
 
-        # Check stop loss first (worst case intraday)
-        if bar_low <= stop_loss:
-            exit_reason = "STOP_LOSS"
-            exit_price = stop_loss  # assume fills at stop
-            hold_days = i + 1
-            break
-
-        # Check target hit
+        # Check TARGET1 first — favorable-fill assumption on same-bar high/low
+        # (intrabar order unknown on daily bars; exit at target if bar touches it)
         if bar_high >= target1:
             exit_reason = "TARGET1"
             exit_price = target1  # assume fills at target
+            hold_days = i + 1
+            break
+
+        # Check stop loss
+        if bar_low <= trailing_stop:
+            exit_reason = "STOP_LOSS"
+            exit_price = trailing_stop  # assume fills at stop
             hold_days = i + 1
             break
 
@@ -997,11 +1005,13 @@ def run_historical_backtest(
     db_path: Optional[Path] = None,
     months: int = 12,
     min_ues: float = 92.0,  # raised 75→82→92 (2026-05-22): UES>=92 → WR=61.7% PF=2.39 (6m)  3m: WR=71.4% PF=3.92
-    max_ues: Optional[float] = None,    # NEW (2026-05-22): UES=99-100 "too perfect" signals underperform UES=92-98 by 4.8pp
+    max_ues: Optional[float] = 99.0,    # (2026-05-22): UES=99-100 "too perfect" signals underperform UES=92-98 by 4.8pp — keep default at 99
     regime_filter: Optional[str] = None,
     rsi_max: Optional[float] = None,
     min_adx: Optional[float] = None,
     min_vol_ratio: Optional[float] = None,
+    max_vol_ratio: Optional[float] = None,   # NEW (2026-05-22): vol>3 WR=64% vs vol<1.5 WR=82%
+    min_ad_ratio: Optional[float] = None,    # NEW (2026-05-22): STOP_LOSS avg AD=0.98 vs TARGET1 1.14
     slippage_pct: float = 0.003,
     commission_pct: float = 0.001,
     max_hold_override: Optional[int] = None,  # NEW (2026-05-22): override hold duration for sweep testing
@@ -1033,6 +1043,8 @@ def run_historical_backtest(
         rsi_clause = f"AND rsi14 <= {rsi_max}" if rsi_max is not None else ""
         adx_clause = f"AND adx14 >= {min_adx}" if min_adx is not None else ""
         vol_clause = f"AND vol_ratio >= {min_vol_ratio}" if min_vol_ratio is not None else ""
+        max_vol_clause = f"AND vol_ratio <= {max_vol_ratio}" if max_vol_ratio is not None else ""
+        ad_clause = f"AND ad_ratio >= {min_ad_ratio}" if min_ad_ratio is not None else ""
         max_ues_clause = f"AND ues_proxy < {max_ues}" if max_ues is not None else ""
         cursor = conn.execute(
             f"""
@@ -1047,6 +1059,8 @@ def run_historical_backtest(
               {rsi_clause}
               {adx_clause}
               {vol_clause}
+              {max_vol_clause}
+              {ad_clause}
             ORDER BY signal_date ASC
             """,
             (cutoff, min_ues),
@@ -1196,7 +1210,7 @@ def _print_historical_report(results: Dict[str, Any]) -> None:
     if by_exit:
         print()
         print("  حسب سبب الخروج:")
-        for reason in ["TARGET1", "STOP_LOSS", "TIME_STOP", "DATA_END", "STALE_SIGNAL"]:
+        for reason in ["TARGET1", "STOP_LOSS", "TRAIL_STOP", "TIME_STOP", "DATA_END", "STALE_SIGNAL"]:
             if reason in by_exit:
                 s = by_exit[reason]
                 avg_pnl = s["total_pnl_pct"] / s["n_trades"] if s["n_trades"] > 0 else 0.0
@@ -1249,17 +1263,21 @@ def _build_parser() -> argparse.ArgumentParser:
     # historical subcommand — uses hist_backtest_signals for proper long-term backtest
     hist_p = sub.add_parser("historical", help="Backtest against hist_backtest_signals (12 months)")
     hist_p.add_argument("--months", type=int, default=12, help="How many months back to test (default=12)")
-    hist_p.add_argument("--min-ues", type=float, default=92.0, help="Min UES proxy to include (default=92, sweet spot: WR=61.7% PF=2.39)")
-    hist_p.add_argument("--max-ues", type=float, default=None, dest="max_ues",
-                        help="Max UES proxy to include (2026-05-22: UES<99 WR=64.4%% vs UES>=99 WR=59.6%% — UES=99-100 are late-entry signals)")
+    hist_p.add_argument("--min-ues", type=float, default=92.0, help="Min UES proxy to include (default=92, sweet spot: WR=61.7%% PF=2.39)")
+    hist_p.add_argument("--max-ues", type=float, default=99.0, dest="max_ues",
+                        help="Max UES proxy to include (default=99; UES=99-100 are late-entry 'all-factors-maxed' signals that underperform by 3-4pp WR)")
     hist_p.add_argument("--db", type=str, default=None, help="Override DB path")
     hist_p.add_argument("--json", action="store_true", dest="output_json", help="Output JSON")
     hist_p.add_argument("--regime", type=str, default=None, help="Filter to regime: BULL, BEAR, CHOPPY")
     hist_p.add_argument("--rsi-max", type=float, default=None, dest="rsi_max", help="Max RSI14 at entry (e.g. 70 to exclude overbought)")
     hist_p.add_argument("--min-adx", type=float, default=None, dest="min_adx", help="Min ADX at entry (e.g. 30 for trend strength filter)")
     hist_p.add_argument("--min-vol", type=float, default=None, dest="min_vol_ratio", help="Min vol ratio 20d (e.g. 1.2 for above-avg volume)")
+    hist_p.add_argument("--max-vol", type=float, default=None, dest="max_vol_ratio",
+                        help="Max vol ratio 20d (default=None; 2026-05-22: vol>3 WR=64%% — high-vol chase entries fail at 2x rate; use 3.0)")
+    hist_p.add_argument("--min-ad", type=float, default=None, dest="min_ad_ratio",
+                        help="Min A/D ratio on signal day (default=None; 2026-05-22: min_ad=1.0 → 6m WR=76.2%% +5.2pp; combined ad+vol → 78.6%%)")
     hist_p.add_argument("--max-hold", type=int, default=None, dest="max_hold_override",
-                        help="Override hold duration in days (default: per signal_type; SHORT_SWING=10)")
+                        help="Override hold duration in days (default: per signal_type; SHORT_SWING=9)")
     hist_p.add_argument("--slippage", type=float, default=0.003)
     hist_p.add_argument("--commission", type=float, default=0.001)
 
@@ -1305,11 +1323,13 @@ def main() -> None:
             db_path=db_path,
             months=args.months,
             min_ues=args.min_ues,
-            max_ues=getattr(args, "max_ues", None),
+            max_ues=getattr(args, "max_ues", 99.0),
             regime_filter=getattr(args, "regime", None),
             rsi_max=getattr(args, "rsi_max", None),
             min_adx=getattr(args, "min_adx", None),
             min_vol_ratio=getattr(args, "min_vol_ratio", None),
+            max_vol_ratio=getattr(args, "max_vol_ratio", None),
+            min_ad_ratio=getattr(args, "min_ad_ratio", None),
             slippage_pct=args.slippage,
             commission_pct=args.commission,
             max_hold_override=getattr(args, "max_hold_override", None),

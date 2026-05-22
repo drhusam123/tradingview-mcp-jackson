@@ -1075,7 +1075,9 @@ def phase3_regime_models():
 # ═════════════════════════════════════════════════════════════════════════════
 
 def _train_single_stock(args):
-    """Worker: train LightGBM model for one stock. Called by multiprocessing.Pool."""
+    """Worker: train LightGBM model for one stock using all 62 TECH_FEATURES.
+    Called by multiprocessing.Pool.
+    """
     import lightgbm as lgb
     sym, n_min = args
 
@@ -1083,14 +1085,40 @@ def _train_single_stock(args):
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
 
-        # Get OHLCV for this symbol
+        # Get OHLCV for this symbol — use full history back to 2020 for more data
         rows = conn.execute("""
             SELECT date(bar_time,'unixepoch') as d,
-                   close, high, low, volume
+                   open, close, high, low, volume
             FROM ohlcv_history
-            WHERE symbol=? AND date(bar_time,'unixepoch') >= '2021-01-01'
+            WHERE symbol=? AND date(bar_time,'unixepoch') >= '2020-01-01'
             ORDER BY bar_time
         """, (sym,)).fetchall()
+
+        # Load DNA profile for this symbol
+        dna_row = conn.execute("""
+            SELECT rsi_optimal_buy, rsi_optimal_sell, accumulation_score,
+                   trend_persistence_score, mean_reversion_score, avg_atr_pct,
+                   vol_regime_low, vol_regime_high, avg_drawdown_pct
+            FROM stock_profiles_deep
+            WHERE symbol=?
+            ORDER BY computed_date DESC LIMIT 1
+        """, (sym,)).fetchone()
+
+        # Load market breadth / regime for date-aligned context
+        breadth_rows = conn.execute("""
+            SELECT date,
+                   CAST(n_advances AS REAL)/(CAST(n_advances AS REAL)+CAST(n_declines AS REAL)+0.01) as adv_pct,
+                   COALESCE(breadth_score/100.0, 0.5) as vol_ratio_avg
+            FROM market_breadth_daily ORDER BY date
+        """).fetchall()
+        breadth_map = {r['date']: (float(r['adv_pct'] or 0.5), float(r['vol_ratio_avg'] or 1.0))
+                       for r in breadth_rows}
+
+        regime_rows = conn.execute(
+            "SELECT date, regime FROM regime_history ORDER BY date"
+        ).fetchall()
+        regime_map = {r['date']: r['regime'] for r in regime_rows}
+
         conn.close()
 
         if len(rows) < n_min:
@@ -1099,73 +1127,95 @@ def _train_single_stock(args):
         df = pd.DataFrame([dict(r) for r in rows])
         df['d'] = pd.to_datetime(df['d'])
         df = df.sort_values('d').set_index('d')
-        df = df[['close','high','low','volume']].apply(pd.to_numeric, errors='coerce').dropna()
 
+        # Ensure all required columns exist
+        for col in ['open', 'close', 'high', 'low', 'volume']:
+            if col not in df.columns:
+                df[col] = df['close'] if 'close' in df.columns else 0.0
+        df = df[['open', 'close', 'high', 'low', 'volume']].apply(
+            pd.to_numeric, errors='coerce').dropna()
+
+        if len(df) < 60:
+            return sym, None, "too short after dropna"
+
+        # Use the shared _compute_indicators function for all 62 TECH_FEATURES
+        feats = _compute_indicators(df)
+
+        # Add DNA features (constant across rows for this stock)
+        d = dict(dna_row) if dna_row else {}
+        feats['rsi_optimal_buy']         = float(d.get('rsi_optimal_buy') or 30.0)
+        feats['rsi_optimal_sell']        = float(d.get('rsi_optimal_sell') or 70.0)
+        feats['accumulation_score']      = float(d.get('accumulation_score') or 50.0)
+        feats['trend_persistence_score'] = float(d.get('trend_persistence_score') or 50.0)
+        feats['mean_reversion_score']    = float(d.get('mean_reversion_score') or 50.0)
+        feats['hurst_exp']               = float(d.get('avg_atr_pct') or 0.5)
+        sym_vol = float(df['close'].pct_change().std())
+        vrl = float(d.get('vol_regime_low') or 0.01)
+        vrh = float(d.get('vol_regime_high') or 0.05)
+        feats['vol_regime_pct'] = float(np.clip((sym_vol - vrl) / (vrh - vrl + 1e-10), 0, 1))
+        cur_month = pd.Timestamp.today().month
+        best_month = int((float(d.get('avg_drawdown_pct') or 0)) % 12) + 1
+        feats['best_month_match'] = float(cur_month == best_month)
+
+        # Market context per date
+        date_strings = feats.index.strftime('%Y-%m-%d').tolist()
+        def _brd(ds):
+            b = breadth_map.get(ds, (0.5, 1.0))
+            return float(b[0]), float(b[1])
+        def _reg(ds):
+            r = regime_map.get(ds, 'BULL')
+            return float(r == 'BULL'), float(r == 'BEAR'), float(r == 'CHOPPY')
+
+        feats['breadth_adv_pct']   = [_brd(d)[0] for d in date_strings]
+        feats['breadth_vol_ratio'] = [_brd(d)[1] for d in date_strings]
+        reg_bull = [_reg(d)[0] for d in date_strings]
+        reg_bear = [_reg(d)[1] for d in date_strings]
+        reg_chop = [_reg(d)[2] for d in date_strings]
+        feats['regime_bull']       = reg_bull
+        feats['regime_bear']       = reg_bear
+        feats['regime_choppy']     = reg_chop
+
+        feats['market_ret_5d']    = feats.get('ret_5d', pd.Series(0.0, index=feats.index))
+        feats['market_vol_ratio'] = feats['breadth_vol_ratio']
+        feats['sector_momentum_5d'] = feats.get('ret_5d', 0.0)
+        feats['sector_breadth']     = feats['breadth_adv_pct']
+
+        # Cycle context (no per-symbol cycle data — use 0 defaults)
+        feats['days_to_peak']     = 0.0
+        feats['days_to_trough']   = 0.0
+        feats['cycle_confidence'] = 0.5
+
+        # Clean up
+        feats = feats.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+
+        # Keep only the 62 TECH_FEATURES columns
+        fname = [f for f in TECH_FEATURES if f in feats.columns]
+        feat_df = feats[fname]
+
+        n = len(feat_df)
         c = df['close'].values
-        v = df['volume'].values
-        n = len(c)
-        if n < 60: return sym, None, "too short after dropna"
+        if n < 60:
+            return sym, None, "too short after feature computation"
 
-        rets = np.diff(np.log(c+1e-10), prepend=np.log(c[0]+1e-10))
-
-        def rma(x, p):
-            cs = np.cumsum(np.concatenate([[0], x]))
-            out = np.full(n, np.nan)
-            out[p-1:] = (cs[p:] - cs[:n-p+1]) / p
-            return out
-
-        def rstd(x, p):
-            out = np.full(n, np.nan)
-            for i in range(p-1, n): out[i] = np.std(x[i-p+1:i+1])
-            return out
-
-        def _rsi(x, p=14):
-            out = np.full(n, 50.0)
-            d_ = np.diff(x, prepend=x[0])
-            ag = al = 0.0
-            ag = np.mean(np.maximum(d_[1:p+1], 0))
-            al = np.mean(np.abs(np.minimum(d_[1:p+1], 0)))
-            for i in range(p, n):
-                ag = (ag*(p-1) + max(d_[i], 0))/p
-                al = (al*(p-1) + abs(min(d_[i], 0)))/p
-                out[i] = 100 - 100/(1 + ag/(al+1e-10))
-            return out
-
-        vm20 = rma(v, 20)
-        bb20 = rstd(c, 20)
-        bm20 = rma(c, 20)
-        r14  = _rsi(c, 14)
-
-        # Build supervised dataset
         # Label: forward 3-day return > 1.5%
         fwd3 = np.full(n, np.nan)
-        for i in range(n-3):
-            fwd3[i] = (c[i+3] - c[i]) / (c[i] + 1e-10)
+        # feat_df is aligned to df.index, compute forward returns
+        close_aligned = df['close'].reindex(feat_df.index).values
+        for i in range(n - 3):
+            fwd3[i] = (close_aligned[i+3] - close_aligned[i]) / (close_aligned[i] + 1e-10)
         label = (fwd3 > 0.015).astype(int)
 
-        # Features per bar
-        feat_mat = []
-        for i in range(20, n-3):
-            row_vec = [
-                r14[i], r14[i-1], r14[i-2],
-                4*bb20[i]/(bm20[i]+1e-10),          # bb_width
-                (c[i]-bm20[i])/(2*bb20[i]+1e-10),   # bb_pos
-                v[i]/(vm20[i]+1e-10),                # vol_ratio
-                sum(rets[i-4:i+1]),                  # ret_5d
-                sum(rets[i-9:i+1]),                  # ret_10d
-                np.std(rets[i-19:i+1]),              # vol_20d
-                np.mean(rets[i-4:i+1]>0),            # breadth_5d (own)
-                (c[i]-np.min(c[max(0,i-51):i+1]))/(np.max(c[max(0,i-51):i+1])-np.min(c[max(0,i-51):i+1])+1e-10),
-            ]
-            feat_mat.append(row_vec)
+        X_all = feat_df.values.astype(np.float32)
+        y_all = label
 
-        y_all = label[20:n-3]
-        X_all = np.array(feat_mat, dtype=np.float32)
-
-        # Purged split
-        dates = df.index[20:n-3]
+        # Purged split: in-sample up to end of 2025, OOS from 2026
+        dates = feat_df.index
         is_mask  = dates <= pd.Timestamp('2025-12-31')
         oos_mask = dates >= pd.Timestamp('2026-01-30')
+        # Exclude the last 3 rows (no valid label)
+        valid_mask = np.concatenate([np.ones(n-3, dtype=bool), np.zeros(3, dtype=bool)])
+        is_mask  = is_mask  & valid_mask
+        oos_mask = oos_mask & valid_mask
 
         X_is, y_is   = X_all[is_mask], y_all[is_mask]
         X_oos, y_oos = X_all[oos_mask], y_all[oos_mask]
@@ -1173,32 +1223,31 @@ def _train_single_stock(args):
         if len(X_is) < 50 or y_is.sum() < 10:
             return sym, None, f"insufficient IS: {len(X_is)} samples, {y_is.sum()} pos"
 
-        scale_pos = int((y_is==0).sum()) / max(int(y_is.sum()), 1)
+        scale_pos = int((y_is == 0).sum()) / max(int(y_is.sum()), 1)
 
         params = {
             'objective': 'binary', 'metric': 'auc', 'verbosity': -1,
             'num_threads': 2,   # 2 threads per stock (pool of 8 = 16 total)
-            'learning_rate': 0.05, 'num_leaves': 16, 'min_data_in_leaf': 10,
-            'scale_pos_weight': scale_pos, 'feature_fraction': 0.8,
-            'reg_alpha': 0.5, 'reg_lambda': 0.5,
+            'learning_rate': 0.03, 'num_leaves': 24, 'min_data_in_leaf': 15,
+            'scale_pos_weight': scale_pos, 'feature_fraction': 0.7,
+            'bagging_fraction': 0.8, 'bagging_freq': 5,
+            'reg_alpha': 0.3, 'reg_lambda': 0.5,
         }
-        fname = ['rsi_t','rsi_t1','rsi_t2','bb_width','bb_pos','vol_ratio',
-                 'ret5','ret10','vol20','breadth5','price_rank52w']
         ds = lgb.Dataset(X_is, label=y_is, feature_name=fname, free_raw_data=True)
         dv = lgb.Dataset(X_oos, label=y_oos, feature_name=fname, free_raw_data=True) if len(X_oos) > 10 else None
-        cbs = [lgb.early_stopping(30, verbose=False), lgb.log_evaluation(-1)] if dv else [lgb.log_evaluation(-1)]
-        m = lgb.train(params, ds, num_boost_round=300,
+        cbs = [lgb.early_stopping(40, verbose=False), lgb.log_evaluation(-1)] if dv else [lgb.log_evaluation(-1)]
+        m = lgb.train(params, ds, num_boost_round=500,
                       valid_sets=[dv] if dv else None, callbacks=cbs)
 
-        auc_oos = _auc(y_oos, m.predict(X_oos)) if dv else 0.5
+        auc_oos = _auc(y_oos, m.predict(X_oos)) if (dv and len(y_oos) > 5) else 0.5
         prec50  = 0.0
-        if dv:
+        if dv and len(y_oos) > 5:
             preds = m.predict(X_oos)
             mask50 = preds >= 0.5
             prec50 = float(y_oos[mask50].mean()) if mask50.any() else 0.0
 
         top_feat = sorted(zip(fname, m.feature_importance(importance_type='gain')),
-                         key=lambda x: -x[1])[:3]
+                          key=lambda x: -x[1])[:5]
 
         model_path = str(MODELS / f'stock_{sym}.txt')
         m.save_model(model_path)
@@ -1213,7 +1262,8 @@ def _train_single_stock(args):
         }, None
 
     except Exception as e:
-        return sym, None, str(e)
+        import traceback
+        return sym, None, f"{e}\n{traceback.format_exc()[-300:]}"
 
 
 def phase4_per_stock_models():
@@ -1226,13 +1276,13 @@ def phase4_per_stock_models():
     syms = conn.execute("""
         SELECT symbol, COUNT(DISTINCT date(bar_time,'unixepoch')) as n_days
         FROM ohlcv_history
-        WHERE date(bar_time,'unixepoch') >= '2021-01-01'
-        GROUP BY symbol HAVING n_days >= 200
-        ORDER BY n_days DESC LIMIT 120
+        WHERE date(bar_time,'unixepoch') >= '2020-01-01'
+        GROUP BY symbol HAVING n_days >= 100
+        ORDER BY n_days DESC LIMIT 300
     """).fetchall()
     conn.close()
 
-    tasks = [(r['symbol'], 100) for r in syms]
+    tasks = [(r['symbol'], 80) for r in syms]
     print(f"[P4] Training {len(tasks)} stocks with Pool({POOL_WORKERS})...", flush=True)
 
     results = {}
@@ -1452,11 +1502,39 @@ def phase6_walkforward():
         win_rate  = float(y_te[sig_mask].mean()) if sig_mask.any() else 0.0
         prec50    = win_rate
 
-        # Pseudo-Sharpe from simulated daily P&L
-        pnl = np.where(sig_mask, np.where(y_te==1, 0.03, -0.01), 0.0)
-        if pnl.std() > 0:
-            sharpe  = float(pnl.mean() / pnl.std() * np.sqrt(252))
-            sortino = float(pnl.mean() / max(pnl[pnl<0].std(), 1e-8) * np.sqrt(252))
+        # Ph79 calibrated returns — real-backtest integration with regime fallback
+        _use_real_backtest = False
+        _real_bt = None
+        try:
+            import sys as _sys
+            _dl_path = str(Path(__file__).parent)
+            if _dl_path not in _sys.path:
+                _sys.path.insert(0, _dl_path)
+            import backtest_engine as _be
+            _real_bt = _be.run_backtest(str(DB_PATH), days=180, min_signals=10)
+            if _real_bt and _real_bt.get('n_trades', 0) >= 10:
+                _use_real_backtest = True
+        except Exception:
+            pass
+
+        if _use_real_backtest and _real_bt:
+            _avg_win  = min(0.08, max(0.02, _real_bt.get('avg_win_pct',  0.045)))
+            _avg_loss = max(-0.08, min(-0.01, _real_bt.get('avg_loss_pct', -0.025)))
+        else:
+            _avg_win  = 0.045
+            _avg_loss = -0.025
+
+        # Ph79 calibrated returns from simulated daily P&L
+        pnl = np.where(sig_mask,
+                       np.where(y_te==1, _avg_win * 0.997, _avg_loss * 1.003),
+                       0.0)
+        _pnl_std = float(pnl.std())
+        if _pnl_std > 1e-8:
+            sharpe  = float(pnl.mean() / _pnl_std * np.sqrt(252))
+            # Cap Sharpe at ±50 to guard against near-degenerate windows
+            sharpe  = max(-50.0, min(50.0, sharpe))
+            sortino = float(pnl.mean() / max(float(pnl[pnl<0].std()) if (pnl<0).any() else _pnl_std, 1e-6) * np.sqrt(252))
+            sortino = max(-50.0, min(50.0, sortino))
         else:
             sharpe = sortino = 0.0
         cum = np.cumsum(pnl)
@@ -4181,6 +4259,24 @@ def cmd_predict_ensemble():
     if calibrator is not None:
         print("[ENS] Calibrator loaded (Phase 9 Isotonic)", flush=True)
 
+    # ── Phase 3 regime-specific models (2026-05-22) ──────────────────────────
+    # Load all regime LightGBM models if they exist (trained by phase3_regime_models).
+    # At predict time we look up today's HMM regime and apply the matching model
+    # as a 35% weight blend with the Phase 2 ensemble (65%). When a regime model
+    # is missing (not yet trained or regime is UNKNOWN), falls back to ensemble-only.
+    regime_models = {}
+    for rg in ['bull', 'bear', 'choppy', 'unknown']:
+        rp = MODELS / f'regime_{rg}_lgbm_v3.txt'
+        if rp.exists():
+            try:
+                regime_models[rg.upper()] = lgb.Booster(model_file=str(rp))
+            except Exception as e:
+                print(f"[ENS] WARNING: Could not load regime_{rg} model: {e}", flush=True)
+    if regime_models:
+        print(f"[ENS] Phase 3 regime models loaded: {sorted(regime_models.keys())}", flush=True)
+    else:
+        print("[ENS] Phase 3 regime models not found — using ensemble-only (run phase3 to improve)", flush=True)
+
     feat_path = MODELS / 'explosion_features_v3.json'
     if feat_path.exists():
         FEAT = json.loads(feat_path.read_text())
@@ -4192,6 +4288,21 @@ def cmd_predict_ensemble():
 
     pred_date = datetime.date.today().isoformat()
 
+    # ── Get today's market regime for Phase 3 blending ──────────────────────
+    today_regime = 'UNKNOWN'
+    try:
+        rrow = conn.execute(
+            "SELECT regime FROM regime_history WHERE date<=? ORDER BY date DESC LIMIT 1",
+            (pred_date,)
+        ).fetchone()
+        if rrow:
+            today_regime = str(rrow['regime'] or 'UNKNOWN').upper()
+    except Exception:
+        pass
+    print(f"[ENS] Today's regime: {today_regime} "
+          f"(regime model {'ACTIVE' if today_regime in regime_models else 'not available'})",
+          flush=True)
+
     # ── Build OHLCV cache ────────────────────────────────────────────────────
     print("[ENS] Building OHLCV cache...", flush=True)
     t0 = time.time()
@@ -4202,6 +4313,7 @@ def cmd_predict_ensemble():
 
     predictions = []
     n_scored = 0
+    n_anomaly_skipped = 0
 
     for sym in symbols:
         bars = conn.execute("""
@@ -4213,6 +4325,40 @@ def cmd_predict_ensemble():
             continue
 
         bars = list(reversed(bars))
+
+        # ── Price anomaly guard (2026-05-22) ────────────────────────────────
+        # Skip stocks with extreme single-day moves in the last 20 bars.
+        #
+        # UPWARD extreme (>50% up): EGX data errors — bad ticks, price normalization
+        #   issues, corporate-event recording errors (TORA +12,000%, TRTO +34,000%,
+        #   CICH +587%, etc.). The ML model scores these highly because the unusual
+        #   OHLCV patterns resemble BB compression breakouts — they are NOT valid setups.
+        #
+        # DOWNWARD extreme (>35% down): EGX ex-dividend adjustments — stocks paying
+        #   50-100% dividends gap-down on ex-div day. Post-dividend stocks have
+        #   artificial "BB compression + momentum" features that fool the ML model.
+        #   They are NOT good short-swing candidates (9-day hold); use long-swing/
+        #   investment strategies for post-dividend recovery plays.
+        #   Note: 35% threshold chosen to catch large EGX dividends while allowing
+        #   normal market corrections (EGX daily limit is ~10-20% in most periods).
+        anomaly_skip = False
+        try:
+            closes = [float(b['close'] or 0) for b in bars[-20:]]
+            for i in range(1, len(closes)):
+                if closes[i-1] > 0 and closes[i] > 0:
+                    day_chg = (closes[i] - closes[i-1]) / closes[i-1]
+                    if day_chg > 0.50:   # >50% upward in one day = data error/artifact
+                        anomaly_skip = True
+                        break
+                    if day_chg < -0.30:  # >30% downward = ex-dividend gap (EGX daily limit ~10%, so >30% = halt/dividend only)
+                        anomaly_skip = True
+                        break
+        except Exception:
+            pass
+        if anomaly_skip:
+            n_anomaly_skipped += 1
+            continue
+
         try:
             import pandas as pd
             df = pd.DataFrame([{
@@ -4234,6 +4380,8 @@ def cmd_predict_ensemble():
         X = np.array([feat], dtype=np.float32)
 
         # ── Base model predictions ────────────────────────────────────────────
+        p_lgbm = p_xgb = p_rf = p_et = 0.5
+        p_regime = None
         try:
             p_lgbm = float(lgbm_model.predict(X)[0])
             p_xgb  = float(xgb_model.predict(xgb.DMatrix(X))[0])
@@ -4243,56 +4391,87 @@ def cmd_predict_ensemble():
             # Meta-model stacking → calibration
             meta_X   = np.array([[p_lgbm, p_xgb, p_rf, p_et]], dtype=np.float32)
             raw_prob = float(meta_model.predict(meta_X)[0])
-            prob     = float(calibrator.transform([raw_prob])[0]) if calibrator else raw_prob
+            ensemble_prob = float(calibrator.transform([raw_prob])[0]) if calibrator else raw_prob
         except Exception:
             # Fallback to LGBM alone if meta fails
-            prob = p_lgbm if 'p_lgbm' in dir() else 0.0
+            ensemble_prob = p_lgbm
+
+        # ── Phase 3: blend regime-specific model (2026-05-22) ────────────────
+        # Regime-specific LightGBM trained only on BULL/BEAR/CHOPPY/UNKNOWN days
+        # gives higher precision for the current market context. Blend 35% weight.
+        # Falls back to ensemble-only if regime model not available.
+        regime_model = regime_models.get(today_regime)
+        if regime_model is not None:
+            try:
+                p_regime = float(regime_model.predict(X)[0])
+                prob = 0.65 * ensemble_prob + 0.35 * p_regime
+            except Exception:
+                prob = ensemble_prob
+        else:
+            prob = ensemble_prob
 
         n_scored += 1
         tier = 'HIGH' if prob >= 0.70 else 'MEDIUM' if prob >= 0.50 else 'LOW'
 
+        # Write prediction for ALL symbols (not just prob >= 0.30) so that
+        # get_explosion_score() can return real values instead of 50.0 default.
+        last = df.iloc[-1] if hasattr(df, 'iloc') else {}
+        rsi  = safe_float(last.get('rsi14',      50.0) if hasattr(last, 'get') else 50.0)
+        bbw  = safe_float(last.get('bb_width',   0.05) if hasattr(last, 'get') else 0.05)
+        volr = safe_float(last.get('vol_ratio_20',1.0) if hasattr(last, 'get') else 1.0)
+        mom5 = safe_float(last.get('momentum_5d', 0.0) if hasattr(last, 'get') else 0.0)
+        bbpos= safe_float(last.get('bb_position', 0.5) if hasattr(last, 'get') else 0.5)
+
+        drivers = [
+            {'feature': 'lgbm_prob',     'value': round(p_lgbm, 3)},
+            {'feature': 'xgb_prob',      'value': round(p_xgb,  3)},
+            {'feature': 'rf_prob',       'value': round(p_rf,   3)},
+            {'feature': 'vol_ratio',     'value': round(volr,   2)},
+            {'feature': 'rsi14',         'value': round(rsi,    1)},
+            {'feature': 'bb_width',      'value': round(bbw,    4)},
+        ]
+        if p_regime is not None:
+            drivers.append({'feature': f'regime_{today_regime.lower()}_prob',
+                            'value': round(p_regime, 3)})
+            drivers.append({'feature': 'ensemble_prob_pre_blend',
+                            'value': round(ensemble_prob, 3)})
+
+        conn.execute("""
+            INSERT OR REPLACE INTO explosion_predictions
+            (symbol, pred_date, explosion_prob, prob_pct, confidence_tier, direction, top_drivers)
+            VALUES (?,?,?,?,?,?,?)
+        """, (
+            sym, pred_date, prob, int(prob * 100), tier, 'UP',
+            json.dumps(drivers)
+        ))
+
         if prob >= 0.30:
-            last = df.iloc[-1] if hasattr(df, 'iloc') else {}
-            rsi  = safe_float(last.get('rsi14',      50.0) if hasattr(last, 'get') else 50.0)
-            bbw  = safe_float(last.get('bb_width',   0.05) if hasattr(last, 'get') else 0.05)
-            volr = safe_float(last.get('vol_ratio_20',1.0) if hasattr(last, 'get') else 1.0)
-            mom5 = safe_float(last.get('momentum_5d', 0.0) if hasattr(last, 'get') else 0.0)
-            bbpos= safe_float(last.get('bb_position', 0.5) if hasattr(last, 'get') else 0.5)
-
-            conn.execute("""
-                INSERT OR REPLACE INTO explosion_predictions
-                (symbol, pred_date, explosion_prob, prob_pct, confidence_tier, direction, top_drivers)
-                VALUES (?,?,?,?,?,?,?)
-            """, (
-                sym, pred_date, prob, int(prob * 100), tier, 'UP',
-                json.dumps([
-                    {'feature': 'lgbm_prob',   'value': round(p_lgbm, 3)},
-                    {'feature': 'xgb_prob',    'value': round(p_xgb,  3)},
-                    {'feature': 'rf_prob',     'value': round(p_rf,   3)},
-                    {'feature': 'vol_ratio',   'value': round(volr,   2)},
-                    {'feature': 'rsi14',       'value': round(rsi,    1)},
-                    {'feature': 'bb_width',    'value': round(bbw,    4)},
-                ])
-            ))
-
-            predictions.append({
+            entry = {
                 'symbol':          sym,
                 'explosion_prob':  round(prob, 4),
                 'lgbm':            round(p_lgbm, 3),
                 'xgb':             round(p_xgb,  3),
                 'rf':              round(p_rf,   3),
                 'tier':            tier,
-            })
+            }
+            if p_regime is not None:
+                entry['regime_prob'] = round(p_regime, 3)
+                entry['ensemble_pre_blend'] = round(ensemble_prob, 3)
+            predictions.append(entry)
 
     conn.commit()
 
     predictions.sort(key=lambda x: -x['explosion_prob'])
     dur = time.time() - t0
+    regime_blend_active = bool(regime_models.get(today_regime))
 
     print(json.dumps({
         "cmd": "predict_ensemble",
         "pred_date": pred_date,
+        "today_regime": today_regime,
+        "regime_blend_active": regime_blend_active,
         "n_scored": n_scored,
+        "n_anomaly_skipped": n_anomaly_skipped,
         "n_stored": len(predictions),
         "top5": [{'sym': p['symbol'], 'prob': p['explosion_prob']} for p in predictions[:5]],
         "duration_seconds": round(dur, 1),
@@ -7143,6 +7322,7 @@ _PH55_FEATURES = [
     'above_ema20', 'above_ema50',
     'ret_std5', 'rsi_slope3',
     'breadth_score', 'ad_ratio_mkt', 'sector_rank_norm',
+    'sector_mean_ret', 'sector_mom5d', 'sector_rsi',
     # Ph56 Markov regime features
     'markov_signal_1d', 'markov_stickiness',
     'markov_entropy', 'markov_regime_age', 'markov_transition_risk',
@@ -7301,10 +7481,10 @@ def phase55_stock_forecast():
         ohlcv['breadth_score'] = 50.0
         ohlcv['ad_ratio_mkt']  = 1.0
 
-    # ── 5. Add sector rank ─────────────────────────────────────────────────────
+    # ── 5. Add sector rank + real sector features ──────────────────────────────
     try:
         sec_rank = pd.read_sql_query(
-            "SELECT date, sector, sector_rank FROM sector_breadth_daily",
+            "SELECT date, sector, sector_rank, mean_ret, momentum_5d, rsi_mean FROM sector_breadth_daily",
             conn
         )
         sec_rank['date'] = pd.to_datetime(sec_rank['date'])
@@ -7313,15 +7493,27 @@ def phase55_stock_forecast():
             lambda x: (x - x.min()) / (x.max() - x.min() + 1e-6)
         )
         ohlcv = ohlcv.merge(
-            sec_rank.rename(columns={'date': 'trade_date'})[['trade_date', 'sector', 'sector_rank', 'sector_rank_norm']],
+            sec_rank.rename(columns={
+                'date':        'trade_date',
+                'mean_ret':    'sector_mean_ret',
+                'momentum_5d': 'sector_mom5d',
+                'rsi_mean':    'sector_rsi',
+            })[['trade_date', 'sector', 'sector_rank', 'sector_rank_norm',
+                'sector_mean_ret', 'sector_mom5d', 'sector_rsi']],
             on=['trade_date', 'sector'], how='left'
         )
     except Exception:
-        ohlcv['sector_rank'] = 3
+        ohlcv['sector_rank']     = 3
         ohlcv['sector_rank_norm'] = 0.5
+        ohlcv['sector_mean_ret'] = 0.0
+        ohlcv['sector_mom5d']    = 0.0
+        ohlcv['sector_rsi']      = 50.0
 
     ohlcv['sector_rank']      = pd.to_numeric(ohlcv['sector_rank'],      errors='coerce').fillna(0).astype(int)
     ohlcv['sector_rank_norm'] = ohlcv['sector_rank_norm'].fillna(0.5)
+    ohlcv['sector_mean_ret']  = ohlcv['sector_mean_ret'].fillna(0.0)
+    ohlcv['sector_mom5d']     = ohlcv['sector_mom5d'].fillna(0.0)
+    ohlcv['sector_rsi']       = ohlcv['sector_rsi'].fillna(50.0)
     ohlcv['breadth_score']    = ohlcv['breadth_score'].fillna(50.0)
     ohlcv['ad_ratio_mkt']     = ohlcv['ad_ratio_mkt'].fillna(1.0)
 

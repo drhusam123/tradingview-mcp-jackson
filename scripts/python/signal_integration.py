@@ -191,7 +191,15 @@ def get_explosion_score(symbol, date, conn):
 
 def get_breadth_score(date, conn):
     """
-    Get market breadth score (0-100) and signal.
+    Get market breadth score (0-100), signal, regime_input, and A/D ratio.
+
+    Returns: (adj_score, sig, regime_input, ad_ratio)
+      - adj_score: 0-100 composite breadth score (RSI-adjusted)
+      - sig: 'BREADTH_BULL', 'BREADTH_LEAN_BULL', 'BREADTH_NEUTRAL', 'BREADTH_BEAR', etc.
+      - regime_input: 'BULL', 'BEAR', or 'NEUTRAL'
+      - ad_ratio: n_advances/n_declines from market_breadth_enhanced
+                  1.0 = equal, >1.0 = more advances (bullish), <1.0 = more declines (bearish)
+                  2026-05-22 discovery: min_ad=1.0 filter → 6m WR=76.2% vs 71% baseline (+5.2pp)
 
     Applies a real-time RSI overbought penalty on top of the stored breadth_score:
       - >80% of stocks with RSI>70 → -10 pts (extreme crowding)
@@ -206,6 +214,16 @@ def get_breadth_score(date, conn):
     ).fetchone()
     base_score = safe_float(row['breadth_score'] if row else None, 50.0)
     base_signal = (row['signal'] if row else None) or 'BREADTH_NEUTRAL'
+
+    # Read A/D ratio from market_breadth_enhanced (n_advances/n_declines, threshold=1.0)
+    try:
+        ad_row = conn.execute(
+            "SELECT ad_ratio FROM market_breadth_enhanced WHERE date<=? ORDER BY date DESC LIMIT 1",
+            (date,)
+        ).fetchone()
+        _ad_ratio = safe_float(ad_row['ad_ratio'] if ad_row else None, 1.0)
+    except Exception:
+        _ad_ratio = 1.0  # neutral fallback if table missing
 
     # Real-time RSI overbought adjustment
     try:
@@ -247,7 +265,7 @@ def get_breadth_score(date, conn):
             break
 
     regime_input = 'BULL' if 'BULL' in sig else 'BEAR' if 'BEAR' in sig else 'NEUTRAL'
-    return adj_score, sig, regime_input
+    return adj_score, sig, regime_input, _ad_ratio
 
 def get_technical_score(symbol, date, conn):
     """
@@ -957,7 +975,7 @@ def load_adaptive_gate_params(conn):
 def apply_quality_gate(ues, ml_score, spectral_regime, behavioral_class,
                        false_signal_rate, cycle_bottom_prox, breadth_signal,
                        adaptive_params=None, active_regime=None, rsi14=None,
-                       rsi_slope=None):
+                       rsi_slope=None, ad_ratio=None, vol_ratio=None):
     """
     Ph 27/50 — Adaptive quality gate for institutional-grade signals.
     All conditions must pass. Returns (passed: bool, rejection_reason: str|None).
@@ -972,6 +990,14 @@ def apply_quality_gate(ues, ml_score, spectral_regime, behavioral_class,
       4. behavioral_class not DORMANT
       5. false_signal_rate <= 0.65   — stock must have credible history
       6. No wide BEAR breadth         — avoid entering into deteriorating market
+      6b.ad_ratio < 0.8 → negative_breadth_ad gate (2026-05-22)
+         Blocks ~27% of days where decliners dominate (ad<0.8 ≈ <4 advances per 5 declines).
+         Backtest: min_ad=1.0 → 6m WR=76.2% (+5.2pp), combined ad+vol → 6m WR=78.6% (+7.6pp).
+         Production threshold kept at 0.8 (less aggressive: only removes clearly negative days).
+      6c.vol_ratio > 3.0 → high_volume_chase gate (2026-05-22)
+         Blocks stocks trading at 3× their 20-day avg volume on signal day.
+         Backtest: vol>3 → WR=64% vs vol<1.5 → WR=82% (18pp gap). "Chasing" high-vol entries fail.
+         Combined: ad≥1.0 + vol≤3.0 → 6m WR=78.6%, 12m WR=64.0%, 3m WR=85.7%.
       7. ues >= 62                    — minimum composite score (raised from 58 per backtest: UES≥75 PF=1.52)
       8. EXPLOSIVE + RSI > 70: block (backtest: RSI>70 EXPLOSIVE PF 1.39 vs RSI<65 PF 1.61)
       9. RSI momentum collapse: RSI>65 + rsi_slope<-2.5 = near-overbought with collapsing momentum
@@ -1013,6 +1039,27 @@ def apply_quality_gate(ues, ml_score, spectral_regime, behavioral_class,
     breadth = (breadth_signal or '')
     if 'BEAR' in breadth and 'LEAN' not in breadth and 'MODERATE' not in breadth:
         return False, 'bear_breadth'
+
+    # A/D ratio gate (Gate 6b — 2026-05-22):
+    # ad_ratio = n_advances/n_declines from market_breadth_enhanced
+    # Backtest discovery: min_ad_ratio=1.0 filter → 6m WR=76.2% vs 71% baseline (+5.2pp)
+    #                     combined ad>=1.0 + vol<=3 → 6m WR=78.6% (+7.6pp), 3m=85.7%, 12m=64%
+    # Threshold calibration:
+    #   ad < 0.5 = panic day (2:1 decliners) — full market selling, avoid ALL long entries
+    #   ad < 0.8 = negative breadth day (~56% declining) — statistically worse signal quality
+    #   ad < 1.0 = any negative breadth — optimal filter (50% of days removed for +5pp WR)
+    # Production gate uses 0.8 (removes ~27% of days) as balance between quality and frequency.
+    # Full ad<1.0 gate available by changing threshold (removes ~50% of days for max WR).
+    if ad_ratio is not None and ad_ratio < 0.8:
+        return False, 'negative_breadth_ad'
+
+    # Vol ratio gate (2026-05-22 backtest discovery):
+    # vol_ratio = today's volume / 20-day avg volume (from indicators_cache.vol_ratio_20)
+    # vol_ratio > 3: WR=64% (18pp below baseline 71%!) — high-volume "chase" entries fail at 2x rate
+    # vol_ratio < 1.5: WR=82% — normal/quiet volume entries outperform significantly
+    # Rationale: spikes >3× average volume = panic-buying/news-driven = unsustainable price moves
+    if vol_ratio is not None and vol_ratio > 3.0:
+        return False, 'high_volume_chase'
 
     # UES floor raised 62→68→70 (2026-05-22): proxy analysis shows UES>=82 → WR=55% PF=1.81
     # Live UES (unified_score) scale differs from proxy; 70 live ≈ 82 proxy for quality filtering
@@ -1205,7 +1252,7 @@ def cmd_score_symbol(params):
     ensure_tables(conn)
 
     exp_score  = get_explosion_score(symbol, date, conn)
-    breadth_score, breadth_sig, regime_input = get_breadth_score(date, conn)
+    breadth_score, breadth_sig, regime_input, _ad_ratio_today = get_breadth_score(date, conn)
     tech_score  = get_technical_score(symbol, date, conn)
     cross_score = get_cross_market_score(date, conn)
     liq_score, liq_tier, max_pos = get_liquidity_score(symbol, conn)
@@ -1239,8 +1286,8 @@ def cmd_score_symbol(params):
             pass
     gate_passed, gate_reason = apply_quality_gate(
         ues, exp_score, spec_regime, bclass, fsr, cycle_btm, breadth_sig,
-        rsi14=_rsi14_sym, rsi_slope=_rsi_slope_v
-    )  # Ph 27 + Phase 3
+        rsi14=_rsi14_sym, rsi_slope=_rsi_slope_v, ad_ratio=_ad_ratio_today
+    )  # Ph 27 + Phase 3 + AD breadth gate
 
     # Get scan score for today to inform conviction tier
     scan_score_v = 0.0
@@ -1421,7 +1468,7 @@ def cmd_score_all(params):
               'setup_type': _scan_lookup.get(r['symbol'], {}).get('setup_type', None)}
              for r in all_syms]
 
-    breadth_score, breadth_sig, regime_input = get_breadth_score(date, conn)
+    breadth_score, breadth_sig, regime_input, _ad_ratio_today = get_breadth_score(date, conn)
     cross_score  = get_cross_market_score(date, conn)
     regime       = get_current_regime(date, conn)
     alpha_score  = get_alpha_grid_score(None, conn)  # market-level, same for all symbols
@@ -1540,11 +1587,12 @@ def cmd_score_all(params):
                                          scan_score=scan_raw, ml_score=exp_score,
                                          behavioral_class=bclass, rsi14=_rsi14_for_gate)
 
-        # Ph 27/50 — Adaptive Quality Gate (Bayesian-calibrated thresholds) + Phase 3
+        # Ph 27/50 — Adaptive Quality Gate (Bayesian-calibrated thresholds) + Phase 3 + AD breadth + vol
         gate_passed, gate_reason = apply_quality_gate(
             ues, exp_score, spec_regime, bclass, fsr, cycle_btm, breadth_sig,
             adaptive_params=adaptive_params, active_regime=regime,
-            rsi14=_rsi14_for_gate, rsi_slope=_rsi_slope_gate
+            rsi14=_rsi14_for_gate, rsi_slope=_rsi_slope_gate,
+            ad_ratio=_ad_ratio_today, vol_ratio=_vol_now
         )
 
         # Fetch scan entry levels (entry_low/high, stop_loss, t1, t2)
@@ -1618,6 +1666,7 @@ def cmd_score_all(params):
             if ic:
                 _rsi_now = safe_float(ic['rsi14'], 50.0)
                 _adx_now = safe_float(ic['adx14'] if 'adx14' in ic.keys() else None, 20.0)
+                _vol_now = safe_float(ic['vol_ratio_20'] if 'vol_ratio_20' in ic.keys() else None, 1.0)
         except Exception:
             pass
         try:

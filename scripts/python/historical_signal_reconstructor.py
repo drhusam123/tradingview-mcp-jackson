@@ -286,11 +286,19 @@ def score_signal_proxy(
 
     # ── Regime bonus/penalty ─────────────────────────────────────────────
     # Backtest analysis: BULL WR=52.3%, CHOPPY WR=48.0%, BEAR WR=32.5%
+    # ad_ratio = n_advances/n_declines (market_breadth_enhanced, scale 0-4+):
+    #   >1.0 = more advances than declines | <1.0 = more declines | 0.5 = 2:1 decliners
+    # 2026-05-22 discovery: min_ad=1.0 filter → 6m WR=76.2% vs 71% baseline (+5.2pp)
+    # IMPORTANT: ad_ratio is NOT used as a scoring component here (would inflate UES
+    # and admit more signals, lowering WR — tested and reverted). Instead:
+    #   • Use min_ad_ratio=1.0 as a BACKTEST filter (run_historical_backtest param)
+    #   • Use negative_breadth_ad gate in apply_quality_gate (production: ad<0.8 blocked, ~36% of days)
     regime_upper = str(regime or "").upper()
     if regime_upper == "BULL" and ad_ratio > 0.55:
-        score += 10
+        score += 10    # BULL regime with decent breadth (most BULL days — ad threshold kept at 0.55
+                       # because ad scale is 0-4: 0.55 ≈ 35% advances → "barely any buyers" threshold)
     elif regime_upper == "BULL":
-        score += 5
+        score += 5     # BULL regime but extremely bad breadth day (<35% advances)
     elif regime_upper == "BEAR":
         score -= 15   # BEAR regime: WR=44.0% PF=0.67 with ADX<35 cap — penalize strongly
     elif regime_upper == "CHOPPY":
@@ -307,7 +315,7 @@ def build_historical_signals(
     db_path: Optional[Path] = None,
     months_back: int = 12,
     min_ues: float = 55.0,
-    max_ues: Optional[float] = None,  # NEW (2026-05-22): UES=99-100 signals underperform by 3-4pp WR; cap at <99 for cleaner backtest
+    max_ues: Optional[float] = 99.0,  # UES=99-100 "all-factors-maxed" signals underperform UES=92-98 by 3-4pp WR (late-entry effect)
     min_adx: float = 26.0,    # raised 22→26 (2026-05-22): ADX>=26 WR=56.8% vs ADX>=22 WR=55.8% PF=2.00
     max_adx: float = 35.0,
     max_rsi: float = 72.0,    # NEW (2026-05-22): RSI<=72 improves WR; combined ADX>=26+RSI<=70 → WR=58.1% PF=2.05
@@ -888,8 +896,8 @@ Examples:
         help="Minimum UES proxy score (default=92, sweet spot: WR=61.7% PF=2.39 6m)",
     )
     build_p.add_argument(
-        "--max-ues", type=float, default=None, dest="max_ues",
-        help="Maximum UES proxy score (optional; UES=99-100 signals underperform by 3-4pp WR due to full-saturation late-entry effect)",
+        "--max-ues", type=float, default=99.0, dest="max_ues",
+        help="Maximum UES proxy score (default=99; UES=99-100 'all-factors-maxed' signals underperform by 3-4pp WR — late-entry confirmation effect)",
     )
     build_p.add_argument("--db", type=str, default=None, help="Override DB path")
 
