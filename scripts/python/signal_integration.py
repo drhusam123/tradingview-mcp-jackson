@@ -1656,6 +1656,9 @@ def cmd_score_all(params):
                     _entry = float(_ohlcv_row['close'])
                     _atr14 = float(_atr_row['atr14']) if (_atr_row and _atr_row['atr14']) else _entry * 0.02
                     _atr_pct = _atr14 / _entry if _entry > 0 else 0.02
+                    # Cap ATR at 8% of price — ex-dividend drops inflate ATR14 abnormally
+                    # (e.g. MENA ex-div drop ~25% caused atr_pct>100%, giving SL<0)
+                    _atr_pct = min(_atr_pct, 0.08)
                     entry_price_v = round(_entry, 4)
                     entry_high_v  = round(_entry * 1.005, 4)   # slight spread above close
                     stop_loss_v   = round(_entry * (1.0 - 1.5 * _atr_pct), 4)
