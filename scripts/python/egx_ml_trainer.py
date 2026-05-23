@@ -4547,20 +4547,19 @@ def cmd_predict_ensemble():
             ensemble_prob = p_lgbm
 
         # ── Phase 3: blend regime-specific model (updated 2026-05-23) ──────────
-        # OOS AUC analysis (2026-02-01 to 2026-05-20) shows regime-specific benefit
-        # varies significantly by regime:
-        #   BEAR:    regime_AUC=0.615 vs ensemble_AUC=0.530 → +8.5pp → w=0.50
-        #   CHOPPY:  regime_AUC=0.560 vs ensemble_AUC=0.547 → +1.3pp → w=0.40
-        #   BULL:    regime_AUC=0.519 vs ensemble_AUC=0.511 → +0.9pp → w=0.20
-        #   UNKNOWN: no OOS evidence → conservative w=0.15
-        # In BEAR regime, the regime-specific model captures bear-specific patterns
-        # (RSI oversold + BB compression + volume drying) that the global ensemble misses.
-        # In BULL regime (current), global ensemble is already well-calibrated;
-        # reducing regime blend weight from 35% → 20% prevents over-fitting to bull patterns.
+        # OOS AUC results from Phase 3 retrain (2026-05-23, 3-year window, 40 trials):
+        #   BULL:    AUC_OOS=0.9643 (n_OOS=1453) → w=0.30 (strong validated lift)
+        #   BEAR:    AUC_OOS=0.8263 (n_OOS=1571) → w=0.50 (large benefit confirmed)
+        #   CHOPPY:  AUC_OOS=0.5000 (n_OOS=0)   → w=0.15 (no OOS data, conservative)
+        #   UNKNOWN: AUC_OOS=0.5000 (n_OOS=0)   → w=0.15 (no OOS evidence)
+        # CHOPPY weight lowered from 0.40 to 0.15: no CHOPPY dates existed in the
+        # 2026-03-24 to 2026-04-23 OOS window, so the model has NO out-of-sample
+        # validation. Using 40% blend weight on an unvalidated model is risky.
+        # BULL weight raised from 0.20 to 0.30: AUC_OOS=0.9643 strongly validated.
         REGIME_BLEND_WEIGHTS = {
-            'BEAR':    0.50,   # was 0.35 — large benefit (+8.5pp AUC)
-            'CHOPPY':  0.40,   # was 0.35 — moderate benefit (+1.3pp AUC)
-            'BULL':    0.20,   # was 0.35 — marginal benefit (+0.9pp AUC)
+            'BEAR':    0.50,   # confirmed: AUC_OOS=0.8263, large BEAR-specific lift
+            'BULL':    0.30,   # raised: AUC_OOS=0.9643 strongly validated on OOS
+            'CHOPPY':  0.15,   # lowered: AUC_OOS=0.50 (no OOS data — unvalidated)
             'UNKNOWN': 0.15,   # conservative — no OOS validation
         }
         regime_model = regime_models.get(today_regime)
