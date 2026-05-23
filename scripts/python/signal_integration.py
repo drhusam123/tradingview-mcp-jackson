@@ -1026,8 +1026,17 @@ def apply_quality_gate(ues, ml_score, spectral_regime, behavioral_class,
 
     bclass = (behavioral_class or 'UNKNOWN').upper()
     if bclass == 'VOLATILE':
+        # BEAR regime extreme oversold exception: VOLATILE stocks with RSI<=30 + ML>=85%
+        # are prime mean reversion candidates (MHOT: RSI=20.4, ML=89.87% on 2026-05-23)
+        _volatile_bear_exception = (
+            regime == 'BEAR'
+            and ml_score >= 85.0
+            and rsi14 is not None and rsi14 <= 30.0
+        )
         if volatile_ok and ml_score >= volatile_ml:
             pass   # Ph50 Bayesian permission granted with ML premium
+        elif _volatile_bear_exception:
+            pass   # BEAR regime extreme oversold mean reversion exception
         else:
             return False, 'volatile_stock'
     if bclass == 'DORMANT':
@@ -1074,7 +1083,18 @@ def apply_quality_gate(ues, ml_score, spectral_regime, behavioral_class,
     # UES floor raised 62→68→70 (2026-05-22): proxy analysis shows UES>=82 → WR=55% PF=1.81
     # Live UES (unified_score) scale differs from proxy; 70 live ≈ 82 proxy for quality filtering
     # Raising floor reduces false signals from low-quality ambiguous setups
-    if ues < 70.0:
+    # EXCEPTION: BEAR regime extreme oversold — UES floor lowered to 58 (2026-05-23)
+    # In BEAR regime, UES is naturally depressed (lower scan scores, bear breadth, weak technicals)
+    # but these are exactly the conditions for mean reversion. Allow with lower bar when:
+    # ML >= 85%, RSI <= 35, cycle_bottom_prox >= 0.80 (stock near cycle trough)
+    _bear_oversold_ues_exception = (
+        regime == 'BEAR'
+        and ml_score >= 85.0
+        and rsi14 is not None and rsi14 <= 35.0
+        and cycle_bottom_prox is not None and cycle_bottom_prox >= 0.80
+    )
+    _ues_floor = 58.0 if _bear_oversold_ues_exception else 70.0
+    if ues < _ues_floor:
         return False, 'ues_too_low'
 
     # EXPLOSIVE + overbought gate (v6 — 2026-05-22 RSI sweep validated):
@@ -1411,9 +1431,20 @@ def _apply_hard_gates(signal: dict, regime: str = 'NEUTRAL') -> tuple:
             return False, f"WEAK_TREND:ADX={adx:.0f}"
 
     # Gate 4: Bear regime — no momentum signals
+    # Exception: extreme oversold HIGH_CONVICTION setups in bear market (mean reversion)
+    # BEAR regime model (AUC=0.615) specifically handles RSI-oversold recovery patterns.
+    # Criteria: ML >= 85% AND RSI <= 35 (extreme oversold — not overbought momentum)
+    # Applies to all signal types (EGX scan types like "Institutional Retest" are not SHORT_SWING)
+    # NOTE: No backtest validation for this exception (EGX BEAR oversold history is very limited).
+    # Triggered by extraordinary setups: MENA RSI=34.4, GGRN RSI=24.4, MHOT RSI=20.4 (May 2026 BEAR).
+    # (Added 2026-05-23 — monitor performance to validate/invalidate)
     if regime in ('BEAR', 'BEARISH'):
-        if signal_type not in ('INVESTMENT', 'UNDERVALUED', 'investment', 'undervalued'):
-            return False, "BEAR_REGIME_FILTER"
+        ml_s  = signal.get('ml_score', 0.0) or 0.0
+        rsi_s = signal.get('rsi14', 50.0) or 50.0
+        is_bear_oversold_exception = (ml_s >= 85.0 and rsi_s <= 35.0)
+        if not is_bear_oversold_exception:
+            if signal_type not in ('INVESTMENT', 'UNDERVALUED', 'investment', 'undervalued'):
+                return False, "BEAR_REGIME_FILTER"
 
     # Gate 10 (Phase 3 ADX cap): ADX>=40 has WR=44.8% PF=0.83 in backtests
     # Over-extended trends in EGX tend to reverse before reaching targets
@@ -1702,6 +1733,7 @@ def cmd_score_all(params):
             'adx14':        _adx_now,
             'adv20_value':  _adv20_v,
             'signal_type':  setup_type_v or sig.get('setup_type') or '',
+            'ml_score':     exp_score,   # for BEAR regime oversold exception
         }
 
         hard_passed, hard_reason = _apply_hard_gates(_gate_signal_dict, regime=regime)
