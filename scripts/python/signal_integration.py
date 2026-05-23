@@ -1682,9 +1682,10 @@ def cmd_score_all(params):
 
         # ── ATR-based fallback for signals with no matching scan entry levels ──
         # If the scan table had no row for this symbol/date, entry_price_v is None.
+        # Also applied when scan had SL=0 or None (scan didn't compute stop loss).
         # Compute entry = yesterday_close, stop = entry*(1 - 1.5*ATR14_pct),
         # target = entry*(1 + 3.0*ATR14_pct)  → 2:1 R/R
-        if entry_price_v is None:
+        if entry_price_v is None or (entry_price_v and (not stop_loss_v or stop_loss_v <= 0)):
             try:
                 # Fetch the last close on or before signal date from ohlcv_history
                 _ohlcv_row = conn.execute(
@@ -1716,6 +1717,16 @@ def cmd_score_all(params):
                     r_ratio_v     = round((_t1_dist := t1_v - _entry) / _stop_dist, 2) if _stop_dist else 2.0
             except Exception:
                 pass  # leave as None if anything goes wrong
+
+        # ── Minimum SL safety net — never allow SL=None/0/negative ───────────
+        # If after all fallbacks stop_loss_v is still missing/invalid, use 5% below entry.
+        # This prevents signals being tracked with unlimited downside risk.
+        if entry_price_v and (not stop_loss_v or stop_loss_v <= 0):
+            stop_loss_v = round(entry_price_v * 0.95, 4)  # 5% default SL
+        if entry_price_v and not t1_v:
+            t1_v = round(entry_price_v * 1.10, 4)   # 10% default T1 (2:1 R/R with 5% SL)
+        if entry_price_v and not t2_v:
+            t2_v = round(entry_price_v * 1.15, 4)   # 15% default T2
 
         # ── Hard Gates (applied after UES, before adding to active signals) ──
         # Build a lightweight dict for gate inspection

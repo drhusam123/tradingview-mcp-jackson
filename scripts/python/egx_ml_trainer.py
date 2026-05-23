@@ -935,24 +935,30 @@ def phase3_regime_models():
     print(f"[P3] OHLCV cache: {len(cache)} symbols", flush=True)
 
     # ── All positives from explosive_moves (IS + OOS) ─────────────────────────
+    # Ph 80 — Limit positives to last 3 years for faster training
+    # The full history (13000+ rows) × 3 negatives takes 3+ hours to compute.
+    # Limiting to 3 years (2023+) reduces to ~6000 pos, ~18000 neg, ~30min training.
+    _p3_min_date = (_today_dt - datetime.timedelta(days=3*365)).isoformat()
     pos_rows = conn.execute(
-        "SELECT * FROM explosive_moves WHERE explosion_date <= ? OR explosion_date >= ?",
-        (IS_END, OOS_START)
+        "SELECT * FROM explosive_moves WHERE explosion_date >= ?",
+        (_p3_min_date,)
     ).fetchall()
 
-    # ── Negative candidates (non-explosion days, 6× positives) ───────────────
+    # ── Negative candidates (non-explosion days, 3× positives) ───────────────
+    # Ph 80 — Limit to same 3-year window for consistency, 3× positives (not 6×)
     target_neg = len(pos_rows) * 3
     neg_candidates = conn.execute("""
         SELECT o.symbol, date(o.bar_time,'unixepoch') AS bar_date
         FROM ohlcv_history o
-        WHERE NOT EXISTS (
+        WHERE date(o.bar_time,'unixepoch') >= ?
+          AND NOT EXISTS (
             SELECT 1 FROM explosive_moves e
             WHERE e.symbol = o.symbol
               AND e.explosion_date = date(o.bar_time,'unixepoch')
         )
         ORDER BY RANDOM()
         LIMIT ?
-    """, (target_neg * 2,)).fetchall()
+    """, (_p3_min_date, target_neg * 2,)).fetchall()
     conn.close()
 
     print(f"[P3] Pos candidates: {len(pos_rows)}, Neg candidates: {len(neg_candidates)}", flush=True)
@@ -1043,7 +1049,9 @@ def phase3_regime_models():
 
         study = optuna.create_study(direction='maximize',
                                     sampler=optuna.samplers.TPESampler(seed=42))
-        study.optimize(regime_objective, n_trials=80, n_jobs=N_OPTUNA,
+        # Ph 80 — Reduced from 80→40 trials (still finds good params, 2× faster)
+        # Phase 3 has 4 regimes × 40 trials = 160 total, vs 320 before
+        study.optimize(regime_objective, n_trials=40, n_jobs=N_OPTUNA,
                        show_progress_bar=False)
 
         best_p = study.best_params
