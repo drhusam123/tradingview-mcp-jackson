@@ -1577,14 +1577,19 @@ def cmd_score_all(params):
         # Fetch RSI + RSI slope for quality gate (Phase 3: Gate 9 — momentum collapse filter)
         _rsi14_for_gate  = None
         _rsi_slope_gate  = None
+        _vol_now         = 1.0   # default vol_ratio if indicators_cache unavailable
         try:
             _rsi_rows = conn.execute(
-                "SELECT rsi14 FROM indicators_cache WHERE symbol=? AND bar_date<=? "
+                "SELECT rsi14, vol_ratio_20 FROM indicators_cache WHERE symbol=? AND bar_date<=? "
                 "AND rsi14 IS NOT NULL ORDER BY bar_date DESC LIMIT 4",
                 (symbol, date)
             ).fetchall()
             if _rsi_rows:
                 _rsi14_for_gate = safe_float(_rsi_rows[0]['rsi14'], None)
+                _vol_now = safe_float(
+                    _rsi_rows[0]['vol_ratio_20'] if 'vol_ratio_20' in _rsi_rows[0].keys() else None,
+                    1.0
+                )
             if len(_rsi_rows) >= 4:
                 try:
                     _rsi_slope_gate = (_rsi_rows[0]['rsi14'] - _rsi_rows[3]['rsi14']) / 3.0
