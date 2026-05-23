@@ -4376,6 +4376,14 @@ def cmd_predict_ensemble():
         print(f"[ENS] Recent failure memory unavailable: {e_mem}", flush=True)
 
     # ── Build OHLCV cache ────────────────────────────────────────────────────
+    # Clear any stale predictions from earlier runs today before re-scoring.
+    # predict_ensemble uses INSERT OR REPLACE per (symbol, pred_date), so symbols
+    # that are now filtered by anomaly/vol guards (JUFO, DTPP etc.) would retain
+    # old scores from earlier today's runs. A clean delete + re-insert ensures the
+    # prediction table always reflects the CURRENT guard state.
+    conn.execute("DELETE FROM explosion_predictions WHERE pred_date = ?", (pred_date,))
+    conn.commit()
+
     print("[ENS] Building OHLCV cache...", flush=True)
     t0 = time.time()
 
@@ -4431,6 +4439,29 @@ def cmd_predict_ensemble():
         if anomaly_skip:
             n_anomaly_skipped += 1
             continue
+
+        # ── Near-zero-volume guard ────────────────────────────────────────────
+        # Skip stocks with vol_ratio_20 < 0.10 in the most recent bar.
+        # These are essentially non-trading stocks (JUFO vol=0.06, DTPP vol=0.08)
+        # that score falsely high due to BB compression on near-zero volume days.
+        # Gate 6d in signal_integration.py (vol>=0.90) would block them anyway,
+        # but filtering here prevents them from appearing in the prediction table
+        # and misleading the ranking dashboard.
+        try:
+            import pandas as _pd
+            _df_tmp = _pd.DataFrame([{'close': float(b['close'] or 0),
+                                       'volume': float(b['volume'] or 0)}
+                                      for b in bars[-5:]])
+            _avg_vol = _df_tmp['close'].iloc[-1] if len(_df_tmp) == 0 else None
+            # Use volume directly: compare last bar to rolling 20-bar avg
+            _bar_vols = [float(b['volume'] or 0) for b in bars]
+            _avg20 = sum(_bar_vols[-20:]) / max(1, len(_bar_vols[-20:]))
+            _last_vol = _bar_vols[-1] if _bar_vols else 0
+            if _avg20 > 0 and (_last_vol / _avg20) < 0.10:
+                n_anomaly_skipped += 1
+                continue
+        except Exception:
+            pass
 
         try:
             import pandas as pd

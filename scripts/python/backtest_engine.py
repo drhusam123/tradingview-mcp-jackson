@@ -1188,7 +1188,7 @@ def get_recent_losers(db_path=None, lookback_days: int = 60) -> Dict[str, Any]:
     try:
         rows = conn.execute(
             """
-            SELECT signal_date, symbol, entry_price, stop_loss, target1
+            SELECT signal_date, symbol, signal_type, entry_price, stop_loss, target1
             FROM hist_backtest_signals
             WHERE signal_date >= ?
             ORDER BY signal_date ASC
@@ -1199,6 +1199,7 @@ def get_recent_losers(db_path=None, lookback_days: int = 60) -> Dict[str, Any]:
         for sig in rows:
             symbol      = sig["symbol"]
             signal_date = sig["signal_date"]
+            signal_type = str(sig["signal_type"] or "SHORT_SWING").upper()
             entry_price = float(sig["entry_price"] or 0)
             stop_loss   = float(sig["stop_loss"]   or 0)
             target1     = float(sig["target1"]     or 0)
@@ -1206,12 +1207,15 @@ def get_recent_losers(db_path=None, lookback_days: int = 60) -> Dict[str, Any]:
             if stop_loss >= entry_price or entry_price <= 0:
                 continue
 
+            # Use the correct hold duration for each signal type (e.g. SHORT_SWING=9d)
+            max_hold = _get_hold_days_for_type(signal_type)
+
             entry_after = (
                 datetime.datetime.strptime(signal_date, "%Y-%m-%d").date()
                 + datetime.timedelta(days=1)
             ).strftime("%Y-%m-%d")
 
-            forward_bars = _load_forward_ohlcv(conn, symbol, entry_after, 20)
+            forward_bars = _load_forward_ohlcv(conn, symbol, entry_after, max_hold + 5)
             if not forward_bars:
                 continue
 
@@ -1220,7 +1224,7 @@ def get_recent_losers(db_path=None, lookback_days: int = 60) -> Dict[str, Any]:
                 stop_loss=stop_loss,
                 target1=target1,
                 ohlcv_forward=forward_bars,
-                max_hold_days=15,
+                max_hold_days=max_hold,
             )
 
             # Count as a loser only if STOP_LOSS or negative-PnL TIME_STOP
