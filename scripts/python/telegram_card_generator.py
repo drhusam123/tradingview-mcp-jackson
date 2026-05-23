@@ -49,18 +49,33 @@ OUT_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data", "cards")
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _strip_emoji(text: str) -> str:
-    """Remove emoji characters that render as boxes in Arabic fonts."""
+    """Remove emoji/symbol chars that render as boxes in bilingual fonts.
+    Keeps: Arabic (0600-06FF, FB50-FDFF), Latin, digits, punctuation, spaces.
+    Strips: emoji (2600+), variation selectors (FE00-FE0F), combining Cf chars.
+    """
     import unicodedata
     result = []
     for ch in text:
-        cat = unicodedata.category(ch)
         cp = ord(ch)
-        # Keep Arabic, Latin, digits, punctuation; skip emoji blocks
-        if (cp < 0x2500 or (0xFB50 <= cp <= 0xFDFF) or (0x0600 <= cp <= 0x06FF)):
+        cat = unicodedata.category(ch)
+        # Always skip: variation selectors, zero-width joiners, direction marks
+        if 0xFE00 <= cp <= 0xFE0F:  # variation selectors (️ after emoji)
+            continue
+        if cp in (0x200B, 0x200C, 0x200D, 0x200E, 0x200F,  # zero-width/dir marks
+                  0xFEFF):  # BOM
+            continue
+        # Keep Arabic presentation forms
+        if 0xFB50 <= cp <= 0xFDFF or 0x0600 <= cp <= 0x06FF:
             result.append(ch)
-        elif cat.startswith(('L', 'N', 'P', 'Z', 'M')):
+            continue
+        # Keep basic ASCII + Latin extended
+        if cp < 0x2000:
             result.append(ch)
-        # else: skip (emoji, symbols, etc.)
+            continue
+        # Skip emoji and symbols (U+2000+) unless it's a letter/number/punct
+        if cat.startswith(('L', 'N', 'P', 'Z')):
+            result.append(ch)
+        # else: skip symbols, emoji, etc.
     return ''.join(result).strip()
 
 
@@ -571,7 +586,7 @@ def build_stock_card(signal: Dict) -> Optional[bytes]:
     # ── Risk note ────────────────────────────────────────────────────────────
     risk_y = panel_y + 162
     font_risk = _font_ar(13)
-    risk_note = _ar(f"⚠️ {cfg['risk_note']}")
+    risk_note = _ar(cfg['risk_note'])  # no emoji prefix — causes box rendering
     _text_center(draw, risk_note, font_risk, risk_y, W, PALETTE.neutral_gray)
 
     # ── Divider ──────────────────────────────────────────────────────────────
@@ -665,28 +680,34 @@ def build_watchlist_card(watchlist: List[Dict], market_data: Dict) -> Optional[b
         price = stock.get("current_price", 0)
         rsi = stock.get("rsi", 0)
         ml  = stock.get("ml_score", 0)
+        mom5 = stock.get("momentum_5d", 0)
+        expl = stock.get("explosion_score", 0)
         note_ar = stock.get("note_ar", "")
 
         # Symbol
         draw.text((36, ry + 8), sym, font=font_sym, fill=PALETTE.text_primary)
 
-        # Price
+        # Price + momentum arrow
+        mom_arrow = "+" if mom5 >= 0 else ""
+        mom_color = PALETTE.bull_green if mom5 > 0 else PALETTE.bear_red if mom5 < 0 else PALETTE.text_dim
         price_text = f"{price:.2f}"
         draw.text((36, ry + 30), price_text, font=font_info, fill=PALETTE.text_secondary)
+        mom_text = f"5D: {mom_arrow}{mom5:.1f}%"
+        draw.text((108, ry + 30), mom_text, font=font_info, fill=mom_color)
 
         # RSI
         rsi_color = PALETTE.bull_green if rsi < 40 else PALETTE.bear_red if rsi > 60 else PALETTE.text_dim
         rsi_text = f"RSI {rsi:.1f}"
-        bbox = draw.textbbox((0, 0), rsi_text, font=font_info)
-        draw.text((200, ry + 8), rsi_text, font=font_info, fill=rsi_color)
+        draw.text((210, ry + 8), rsi_text, font=font_info, fill=rsi_color)
 
-        # ML
-        ml_text = _ar(f"ثقة: {ml:.0f}%")
-        draw.text((200, ry + 28), ml_text, font=font_info, fill=PALETTE.text_dim)
+        # ML explosion score
+        expl_color = PALETTE.swing_gold if expl >= 70 else PALETTE.text_dim
+        ml_text = f"ML {expl:.0f}%"
+        draw.text((210, ry + 28), ml_text, font=font_info, fill=expl_color)
 
-        # Note
+        # Note (apply _ar() here, not in _enrich_watchlist)
         if note_ar:
-            note_r = _ar(note_ar)
+            note_r = _ar(str(note_ar))
             _text_right(draw, note_r, font_note, (W - 36, ry + 16), PALETTE.text_secondary)
 
         # Sparkline mini
@@ -830,38 +851,59 @@ def _enrich_signal(row: sqlite3.Row, conn: sqlite3.Connection) -> Dict:
 
 
 def _enrich_watchlist(symbols: List[str], conn: sqlite3.Connection) -> List[Dict]:
-    """Build watchlist entries for BEAR/no-signal days."""
+    """Build watchlist entries for BEAR/no-signal days.
+    Note: store raw Arabic text in note_ar — _ar() applied in drawing function.
+    """
     result = []
     for sym in symbols[:5]:
+        # Price from ohlcv_history (correct table name)
         price_row = conn.execute(
-            "SELECT close FROM ohlcv WHERE symbol=? ORDER BY date DESC LIMIT 1", (sym,)
+            "SELECT close FROM ohlcv_history WHERE symbol=? ORDER BY bar_time DESC LIMIT 1", (sym,)
         ).fetchone()
         current = price_row[0] if price_row else 0.0
 
         ind_row = conn.execute(
-            "SELECT rsi14 FROM indicators_cache WHERE symbol=? ORDER BY bar_date DESC LIMIT 1", (sym,)
+            "SELECT rsi14, momentum_5d, adx14, vol_ratio_20 "
+            "FROM indicators_cache WHERE symbol=? ORDER BY bar_date DESC LIMIT 1", (sym,)
         ).fetchone()
-        rsi = ind_row["rsi14"] if ind_row else 50
+        rsi = float(ind_row["rsi14"]) if ind_row and ind_row["rsi14"] else 50.0
+        mom5 = float(ind_row["momentum_5d"]) if ind_row and ind_row["momentum_5d"] else 0.0
+        adx = float(ind_row["adx14"]) if ind_row and ind_row["adx14"] else 0.0
+        vol_ratio = float(ind_row["vol_ratio_20"]) if ind_row and ind_row["vol_ratio_20"] else 1.0
 
         ml_row = conn.execute(
-            "SELECT unified_score FROM unified_signals WHERE symbol=? ORDER BY signal_date DESC LIMIT 1",
+            "SELECT unified_score, explosion_score FROM unified_signals "
+            "WHERE symbol=? ORDER BY signal_date DESC LIMIT 1",
             (sym,)
         ).fetchone()
-        ml = ml_row["unified_score"] if ml_row else 0
+        ml = float(ml_row["unified_score"]) if ml_row and ml_row["unified_score"] else 0.0
+        expl = float(ml_row["explosion_score"]) if ml_row and ml_row["explosion_score"] else 0.0
 
-        # Note: why it's watchlisted
+        # Generate contextual Arabic note (raw text — NOT bidi-shaped here)
         note = ""
-        if rsi and rsi < 40:
-            note = _ar("منطقة تراكم محتملة")
-        elif ml and ml > 50:
-            note = _ar("زخم إيجابي — انتظر تأكيداً")
+        if rsi < 35 and mom5 < 0:
+            note = "تراكم محتمل — مفرط في البيع"
+        elif rsi < 40:
+            note = "منطقة تراكم محتملة"
+        elif expl >= 75 and adx < 25:
+            note = "ضغط — انتظر كسر المقاومة"
+        elif vol_ratio < 0.5:
+            note = "حجم ضعيف — جانبي"
+        elif ml >= 70:
+            note = "زخم قوي — انتظر تأكيداً"
+        elif mom5 > 5:
+            note = "زخم صاعد — مراقبة"
+        else:
+            note = "انتظر إشارة واضحة"
 
         result.append({
             "symbol": sym,
             "current_price": current,
-            "rsi": rsi or 50,
-            "ml_score": ml or 0,
-            "note_ar": note,
+            "rsi": rsi,
+            "ml_score": ml,
+            "explosion_score": expl,
+            "momentum_5d": mom5,
+            "note_ar": note,   # raw Arabic — _ar() applied in build_watchlist_card
         })
     return result
 
@@ -927,9 +969,12 @@ def generate_daily_cards(report_date: str = None) -> Dict:
 
         # Gate-passed signals for today (or latest) — quality_gate_passed=1
         gp_rows = conn.execute(
-            "SELECT * FROM unified_signals "
-            "WHERE quality_gate_passed=1 AND signal_date=? "
-            "ORDER BY unified_score DESC LIMIT 5",
+            "SELECT us.* FROM unified_signals us "
+            "LEFT JOIN data_quality_flags dq "
+            "  ON us.symbol=dq.symbol AND dq.issue_type='UNIT_ERROR' "
+            "WHERE us.quality_gate_passed=1 AND us.signal_date=? "
+            "AND dq.id IS NULL "
+            "ORDER BY us.unified_score DESC LIMIT 5",
             (report_date,)
         ).fetchall()
 
@@ -940,9 +985,12 @@ def generate_daily_cards(report_date: str = None) -> Dict:
             ).fetchone()[0]
             if latest:
                 gp_rows = conn.execute(
-                    "SELECT * FROM unified_signals "
-                    "WHERE quality_gate_passed=1 AND signal_date=? "
-                    "ORDER BY unified_score DESC LIMIT 5",
+                    "SELECT us.* FROM unified_signals us "
+                    "LEFT JOIN data_quality_flags dq "
+                    "  ON us.symbol=dq.symbol AND dq.issue_type='UNIT_ERROR' "
+                    "WHERE us.quality_gate_passed=1 AND us.signal_date=? "
+                    "AND dq.id IS NULL "
+                    "ORDER BY us.unified_score DESC LIMIT 5",
                     (latest,)
                 ).fetchall()
                 report_date = latest or report_date

@@ -22,13 +22,25 @@ MODELS_DIR  = Path(__file__).parent / 'models' / 'regime_models'
 GLOBAL_MODEL_PATH = Path(__file__).parent / 'models' / 'explosion_model.txt'
 REGIME_HMM_PATH   = Path(__file__).parent / 'models' / 'ohlcv_regime_hmm.json'
 
-# Must match explosion_ml.py FEATURE_COLS exactly (13 features)
+# Ph 80 — Extended to 20 features: added ADX, MACD, RSI slope, EMA slope/align
+# All available in explosive_moves table (computed at explosion-detection time)
 FEATURE_COLS = [
+    # Bollinger Band squeeze (existing)
     'pre1_bb_width',    'pre3_bb_width',    'pre5_bb_width',
+    # Volume ratio (existing)
     'pre1_vol_ratio',   'pre3_vol_ratio',   'pre5_vol_ratio',
+    # RSI (existing)
     'pre1_rsi',         'pre3_rsi',         'pre5_rsi',
+    # Momentum (existing)
     'pre3_momentum_5d', 'pre5_momentum_5d',
+    # BB position + compression (existing)
     'pre5_bb_position', 'pre5_compression_days',
+    # NEW: ADX trend strength (3 lookbacks)
+    'pre1_adx',         'pre3_adx',         'pre5_adx',
+    # NEW: MACD histogram (trend confirmation)
+    'pre1_macd_hist',   'pre3_macd_hist',   'pre5_macd_hist',
+    # NEW: RSI slope + EMA alignment
+    'pre1_rsi_slope',   'pre1_ema_align',   'pre1_ema20_slope',
 ]
 
 REGIME_LABELS = {
@@ -167,7 +179,10 @@ def _load_training_data(conn, regime_map, is_end='2025-12-31', oos_start='2026-0
             pre1_vol_ratio, pre3_vol_ratio, pre5_vol_ratio,
             pre1_rsi, pre3_rsi, pre5_rsi,
             pre3_momentum_5d, pre5_momentum_5d,
-            pre5_bb_position, pre5_compression_days
+            pre5_bb_position, pre5_compression_days,
+            pre1_adx, pre3_adx, pre5_adx,
+            pre1_macd_hist, pre3_macd_hist, pre5_macd_hist,
+            pre1_rsi_slope, pre1_ema_align, pre1_ema20_slope
         FROM explosive_moves
         WHERE pre1_rsi IS NOT NULL
           AND return_3d IS NOT NULL
@@ -349,7 +364,10 @@ def cmd_evaluate(params):
             continue
 
         # Global model on this regime's data (LightGBM Booster)
-        global_pred = global_model.predict(oos_X)
+        # Global model was trained with 13 core features — use only first 13 columns
+        _GLOBAL_N_FEAT = 13
+        global_X = oos_X[:, :_GLOBAL_N_FEAT] if oos_X.shape[1] > _GLOBAL_N_FEAT else oos_X
+        global_pred = global_model.predict(global_X)
         g_prec = float((oos_y[global_pred >= 0.5]).sum() / max((global_pred >= 0.5).sum(), 1))
         g_sig  = int((global_pred >= 0.5).sum())
 

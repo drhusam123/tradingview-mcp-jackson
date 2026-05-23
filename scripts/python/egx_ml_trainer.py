@@ -917,7 +917,11 @@ def phase3_regime_models():
 
     conn = get_db()
     today_str = datetime.date.today().isoformat()
-    IS_END, OOS_START = '2025-12-31', '2026-01-30'
+    # Ph 80 — Dynamic dates: train on all data up to 30 days ago, OOS is last 60 days.
+    # Matches Phase 2 dynamic window logic. Previously hardcoded to 2025-12-31.
+    _today_dt = datetime.date.today()
+    IS_END    = (_today_dt - datetime.timedelta(days=30)).isoformat()
+    OOS_START = (_today_dt - datetime.timedelta(days=60)).isoformat()
 
     # ── Regime lookup map ─────────────────────────────────────────────────────
     regime_map = {}
