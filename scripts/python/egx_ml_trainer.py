@@ -4484,6 +4484,19 @@ def cmd_predict_ensemble():
 
         if anomaly_skip:
             n_anomaly_skipped += 1
+            # Write explicit low score (1%) so signal_integration's 7-day lookback
+            # doesn't pick up the OLD high score from before the anomaly was detected.
+            # Without this, get_explosion_score() finds last week's 90%+ score and
+            # signals the stock as HIGH_CONVICTION despite the anomaly guard here.
+            try:
+                conn.execute("""
+                    INSERT OR REPLACE INTO explosion_predictions
+                    (symbol, pred_date, explosion_prob, prob_pct, confidence_tier, direction, top_drivers)
+                    VALUES (?,?,?,?,?,?,?)
+                """, (sym, pred_date, 0.01, 1, 'LOW', 'ANOMALY_FILTERED',
+                      '[{"feature":"anomaly_guard","value":1}]'))
+            except Exception:
+                pass
             continue
 
         # ── Near-zero-volume guard ────────────────────────────────────────────
@@ -4505,6 +4518,15 @@ def cmd_predict_ensemble():
             _last_vol = _bar_vols[-1] if _bar_vols else 0
             if _avg20 > 0 and (_last_vol / _avg20) < 0.10:
                 n_anomaly_skipped += 1
+                try:
+                    conn.execute("""
+                        INSERT OR REPLACE INTO explosion_predictions
+                        (symbol, pred_date, explosion_prob, prob_pct, confidence_tier, direction, top_drivers)
+                        VALUES (?,?,?,?,?,?,?)
+                    """, (sym, pred_date, 0.01, 1, 'LOW', 'VOL_FILTERED',
+                          '[{"feature":"vol_guard","value":1}]'))
+                except Exception:
+                    pass
                 continue
         except Exception:
             pass
