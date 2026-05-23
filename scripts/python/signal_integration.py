@@ -1441,7 +1441,24 @@ def _apply_hard_gates(signal: dict, regime: str = 'NEUTRAL') -> tuple:
     if regime in ('BEAR', 'BEARISH'):
         ml_s  = signal.get('ml_score', 0.0) or 0.0
         rsi_s = signal.get('rsi14', 50.0) or 50.0
-        is_bear_oversold_exception = (ml_s >= 85.0 and rsi_s <= 35.0)
+        # Data quality guard: reject BEAR oversold exception if stock has unit-mismatch flag
+        # (ZMID, ORWE, MBSC etc had piastres→EGP jumps creating fake RSI<35 signals)
+        # 89 EGX stocks flagged 2026-05-23 with UNIT_ERROR in data_quality_flags table.
+        _has_unit_error = False
+        _sym = signal.get('symbol', '')
+        if _sym and rsi_s <= 35.0:  # Only query DB if stock is actually oversold
+            try:
+                import sqlite3 as _sqlite3
+                _dq_conn = _sqlite3.connect(DB_PATH)
+                _dq = _dq_conn.execute(
+                    "SELECT 1 FROM data_quality_flags WHERE symbol=? AND issue_type='UNIT_ERROR' LIMIT 1",
+                    (_sym,)
+                ).fetchone()
+                _has_unit_error = _dq is not None
+                _dq_conn.close()
+            except Exception:
+                pass
+        is_bear_oversold_exception = (ml_s >= 85.0 and rsi_s <= 35.0 and not _has_unit_error)
         if not is_bear_oversold_exception:
             if signal_type not in ('INVESTMENT', 'UNDERVALUED', 'investment', 'undervalued'):
                 return False, "BEAR_REGIME_FILTER"
