@@ -1009,7 +1009,7 @@ def run_historical_backtest(
     regime_filter: Optional[str] = None,
     rsi_max: Optional[float] = None,
     min_adx: Optional[float] = None,
-    min_vol_ratio: Optional[float] = None,
+    min_vol_ratio: Optional[float] = 0.90,   # (2026-05-23): Gate 6d — vol<0.90 → low conviction, 8/15 losers had vol<0.90
     max_vol_ratio: Optional[float] = None,   # NEW (2026-05-22): vol>3 WR=64% vs vol<1.5 WR=82%
     min_ad_ratio: Optional[float] = None,    # NEW (2026-05-22): STOP_LOSS avg AD=0.98 vs TARGET1 1.14
     slippage_pct: float = 0.003,
@@ -1168,6 +1168,97 @@ def run_historical_backtest(
         conn.close()
 
 
+def get_recent_losers(db_path=None, lookback_days: int = 60) -> Dict[str, Any]:
+    """
+    Compute symbols with STOP_LOSS/TIME_STOP exits in the last `lookback_days` days.
+
+    Uses hist_backtest_signals + forward OHLCV simulation to find actual losing trades.
+    Returns a dict: symbol → {last_loss_date, days_ago, worst_pnl, loss_count}
+
+    Used by cmd_predict_ensemble() for recent-failure-memory penalty:
+    stocks that recently failed are down-weighted to avoid repeat losses.
+    (Added 2026-05-23)
+    """
+    db_path = db_path or DB_PATH
+    conn = _get_conn(db_path)
+    today = datetime.date.today()
+    cutoff = (today - datetime.timedelta(days=lookback_days)).strftime("%Y-%m-%d")
+    losers: Dict[str, Any] = {}
+
+    try:
+        rows = conn.execute(
+            """
+            SELECT signal_date, symbol, entry_price, stop_loss, target1
+            FROM hist_backtest_signals
+            WHERE signal_date >= ?
+            ORDER BY signal_date ASC
+            """,
+            (cutoff,),
+        ).fetchall()
+
+        for sig in rows:
+            symbol      = sig["symbol"]
+            signal_date = sig["signal_date"]
+            entry_price = float(sig["entry_price"] or 0)
+            stop_loss   = float(sig["stop_loss"]   or 0)
+            target1     = float(sig["target1"]     or 0)
+
+            if stop_loss >= entry_price or entry_price <= 0:
+                continue
+
+            entry_after = (
+                datetime.datetime.strptime(signal_date, "%Y-%m-%d").date()
+                + datetime.timedelta(days=1)
+            ).strftime("%Y-%m-%d")
+
+            forward_bars = _load_forward_ohlcv(conn, symbol, entry_after, 20)
+            if not forward_bars:
+                continue
+
+            result = _simulate_trade_pnl(
+                entry_price=entry_price,
+                stop_loss=stop_loss,
+                target1=target1,
+                ohlcv_forward=forward_bars,
+                max_hold_days=15,
+            )
+
+            # Count as a loser only if STOP_LOSS or negative-PnL TIME_STOP
+            is_loser = (
+                result["exit_reason"] == "STOP_LOSS"
+                or (result["exit_reason"] == "TIME_STOP" and result["pnl_pct"] < 0)
+            )
+            if not is_loser:
+                continue
+
+            pnl      = result["pnl_pct"]
+            days_ago = (today - datetime.datetime.strptime(signal_date, "%Y-%m-%d").date()).days
+
+            if symbol not in losers:
+                losers[symbol] = {
+                    "last_loss_date": signal_date,
+                    "days_ago":       days_ago,
+                    "worst_pnl":      pnl,
+                    "loss_count":     1,
+                }
+            else:
+                # Keep the MOST RECENT loss date (for penalty freshness)
+                if signal_date > losers[symbol]["last_loss_date"]:
+                    losers[symbol]["last_loss_date"] = signal_date
+                    losers[symbol]["days_ago"]       = days_ago
+                # Track worst PnL for severity scaling
+                if pnl < losers[symbol]["worst_pnl"]:
+                    losers[symbol]["worst_pnl"] = pnl
+                losers[symbol]["loss_count"] += 1
+
+    except Exception:
+        pass
+    finally:
+        conn.close()
+
+    return losers
+
+
 def _print_historical_report(results: Dict[str, Any]) -> None:
     if "error" in results:
         print(f"\n❌ خطأ: {results['error']}\n")
@@ -1271,7 +1362,8 @@ def _build_parser() -> argparse.ArgumentParser:
     hist_p.add_argument("--regime", type=str, default=None, help="Filter to regime: BULL, BEAR, CHOPPY")
     hist_p.add_argument("--rsi-max", type=float, default=None, dest="rsi_max", help="Max RSI14 at entry (e.g. 70 to exclude overbought)")
     hist_p.add_argument("--min-adx", type=float, default=None, dest="min_adx", help="Min ADX at entry (e.g. 30 for trend strength filter)")
-    hist_p.add_argument("--min-vol", type=float, default=None, dest="min_vol_ratio", help="Min vol ratio 20d (e.g. 1.2 for above-avg volume)")
+    hist_p.add_argument("--min-vol", type=float, default=0.90, dest="min_vol_ratio",
+                        help="Min vol ratio 20d (default=0.90; Gate 6d: vol<0.90=low conviction, 8/15 recent losers had vol<0.90)")
     hist_p.add_argument("--max-vol", type=float, default=None, dest="max_vol_ratio",
                         help="Max vol ratio 20d (default=None; 2026-05-22: vol>3 WR=64%% — high-vol chase entries fail at 2x rate; use 3.0)")
     hist_p.add_argument("--min-ad", type=float, default=None, dest="min_ad_ratio",

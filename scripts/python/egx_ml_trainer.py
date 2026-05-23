@@ -4352,6 +4352,29 @@ def cmd_predict_ensemble():
           f"(regime model {'ACTIVE' if today_regime in regime_models else 'not available'})",
           flush=True)
 
+    # ── Recent failure memory (2026-05-23) ──────────────────────────────────
+    # Stocks that hit STOP_LOSS or negative TIME_STOP in last 60 days get
+    # a probability penalty that fades linearly from 20% (day 0) → 0% (day 60).
+    # Penalty is also scaled by loss severity: a -10% loss → full severity multiplier,
+    # smaller losses get proportionally less penalty.
+    # Rationale: MHOT had STOP_LOSS on 2026-04-27 but still scored 83.6% on the
+    # next cycle — the market condition that caused the failure likely persists.
+    recent_losers = {}   # symbol → {last_loss_date, days_ago, worst_pnl, loss_count}
+    try:
+        import backtest_engine as _be_mem
+        recent_losers = _be_mem.get_recent_losers(str(DB_PATH), lookback_days=60)
+        print(f"[ENS] Recent failure memory: {len(recent_losers)} stocks penalized "
+              f"(60d STOP_LOSS/TIME_STOP)", flush=True)
+        if recent_losers:
+            # Show the 5 most recently-failed stocks
+            top_fails = sorted(recent_losers.items(), key=lambda x: x[1]['days_ago'])[:5]
+            for s_f, i_f in top_fails:
+                print(f"[ENS]   penalty: {s_f:8s}  last_loss={i_f['last_loss_date']} "
+                      f"({i_f['days_ago']}d ago)  worst={i_f['worst_pnl']:.1f}%  "
+                      f"n={i_f['loss_count']}", flush=True)
+    except Exception as e_mem:
+        print(f"[ENS] Recent failure memory unavailable: {e_mem}", flush=True)
+
     # ── Build OHLCV cache ────────────────────────────────────────────────────
     print("[ENS] Building OHLCV cache...", flush=True)
     t0 = time.time()
@@ -4363,6 +4386,7 @@ def cmd_predict_ensemble():
     predictions = []
     n_scored = 0
     n_anomaly_skipped = 0
+    n_failure_penalized = 0
 
     for sym in symbols:
         bars = conn.execute("""
@@ -4488,6 +4512,24 @@ def cmd_predict_ensemble():
                     p_stock = None
                     stock_blend_weight = 0.0
 
+        # ── Phase 5: recent failure memory penalty (2026-05-23) ──────────────
+        # Down-weight stocks that had a STOP_LOSS within the last 60 days.
+        # Max penalty = 20% at day 0, fades to 0% at day 60.
+        # Severity scaling: a 10%+ loss → full 20% max; smaller losses proportional.
+        # This prevents the model from re-selecting the same losers cycle after cycle
+        # (e.g. MHOT scored 83.6% the cycle after its STOP_LOSS exit).
+        failure_penalty = 0.0
+        p_before_penalty = prob
+        if sym in recent_losers:
+            info_f = recent_losers[sym]
+            days_f = info_f['days_ago']
+            if days_f < 60:
+                base_pen  = 0.20 * (1.0 - days_f / 60.0)           # fades 20% → 0%
+                severity  = min(1.0, abs(info_f['worst_pnl']) / 10.0)  # scale by loss size
+                failure_penalty = base_pen * (0.5 + 0.5 * severity)  # min 50% of base
+                prob = prob * (1.0 - failure_penalty)
+                n_failure_penalized += 1
+
         n_scored += 1
         tier = 'HIGH' if prob >= 0.70 else 'MEDIUM' if prob >= 0.50 else 'LOW'
 
@@ -4518,6 +4560,11 @@ def cmd_predict_ensemble():
                             'value': round(p_stock, 3)})
             drivers.append({'feature': 'stock_model_weight',
                             'value': round(stock_blend_weight, 3)})
+        if failure_penalty > 0:
+            drivers.append({'feature': 'failure_penalty',
+                            'value': round(failure_penalty, 3)})
+            drivers.append({'feature': 'prob_before_penalty',
+                            'value': round(p_before_penalty, 3)})
 
         conn.execute("""
             INSERT OR REPLACE INTO explosion_predictions
@@ -4543,6 +4590,9 @@ def cmd_predict_ensemble():
             if p_stock is not None:
                 entry['stock_prob'] = round(p_stock, 3)
                 entry['stock_weight'] = round(stock_blend_weight, 3)
+            if failure_penalty > 0:
+                entry['failure_penalty'] = round(failure_penalty, 3)
+                entry['prob_pre_penalty'] = round(p_before_penalty, 3)
             predictions.append(entry)
 
     conn.commit()
@@ -4559,10 +4609,13 @@ def cmd_predict_ensemble():
         "regime_blend_active": regime_blend_active,
         "n_stock_models_blended": len(stock_models),
         "n_predictions_with_stock_blend": n_stock_blended,
+        "n_failure_penalized": n_failure_penalized,
+        "n_recent_losers_tracked": len(recent_losers),
         "n_scored": n_scored,
         "n_anomaly_skipped": n_anomaly_skipped,
         "n_stored": len(predictions),
-        "top5": [{'sym': p['symbol'], 'prob': p['explosion_prob']} for p in predictions[:5]],
+        "top5": [{'sym': p['symbol'], 'prob': p['explosion_prob'],
+                  'pen': p.get('failure_penalty', 0)} for p in predictions[:5]],
         "duration_seconds": round(dur, 1),
     }), flush=True)
 
