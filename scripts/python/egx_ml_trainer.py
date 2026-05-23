@@ -4277,6 +4277,55 @@ def cmd_predict_ensemble():
     else:
         print("[ENS] Phase 3 regime models not found — using ensemble-only (run phase3 to improve)", flush=True)
 
+    # ── Phase 4.5 per-stock models (2026-05-23) ───────────────────────────────
+    # Load per-stock LightGBM models (trained by phase4_per_stock_models).
+    # Each stock's personal model captures idiosyncratic patterns (sector cycles,
+    # liquidity rhythms, individual volatility regimes) that the global ensemble misses.
+    # Only blend when OOS AUC >= 0.55 (genuine predictive signal vs noise).
+    # Weight scales from 0% at AUC=0.55 → max 20% at AUC=1.0, leaving 80%+ for global.
+    # Stocks without good per-stock models keep the current ensemble-only prediction.
+    _conn_ps = get_db()
+    stock_model_meta = {}  # symbol → auc_oos
+    try:
+        for row in _conn_ps.execute(
+            "SELECT symbol, auc_oos, model_path FROM per_stock_models WHERE auc_oos >= 0.55"
+        ).fetchall():
+            stock_model_meta[row['symbol']] = float(row['auc_oos'] or 0)
+    except Exception:
+        pass
+    _conn_ps.close()
+
+    # Pre-load latest TECH_FEATURES from feature_store for all symbols at once.
+    # feature_store is pre-computed by Phase 1 / daily pipeline — much faster than
+    # recomputing 67 features per stock in predict_ensemble.
+    _conn_fs = get_db()
+    stock_feature_vectors = {}  # symbol → np.array of 67 TECH_FEATURES (ordered by TECH_FEATURES list)
+    try:
+        fs_rows = _conn_fs.execute(
+            """SELECT symbol, feature_name, feature_value
+               FROM feature_store
+               WHERE feature_date = (SELECT MAX(feature_date) FROM feature_store)"""
+        ).fetchall()
+        # Pivot: {symbol: {feature_name: value}}
+        _fs_pivot = {}
+        for row in fs_rows:
+            sym_k = row['symbol']
+            if sym_k not in _fs_pivot:
+                _fs_pivot[sym_k] = {}
+            _fs_pivot[sym_k][row['feature_name']] = float(row['feature_value'] or 0.0)
+        # Build ordered feature arrays for each symbol
+        for sym_k, fdict in _fs_pivot.items():
+            vec = np.array([fdict.get(f, 0.0) for f in TECH_FEATURES], dtype=np.float32).reshape(1, -1)
+            stock_feature_vectors[sym_k] = vec
+        fs_latest = _conn_fs.execute("SELECT MAX(feature_date) FROM feature_store").fetchone()[0]
+        print(f"[ENS] Feature store loaded: {len(stock_feature_vectors)} symbols, latest={fs_latest}", flush=True)
+    except Exception as e:
+        print(f"[ENS] Feature store unavailable: {e}", flush=True)
+    _conn_fs.close()
+
+    stock_models = {}  # symbol → LightGBM Booster (lazy-loaded only for today's stocks)
+    print(f"[ENS] Per-stock models available: {len(stock_model_meta)} with AUC>=0.55", flush=True)
+
     feat_path = MODELS / 'explosion_features_v3.json'
     if feat_path.exists():
         FEAT = json.loads(feat_path.read_text())
@@ -4410,6 +4459,35 @@ def cmd_predict_ensemble():
         else:
             prob = ensemble_prob
 
+        # ── Phase 4.5: blend per-stock model (2026-05-23) ────────────────────
+        # Per-stock LightGBM captures each stock's idiosyncratic patterns using
+        # the full 67-feature TECH_FEATURES vector (from feature_store), which
+        # includes DNA traits, market breadth, and regime context — far richer
+        # than the 22-feature global ensemble input.
+        # Weight = min(20%, (auc_oos - 0.55) / 0.45 * 0.20) scales with model quality.
+        # The global blend (Phases 2+3) retains at least 80% weight always.
+        p_stock = None
+        stock_blend_weight = 0.0
+        if sym in stock_model_meta and sym in stock_feature_vectors:
+            auc_stock = stock_model_meta[sym]
+            stock_blend_weight = min(0.20, (auc_stock - 0.55) / 0.45 * 0.20)
+            # Lazy-load per-stock model on first encounter
+            if sym not in stock_models:
+                sp = MODELS / f'stock_{sym}.txt'
+                if sp.exists():
+                    try:
+                        stock_models[sym] = lgb.Booster(model_file=str(sp))
+                    except Exception:
+                        stock_blend_weight = 0.0
+            if sym in stock_models and stock_blend_weight > 0:
+                try:
+                    X_stock = stock_feature_vectors[sym]  # (1, 67) TECH_FEATURES
+                    p_stock = float(stock_models[sym].predict(X_stock)[0])
+                    prob = (1.0 - stock_blend_weight) * prob + stock_blend_weight * p_stock
+                except Exception:
+                    p_stock = None
+                    stock_blend_weight = 0.0
+
         n_scored += 1
         tier = 'HIGH' if prob >= 0.70 else 'MEDIUM' if prob >= 0.50 else 'LOW'
 
@@ -4435,6 +4513,11 @@ def cmd_predict_ensemble():
                             'value': round(p_regime, 3)})
             drivers.append({'feature': 'ensemble_prob_pre_blend',
                             'value': round(ensemble_prob, 3)})
+        if p_stock is not None:
+            drivers.append({'feature': 'stock_model_prob',
+                            'value': round(p_stock, 3)})
+            drivers.append({'feature': 'stock_model_weight',
+                            'value': round(stock_blend_weight, 3)})
 
         conn.execute("""
             INSERT OR REPLACE INTO explosion_predictions
@@ -4457,6 +4540,9 @@ def cmd_predict_ensemble():
             if p_regime is not None:
                 entry['regime_prob'] = round(p_regime, 3)
                 entry['ensemble_pre_blend'] = round(ensemble_prob, 3)
+            if p_stock is not None:
+                entry['stock_prob'] = round(p_stock, 3)
+                entry['stock_weight'] = round(stock_blend_weight, 3)
             predictions.append(entry)
 
     conn.commit()
@@ -4464,12 +4550,15 @@ def cmd_predict_ensemble():
     predictions.sort(key=lambda x: -x['explosion_prob'])
     dur = time.time() - t0
     regime_blend_active = bool(regime_models.get(today_regime))
+    n_stock_blended = sum(1 for p in predictions if 'stock_prob' in p)
 
     print(json.dumps({
         "cmd": "predict_ensemble",
         "pred_date": pred_date,
         "today_regime": today_regime,
         "regime_blend_active": regime_blend_active,
+        "n_stock_models_blended": len(stock_models),
+        "n_predictions_with_stock_blend": n_stock_blended,
         "n_scored": n_scored,
         "n_anomaly_skipped": n_anomaly_skipped,
         "n_stored": len(predictions),

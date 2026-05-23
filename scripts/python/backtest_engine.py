@@ -1005,7 +1005,7 @@ def run_historical_backtest(
     db_path: Optional[Path] = None,
     months: int = 12,
     min_ues: float = 92.0,  # raised 75→82→92 (2026-05-22): UES>=92 → WR=61.7% PF=2.39 (6m)  3m: WR=71.4% PF=3.92
-    max_ues: Optional[float] = 99.0,    # (2026-05-22): UES=99-100 "too perfect" signals underperform UES=92-98 by 4.8pp — keep default at 99
+    max_ues: Optional[float] = 96.0,    # (2026-05-23): UES=97-99 underperforms UES=92-96 by ~7pp WR — 6m WR=80.4% vs 77.9% at max=99
     regime_filter: Optional[str] = None,
     rsi_max: Optional[float] = None,
     min_adx: Optional[float] = None,
@@ -1264,8 +1264,8 @@ def _build_parser() -> argparse.ArgumentParser:
     hist_p = sub.add_parser("historical", help="Backtest against hist_backtest_signals (12 months)")
     hist_p.add_argument("--months", type=int, default=12, help="How many months back to test (default=12)")
     hist_p.add_argument("--min-ues", type=float, default=92.0, help="Min UES proxy to include (default=92, sweet spot: WR=61.7%% PF=2.39)")
-    hist_p.add_argument("--max-ues", type=float, default=99.0, dest="max_ues",
-                        help="Max UES proxy to include (default=99; UES=99-100 are late-entry 'all-factors-maxed' signals that underperform by 3-4pp WR)")
+    hist_p.add_argument("--max-ues", type=float, default=96.0, dest="max_ues",
+                        help="Max UES proxy to include (default=96; UES=97-99 underperform UES=92-96 by ~7pp WR: 6m WR=80.4%% vs 77.9%% at max=99)")
     hist_p.add_argument("--db", type=str, default=None, help="Override DB path")
     hist_p.add_argument("--json", action="store_true", dest="output_json", help="Output JSON")
     hist_p.add_argument("--regime", type=str, default=None, help="Filter to regime: BULL, BEAR, CHOPPY")
@@ -1323,7 +1323,7 @@ def main() -> None:
             db_path=db_path,
             months=args.months,
             min_ues=args.min_ues,
-            max_ues=getattr(args, "max_ues", 99.0),
+            max_ues=getattr(args, "max_ues", 96.0),
             regime_filter=getattr(args, "regime", None),
             rsi_max=getattr(args, "rsi_max", None),
             min_adx=getattr(args, "min_adx", None),
