@@ -1469,6 +1469,17 @@ def _apply_hard_gates(signal: dict, regime: str = 'NEUTRAL') -> tuple:
         if adx >= 40:
             return False, f"ADX_OVEREXTENDED:{adx:.0f}"
 
+    # Gate 12 (2026-05-23): Post-explosion cooldown.
+    # Stocks with momentum_5d >= 25% have ALREADY exploded — the move is spent.
+    # May 2026 analysis: ML≥85% group WR=11% (avg=-1.6%) vs ML 65-75% WR=65% (+6.3%).
+    # Root cause: recently-exploded stocks (ENGC +32% May 17-18, MENA +28% etc.) get
+    # high ML scores because their RSI/BB resets look like "pre-explosion" setups.
+    # Threshold 25%: captures circuit-breaker-level 5-day moves while allowing
+    # normal 10-15% short-term swings that signal healthy momentum.
+    mom5 = float(signal.get('momentum_5d', 0.0) or signal.get('mom5', 0.0) or 0.0)
+    if mom5 >= 25.0:
+        return False, f"POST_EXPLOSION_COOLDOWN:mom5d={mom5:.1f}%"
+
     return True, "PASSED"
 
 

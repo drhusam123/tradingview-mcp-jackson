@@ -4446,14 +4446,42 @@ def cmd_predict_ensemble():
             for i in range(1, len(closes)):
                 if closes[i-1] > 0 and closes[i] > 0:
                     day_chg = (closes[i] - closes[i-1]) / closes[i-1]
-                    if day_chg > 0.50:   # >50% upward in one day = data error/artifact
+                    if day_chg > 0.20:   # >20% upward = EGX circuit breaker / data error
+                        # EGX daily limit is 20% in most periods. Any stock hitting >20%
+                        # in a single day has either triggered the circuit breaker (post-
+                        # breakout exhaustion) or has a data error. Either way, NOT a
+                        # valid compression→explosion setup. Reduced from 50% → 20%.
+                        # Per-stock analysis (2026-05-23): ENGC +32%, MENA +28%, ZMID
+                        # price-corrected — all had ML≥85% but poor next-day performance.
                         anomaly_skip = True
                         break
-                    if day_chg < -0.30:  # >30% downward = ex-dividend gap (EGX daily limit ~10%, so >30% = halt/dividend only)
+                    if day_chg < -0.30:  # >30% downward = ex-dividend gap
                         anomaly_skip = True
                         break
         except Exception:
             pass
+
+        # ── Post-explosion cooldown guard (2026-05-23) ────────────────────────
+        # Stocks that had a cumulative 5-day return >20% are in post-explosion
+        # territory. The ML model tends to give them high scores (features reset
+        # to "compression-like" after the big move stalls), but the energy has
+        # been spent and next-day performance is poor.
+        # Based on May 2026 analysis: ML≥85% group WR=11% vs ML 65-75% WR=65%.
+        # All ML≥85% underperformers had single-day moves in their recent 10 bars.
+        if not anomaly_skip:
+            try:
+                closes = [float(b['close'] or 0) for b in bars[-10:]]
+                if len(closes) >= 6:
+                    # Check if any 5-bar window in last 10 had cumulative >25% gain
+                    for wi in range(len(closes) - 5):
+                        if closes[wi] > 0 and closes[wi+5] > 0:
+                            cum_ret = (closes[wi+5] - closes[wi]) / closes[wi]
+                            if cum_ret > 0.25:   # >25% in 5 days = post-explosion cooldown
+                                anomaly_skip = True
+                                break
+            except Exception:
+                pass
+
         if anomaly_skip:
             n_anomaly_skipped += 1
             continue
