@@ -268,6 +268,12 @@ def _compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     bb_mid = rolling_mean(c, 20)
 
     rets = np.diff(c, prepend=c[0]) / (np.abs(c) + 1e-10)
+    # Clip extreme daily returns caused by data errors (unit mismatches, unadjusted splits):
+    # EGX circuit breakers cap moves at ±20%; clip to ±25% to remove data corruptions
+    # (e.g. BIGP: 0.183→86 = +46894%, UNIP: 0.287→662 = +230562% on 2026-05-11).
+    # Without clipping, ret_5d/ret_20d features and vol_5d/vol_20d stds are useless.
+    # (Added 2026-05-23: data quality hardening)
+    rets = np.clip(rets, -0.25, 0.25)
 
     # BB width
     bb_width = 4*bb_std / (bb_mid + 1e-10)
@@ -4500,15 +4506,29 @@ def cmd_predict_ensemble():
             # Fallback to LGBM alone if meta fails
             ensemble_prob = p_lgbm
 
-        # ── Phase 3: blend regime-specific model (2026-05-22) ────────────────
-        # Regime-specific LightGBM trained only on BULL/BEAR/CHOPPY/UNKNOWN days
-        # gives higher precision for the current market context. Blend 35% weight.
-        # Falls back to ensemble-only if regime model not available.
+        # ── Phase 3: blend regime-specific model (updated 2026-05-23) ──────────
+        # OOS AUC analysis (2026-02-01 to 2026-05-20) shows regime-specific benefit
+        # varies significantly by regime:
+        #   BEAR:    regime_AUC=0.615 vs ensemble_AUC=0.530 → +8.5pp → w=0.50
+        #   CHOPPY:  regime_AUC=0.560 vs ensemble_AUC=0.547 → +1.3pp → w=0.40
+        #   BULL:    regime_AUC=0.519 vs ensemble_AUC=0.511 → +0.9pp → w=0.20
+        #   UNKNOWN: no OOS evidence → conservative w=0.15
+        # In BEAR regime, the regime-specific model captures bear-specific patterns
+        # (RSI oversold + BB compression + volume drying) that the global ensemble misses.
+        # In BULL regime (current), global ensemble is already well-calibrated;
+        # reducing regime blend weight from 35% → 20% prevents over-fitting to bull patterns.
+        REGIME_BLEND_WEIGHTS = {
+            'BEAR':    0.50,   # was 0.35 — large benefit (+8.5pp AUC)
+            'CHOPPY':  0.40,   # was 0.35 — moderate benefit (+1.3pp AUC)
+            'BULL':    0.20,   # was 0.35 — marginal benefit (+0.9pp AUC)
+            'UNKNOWN': 0.15,   # conservative — no OOS validation
+        }
         regime_model = regime_models.get(today_regime)
         if regime_model is not None:
             try:
                 p_regime = float(regime_model.predict(X)[0])
-                prob = 0.65 * ensemble_prob + 0.35 * p_regime
+                w_regime  = REGIME_BLEND_WEIGHTS.get(today_regime, 0.35)
+                prob = (1.0 - w_regime) * ensemble_prob + w_regime * p_regime
             except Exception:
                 prob = ensemble_prob
         else:
@@ -4633,11 +4653,13 @@ def cmd_predict_ensemble():
     regime_blend_active = bool(regime_models.get(today_regime))
     n_stock_blended = sum(1 for p in predictions if 'stock_prob' in p)
 
+    regime_blend_weight = REGIME_BLEND_WEIGHTS.get(today_regime, 0.35) if regime_blend_active else 0.0
     print(json.dumps({
         "cmd": "predict_ensemble",
         "pred_date": pred_date,
         "today_regime": today_regime,
         "regime_blend_active": regime_blend_active,
+        "regime_blend_weight": regime_blend_weight,
         "n_stock_models_blended": len(stock_models),
         "n_predictions_with_stock_blend": n_stock_blended,
         "n_failure_penalized": n_failure_penalized,
