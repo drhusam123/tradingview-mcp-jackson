@@ -43,7 +43,18 @@ if (PUSH) {
     execSync('git push origin main', { cwd: PROJECT_ROOT, stdio: 'inherit' });
     console.log('\n✅ Push succeeded\n');
   } catch (e) {
-    console.error('\n❌ Push failed — authenticate in Terminal (see above)\n');
+    const msg = String(e.message || e);
+    console.error('\n❌ Push failed');
+    if (/403|Permission denied|denied to/.test(msg)) {
+      console.error('   GitHub 403 — logged-in account lacks write access to this repo.');
+      console.error('   Fix: gh auth login  (use LewisWJackson account)');
+      console.error('   Or: git remote set-url origin git@github.com:YOUR_USER/tradingview-mcp-jackson.git');
+    } else if (/Username|Device not configured/.test(msg)) {
+      console.error('   No credentials — run: gh auth login');
+    } else {
+      console.error(`   ${msg}`);
+    }
+    console.error('');
     process.exit(1);
   }
 } else {
