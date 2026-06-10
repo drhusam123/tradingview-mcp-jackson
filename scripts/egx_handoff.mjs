@@ -38,6 +38,10 @@ const learn = readJson('data/learning_loop_last.json');
 const learnLine = learn?.counterfactual?.projected_wr != null
   ? `  Learning:    WR ${learn.counterfactual.actual_wr}%→${learn.counterfactual.projected_wr}% (+${learn.counterfactual.wr_delta ?? 0}pp counterfactual)`
   : '';
+const autopsy = learn?.loss_autopsy || readJson('data/loss_autopsy_last.json');
+const autopsyLine = autopsy?.n_residual_losses != null
+  ? `  Loss autopsy: ${autopsy.n_residual_losses} residual | rules ${autopsy.proposed_rules?.length ?? 0}`
+  : '';
 
 let gitLine = 'git: unknown';
 try {
@@ -61,6 +65,7 @@ console.log(`
   Data trust:   ${trustLine}
   ${proofLine}
 ${learnLine}
+${autopsyLine}
   Git:          ${gitLine}
 
 ── ONE COMMANDS ──
@@ -69,6 +74,7 @@ ${learnLine}
   npm run egx:runbook:next        # next session preview
   npm run egx:proof:forensic      # ULTRA WR breakdown (P6)
   npm run egx:learning:loop       # forensic + counterfactual + laws
+  npm run egx:loss:autopsy        # residual ULTRA loss patterns
 
 ── DOCS ──
   docs/PRODUCTION_AUTOMATION.md

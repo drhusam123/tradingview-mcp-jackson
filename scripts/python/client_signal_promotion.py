@@ -15,10 +15,36 @@ from __future__ import annotations
 import json
 import sqlite3
 import sys
+from datetime import date, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 DB_PATH = ROOT / "data" / "egx_trading.db"
+RULES_PATH = ROOT / "egx_rules.json"
+
+_DEFAULT_RULES = {
+    "lessons_filters": {
+        "near_ath_min_vol_ratio": 2.5,
+        "optimal_vol_ratio_min": 2.5,
+        "optimal_vol_ratio_max": 3.5,
+    },
+    "behavioral_filters": {
+        "block_volatile_client": True,
+        "block_dormant_client": True,
+        "explosive_max_rsi": 70,
+        "explosive_min_vol_ratio": 2.5,
+        "volatile_max_rsi": 65,
+        "volatile_min_vol_ratio": 2.5,
+        "high_false_signal_rate_max": 0.65,
+        "block_upper_third_close": True,
+        "max_close_position": 0.66,
+        "block_volume_chase": True,
+        "max_vol_ratio_chase": 3.5,
+        "repeat_ultra_loss_lookback_days": 120,
+        "max_ultra_losses_per_symbol": 1,
+        "require_indicator_cache": True,
+    },
+}
 
 SOFT_VETO_PREFIXES = (
     "QUALITY_GATE:ml_too_low",
@@ -65,24 +91,124 @@ def _is_hard_veto(reason: str | None) -> bool:
     return any(reason.startswith(p) for p in HARD_VETO_PREFIXES)
 
 
-def _behavioral_client_block(conn: sqlite3.Connection, symbol: str) -> str | None:
-    """Mirror JS safety gate — block client promotion on risky behavioral classes."""
+def _load_egx_rules() -> dict:
+    rules = dict(_DEFAULT_RULES)
+    if RULES_PATH.exists():
+        try:
+            loaded = json.loads(RULES_PATH.read_text(encoding="utf-8"))
+            rules["lessons_filters"] = {
+                **_DEFAULT_RULES["lessons_filters"],
+                **(loaded.get("lessons_filters") or {}),
+            }
+            rules["behavioral_filters"] = {
+                **_DEFAULT_RULES["behavioral_filters"],
+                **(loaded.get("behavioral_filters") or {}),
+            }
+        except Exception:
+            pass
+    return rules
+
+
+def _indicator_row(conn: sqlite3.Connection, symbol: str, trade_date: str) -> sqlite3.Row | None:
+    if not table_exists(conn, "indicators_cache"):
+        return None
+    return conn.execute(
+        """
+        SELECT vol_ratio_20, rsi14, close_position
+        FROM indicators_cache
+        WHERE symbol=? AND bar_date=?
+        ORDER BY bar_date DESC LIMIT 1
+        """,
+        (symbol, trade_date),
+    ).fetchone()
+
+
+def _behavioral_row(conn: sqlite3.Connection, symbol: str) -> sqlite3.Row | None:
     if not table_exists(conn, "stock_behavioral_memory"):
         return None
-    row = conn.execute(
+    return conn.execute(
         "SELECT behavioral_class, false_signal_rate FROM stock_behavioral_memory WHERE symbol=?",
         (symbol,),
     ).fetchone()
-    if not row:
-        return None
-    bclass = (row["behavioral_class"] or "UNKNOWN").upper()
-    fsr = float(row["false_signal_rate"] or 0)
-    if bclass == "DORMANT":
+
+
+def _delivery_safety_block(
+    conn: sqlite3.Connection,
+    symbol: str,
+    trade_date: str,
+    setup_type: str | None = None,
+) -> str | None:
+    """Mirror scripts/lib/egx_safety_check.mjs — block promotion before delivery veto."""
+    rules = _load_egx_rules()
+    bf = rules.get("behavioral_filters") or {}
+    lf = rules.get("lessons_filters") or {}
+
+    ind = _indicator_row(conn, symbol, trade_date)
+    if bf.get("require_indicator_cache", True) and not ind:
+        return "indicator_cache"
+
+    beh = _behavioral_row(conn, symbol)
+    bclass = (beh["behavioral_class"] if beh else "UNKNOWN").upper()
+    fsr = float(beh["false_signal_rate"] or 0) if beh else None
+
+    vol = float(ind["vol_ratio_20"]) if ind and ind["vol_ratio_20"] is not None else None
+    rsi = float(ind["rsi14"]) if ind and ind["rsi14"] is not None else None
+    cp = float(ind["close_position"]) if ind and ind["close_position"] is not None else None
+
+    setup = (setup_type or "").lower()
+    near_ath = "near ath" in setup or "ath" in setup
+
+    if bf.get("block_dormant_client", True) and bclass == "DORMANT":
         return "behavioral_dormant"
-    if bclass == "VOLATILE":
-        return "behavioral_volatile"
-    if fsr > 0.65:
+
+    fsr_max = float(bf.get("high_false_signal_rate_max", 0.65))
+    if fsr is not None and fsr > fsr_max:
         return "high_false_signal_rate"
+
+    explosive_max_rsi = float(bf.get("explosive_max_rsi", 70))
+    if bclass == "EXPLOSIVE" and rsi is not None and rsi > explosive_max_rsi:
+        return "explosive_rsi"
+
+    explosive_min_vol = float(bf.get("explosive_min_vol_ratio", 2.5))
+    if bclass == "EXPLOSIVE" and vol is not None and vol < explosive_min_vol:
+        return "explosive_min_vol"
+
+    max_cp = float(bf.get("max_close_position", 0.66))
+    if bf.get("block_upper_third_close", True) and cp is not None and cp > max_cp:
+        return "upper_third_close"
+
+    chase_max = float(bf.get("max_vol_ratio_chase", 3.5))
+    if bf.get("block_volume_chase", True) and vol is not None and vol > chase_max:
+        return "volume_chase"
+
+    if near_ath and vol is not None and vol < float(lf.get("near_ath_min_vol_ratio", 2.5)):
+        return "near_ath_volume"
+
+    if bf.get("block_volatile_client", True) and bclass == "VOLATILE":
+        vol_min = float(bf.get("volatile_min_vol_ratio", 2.5))
+        vol_max = float(lf.get("optimal_vol_ratio_max", 3.5))
+        volatile_max_rsi = float(bf.get("volatile_max_rsi", 65))
+        vol_ok = vol is not None and vol_min <= vol <= vol_max
+        rsi_ok = rsi is None or rsi <= volatile_max_rsi
+        if not (vol_ok and rsi_ok):
+            return "behavioral_volatile"
+
+    max_losses = bf.get("max_ultra_losses_per_symbol")
+    if max_losses is not None and table_exists(conn, "recommendation_outcomes"):
+        lookback = int(bf.get("repeat_ultra_loss_lookback_days", 120))
+        cutoff = (date.today() - timedelta(days=lookback)).isoformat()
+        loss_n = conn.execute(
+            """
+            SELECT COUNT(*) FROM recommendation_outcomes
+            WHERE symbol=? AND conviction_tier='ULTRA_CONVICTION'
+              AND outcome_filled>=5 AND hit_t5=0
+              AND signal_date>=? AND signal_date<?
+            """,
+            (symbol, cutoff, trade_date),
+        ).fetchone()[0]
+        if loss_n >= int(max_losses):
+            return "repeat_ultra_loser"
+
     return None
 
 
@@ -164,8 +290,10 @@ def run(params: dict | None = None) -> dict:
         if arb and int(arb["veto_triggered"] or 0) == 1:
             continue
 
-        beh_block = _behavioral_client_block(conn, r["symbol"])
-        if beh_block:
+        safety_block = _delivery_safety_block(
+            conn, r["symbol"], trade_date, r["setup_type"]
+        )
+        if safety_block:
             continue
 
         note = f"promoted:{tier}:opp={opp:.1f},ues={ues:.1f},ml={ml:.1f},was={veto}"

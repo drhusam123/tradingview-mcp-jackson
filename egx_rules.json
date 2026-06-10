@@ -15,9 +15,17 @@
     "block_volatile_client": true,
     "block_dormant_client": true,
     "explosive_max_rsi": 70,
+    "explosive_min_vol_ratio": 2.5,
     "volatile_max_rsi": 65,
     "volatile_min_vol_ratio": 2.5,
-    "high_false_signal_rate_max": 0.65
+    "high_false_signal_rate_max": 0.65,
+    "block_upper_third_close": true,
+    "max_close_position": 0.66,
+    "block_volume_chase": true,
+    "max_vol_ratio_chase": 3.5,
+    "repeat_ultra_loss_lookback_days": 120,
+    "max_ultra_losses_per_symbol": 1,
+    "require_indicator_cache": true
   },
   "risk_rules": [
     "Structural SL under retest/breakout low — not ATR-only",

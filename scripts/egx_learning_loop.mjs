@@ -10,6 +10,7 @@ import { join } from 'path';
 import { loadEnv, PROJECT_ROOT } from './lib/load_env.mjs';
 import { getProofLoopMetrics, writeProofLoopSnapshot, PROOF_MIN_N, PROOF_MIN_WR } from './lib/proof_loop.mjs';
 import { runCounterfactualSafety } from './lib/counterfactual_safety.mjs';
+import { runLossAutopsy } from './lib/loss_autopsy.mjs';
 import { cairoDateParts } from './lib/egx_calendar.mjs';
 import { alertNotification } from './lib/notification_alert.mjs';
 
@@ -20,6 +21,7 @@ const AS_JSON = process.argv.includes('--json');
 const proof = getProofLoopMetrics();
 writeProofLoopSnapshot();
 const counter = runCounterfactualSafety();
+const autopsy = runLossAutopsy();
 
 const directives = [];
 if (proof.samples_needed > 0) {
@@ -53,12 +55,31 @@ if (counter.wr_delta != null && counter.wr_delta > 0) {
     metric: `WR ${counter.actual_wr}% → ${counter.projected_wr}% (${counter.wr_delta}pp)`,
   });
 }
+if (counter.would_block_wins >= 5 && counter.would_block_losses > 0) {
+  const ratio = Math.round((counter.would_block_wins / counter.would_block_losses) * 10) / 10;
+  if (ratio >= 0.5) {
+    directives.push({
+      id: 'counterfactual_win_collateral',
+      priority: 'MEDIUM',
+      action: `Collateral damage: ${counter.would_block_wins} wins blocked per ${counter.would_block_losses} losses — monitor live P6 before tightening`,
+      metric: `win/loss block ratio ${ratio}`,
+    });
+  }
+}
 if (counter.loss_symbols_still_passing?.length) {
   directives.push({
     id: 'residual_loss_gap',
     priority: 'MEDIUM',
-    action: `${counter.loss_symbols_still_passing.length} historical ULTRA losses still pass filters — review setups`,
+    action: `${counter.loss_symbols_still_passing.length} historical ULTRA losses still pass filters — run egx:loss:autopsy`,
     symbols: counter.loss_symbols_still_passing.slice(0, 5),
+  });
+}
+for (const rule of autopsy.proposed_rules || []) {
+  directives.push({
+    id: `autopsy_${rule.id}`,
+    priority: 'MEDIUM',
+    action: rule.rule,
+    metric: `${rule.evidence} cases`,
   });
 }
 
@@ -78,6 +99,27 @@ const deliveryLaws = [
     evidence: counter.block_reason_counts?.explosive_rsi ?? 0,
   },
   {
+    id: 'delivery_law_repeat_loser',
+    title: 'Block symbol after 1+ prior ULTRA loss in 120d',
+    source: 'loss autopsy MOIN/OCPH/BONY',
+    confidence: 'HIGH',
+    evidence: counter.block_reason_counts?.repeat_ultra_loser ?? 0,
+  },
+  {
+    id: 'delivery_law_indicator_cache',
+    title: 'Block when indicators_cache missing for signal date',
+    source: 'loss autopsy — 9/15 losses had no cache row',
+    confidence: 'HIGH',
+    evidence: counter.block_reason_counts?.indicator_cache ?? 0,
+  },
+  {
+    id: 'delivery_law_explosive_min_vol',
+    title: 'EXPLOSIVE requires vol_ratio_20 >= 2.5',
+    source: 'loss autopsy + TRADING_LESSONS #15',
+    confidence: 'HIGH',
+    evidence: counter.block_reason_counts?.explosive_min_vol ?? 0,
+  },
+  {
     id: 'delivery_law_p6_gate',
     title: `P6 beta: ≥${PROOF_MIN_N} ULTRA samples at WR≥${PROOF_MIN_WR}%`,
     source: 'EGX_TV_INTEGRATION_ARCHITECTURE Layer 5',
@@ -91,6 +133,7 @@ const report = {
   cairo_date: cairoDateParts().date,
   proof_loop: proof,
   counterfactual: counter,
+  loss_autopsy: autopsy,
   directives,
   delivery_laws: deliveryLaws,
   p6_ready: proof.gate_pass,
@@ -124,6 +167,7 @@ console.log('\n═══ EGX Learning Loop (closed) ═══\n');
 console.log(`  P6 live:     ${proof.n_completed}/${PROOF_MIN_N} ULTRA | WR5 ${proof.win_rate ?? '—'}%`);
 console.log(`  Counterfact: ${counter.actual_wr}% → ${counter.projected_wr}% (+${counter.wr_delta ?? 0}pp)`);
 console.log(`  Would block: ${counter.would_block} (${counter.would_block_losses} losses, ${counter.would_block_wins} wins)`);
+console.log(`  Loss autopsy: ${autopsy.n_residual_losses} residual | ${autopsy.n_all_losses_lookback} losses in 120d`);
 console.log(`  P6 projected:${counter.p6_gate_pass_projected ? ' ✅ PASS' : ' ⏳ pending'}\n`);
 
 if (directives.length) {

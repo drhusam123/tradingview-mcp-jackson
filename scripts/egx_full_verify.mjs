@@ -65,10 +65,10 @@ if (SKIP_CDP) {
 
 run('Automation (cron + notify)', `"${NODE}" scripts/egx_automation_verify.mjs`);
 if (!process.argv.includes('--skip-session')) {
-  run('Session ready', `"${NODE}" scripts/egx_session_ready.mjs`, { optional: true });
+  run('Session ready', `"${NODE}" scripts/egx_session_ready.mjs --skip-verify-check`, { optional: true });
 }
 run('Delivery reconcile', `"${NODE}" scripts/egx_notify_reconcile.mjs`, { optional: true });
-run('Decision bot (safety)', `"${NODE}" scripts/egx_decision_bot.mjs`, { optional: true });
+run('Decision bot (safety)', `"${NODE}" scripts/egx_decision_bot.mjs --verify`, { optional: true });
 
 if (!SKIP_TESTS) {
   run('Unit tests (test:ci)', 'npm run test:ci');

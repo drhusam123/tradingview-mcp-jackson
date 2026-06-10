@@ -17,6 +17,7 @@ loadEnv();
 
 const dateArg = process.argv.find((a, i) => process.argv[i - 1] === '--date');
 const useNext = process.argv.includes('--next');
+const SKIP_VERIFY_CHECK = process.argv.includes('--skip-verify-check');
 const target = dateArg
   || (useNext ? nextTradingDay(cairoDateParts().date).next_trading_day : null)
   || latestOhlcvDate()
@@ -95,7 +96,9 @@ ok(
 );
 
 const verifyPath = join(PROJECT_ROOT, 'data/full_verify_last.json');
-if (existsSync(verifyPath)) {
+if (SKIP_VERIFY_CHECK) {
+  ok('Last full verify', true, 'skipped (verify running)', { warn: true });
+} else if (existsSync(verifyPath)) {
   const v = JSON.parse(readFileSync(verifyPath, 'utf8'));
   const ageH = (Date.now() - new Date(v.at).getTime()) / 3_600_000;
   ok('Last full verify', v.pass, `${v.at?.slice(0, 16)} (${ageH.toFixed(0)}h ago)`);

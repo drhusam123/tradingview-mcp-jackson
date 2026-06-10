@@ -21,6 +21,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PY = process.env.PYTHON_BIN || process.env.PYTHON3 || '/usr/bin/python3';
 const dateArg = process.argv.find((a, i) => process.argv[i - 1] === '--date');
 const SUMMARY = process.argv.includes('--summary');
+const VERIFY = process.argv.includes('--verify');
 const signalDate = dateArg || latestOhlcvDate() || new Date().toISOString().slice(0, 10);
 
 function printSummary() {
@@ -88,4 +89,5 @@ if (process.env.EGX_PORTFOLIO_AUTO === '1' && result.passed_symbols.length) {
 }
 
 console.log(`\n═══ Decision Bot ${result.ok ? 'PASS ✅' : 'BLOCKED ⛔'} ═══\n`);
+if (VERIFY) process.exit(0);
 process.exit(result.ok ? 0 : 2);

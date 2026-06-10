@@ -27,9 +27,17 @@ const DEFAULT_RULES = {
     block_volatile_client: true,
     block_dormant_client: true,
     explosive_max_rsi: 70,
+    explosive_min_vol_ratio: 2.5,
     volatile_max_rsi: 65,
     volatile_min_vol_ratio: 2.5,
     high_false_signal_rate_max: 0.65,
+    block_upper_third_close: true,
+    max_close_position: 0.66,
+    block_volume_chase: true,
+    max_vol_ratio_chase: 3.5,
+    repeat_ultra_loss_lookback_days: 120,
+    max_ultra_losses_per_symbol: 1,
+    require_indicator_cache: true,
   },
 };
 
@@ -272,6 +280,74 @@ function evaluateOne(symbol, signalDate, rules, filters, behavioralFilters = {},
   if (bclass === 'EXPLOSIVE' && rsi != null && rsi > explosiveMaxRsi) {
     conditions.explosive_rsi = cond('explosive_rsi', true, rsi, `max ${explosiveMaxRsi}`, false);
     failed.push('explosive_rsi');
+  }
+
+  const cp = ctx.ind?.close_position ?? null;
+  if (bf.block_upper_third_close !== false && cp != null && cp > (bf.max_close_position ?? 0.66)) {
+    conditions.upper_third_close = cond(
+      'upper_third_close',
+      true,
+      cp.toFixed(2),
+      `max ${bf.max_close_position ?? 0.66}`,
+      false,
+    );
+    failed.push('upper_third_close');
+  }
+
+  const explosiveMinVol = bf.explosive_min_vol_ratio ?? 2.5;
+  if (bclass === 'EXPLOSIVE' && vol != null && vol < explosiveMinVol) {
+    conditions.explosive_min_vol = cond(
+      'explosive_min_vol',
+      true,
+      vol,
+      `min ${explosiveMinVol}x`,
+      false,
+    );
+    failed.push('explosive_min_vol');
+  }
+
+  const chaseMax = bf.max_vol_ratio_chase ?? 3.5;
+  if (bf.block_volume_chase !== false && vol != null && vol > chaseMax) {
+    conditions.volume_chase = cond(
+      'volume_chase',
+      true,
+      vol,
+      `max ${chaseMax}x`,
+      false,
+    );
+    failed.push('volume_chase');
+  }
+
+  if (bf.require_indicator_cache !== false && !ctx.ind) {
+    conditions.indicator_cache = cond('indicator_cache', true, 'missing', 'present', false);
+    failed.push('indicator_cache');
+  }
+
+  if (bf.max_ultra_losses_per_symbol != null) {
+    const d2 = dbReadonly();
+    if (d2) {
+      const lookback = bf.repeat_ultra_loss_lookback_days ?? 120;
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - lookback);
+      const lossN = d2.prepare(`
+        SELECT COUNT(*) AS n FROM recommendation_outcomes
+        WHERE symbol=? AND conviction_tier='ULTRA_CONVICTION'
+          AND outcome_filled>=5 AND hit_t5=0
+          AND signal_date>=? AND signal_date<?
+      `).get(symbol, cutoff.toISOString().slice(0, 10), signalDate)?.n ?? 0;
+      d2.close();
+      const maxLoss = bf.max_ultra_losses_per_symbol ?? 1;
+      if (lossN >= maxLoss) {
+        conditions.repeat_ultra_loser = cond(
+          'repeat_ultra_loser',
+          true,
+          lossN,
+          `max ${maxLoss} losses/${lookback}d`,
+          false,
+        );
+        failed.push('repeat_ultra_loser');
+      }
+    }
   }
 
   if (bf.block_volatile_client !== false && bclass === 'VOLATILE') {

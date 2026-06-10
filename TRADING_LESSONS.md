@@ -474,3 +474,15 @@ GATE: ≥30 ULTRA_CONVICTION مكتملة + WR5 ≥ 60% (live outcomes, not back
 ```
 
 **حلقة التعلم المغلقة:** `npm run egx:learning:loop` — forensic → counterfactual → delivery_laws JSON
+
+### القاعدة #15 — Loss Autopsy: أنماط الخسائر المتبقية (يونيو 2026)
+
+```
+EXPLOSIVE + vol < 2.5x → BLOCK (OCPH/MOIN نمط متكرر)
+close_position > 0.66 (الثلث العلوي) → BLOCK للعميل
+vol_ratio > 3.5 → BLOCK (volume chase)
+رمز له خسارتان ULTRA+ في 120 يوم → BLOCK (MOIN, OCPH)
+indicators_cache مفقود لتاريخ الإشارة → BLOCK
+```
+
+`npm run egx:loss:autopsy` — تشريح setup + flags لكل خسارة متبقية
