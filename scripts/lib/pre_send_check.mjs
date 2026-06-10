@@ -9,6 +9,7 @@ import {
 } from './delivery_audit.mjs';
 import { ensureUpstreamFresh } from './ensure_upstream_fresh.mjs';
 import { alertNotification } from './notification_alert.mjs';
+import { runEgxSafetyCheck } from './egx_safety_check.mjs';
 
 const DRY_RUN_ENV = process.env.EGX_NOTIFY_DRY_RUN === '1';
 
@@ -67,6 +68,24 @@ export function runPreSendCheck(reportDate, opts = {}) {
 
   record(true, 'actionable_count', `${act.db}`);
   record(true, 'deliverable_count', `${act.deliverable} symbols=${act.symbols.join(',') || 'none'}`);
+
+  const safetyVeto = process.env.EGX_SAFETY_VETO !== '0';
+  let safety = null;
+  let safetyExtraBlockers = [];
+  if (act.deliverable > 0 && safetyVeto) {
+    safety = runEgxSafetyCheck(reportDate, { veto: true });
+    const safetyOk = safety.ok && safety.deliverable_after > 0;
+    record(
+      safetyOk || act.deliverable === 0,
+      'safety_veto',
+      `passed=${safety.passed_symbols.join(',') || 'none'} blocked=${safety.blocked_symbols.join(',') || 'none'}`,
+    );
+    if (!safetyOk && act.deliverable > 0) {
+      safetyExtraBlockers.push(`safety_veto: ${safety.blocked_symbols.join(',')}`);
+    }
+  } else {
+    record(true, 'safety_veto', safetyVeto ? 'no deliverable' : 'EGX_SAFETY_VETO=0');
+  }
   record(isTelegramConfigured(), 'telegram_env_ok', JSON.stringify(telegramStatus()));
   record(Boolean(process.env.TELEGRAM_CHAT_ID), 'recipients_ok', process.env.TELEGRAM_CHAT_ID || 'missing');
   record(!DRY_RUN_ENV || dryRun, 'dry_run_mode', DRY_RUN_ENV ? 'EGX_NOTIFY_DRY_RUN=1 blocks live' : 'off');
@@ -77,6 +96,7 @@ export function runPreSendCheck(reportDate, opts = {}) {
   record(dedupOk, 'dedup_ok', dup.duplicate ? dup.reason : (legacyDup ? 'legacy_log_duplicate' : 'ok'));
 
   const blockers = checks.filter(c => !c.ok).map(c => `${c.name}: ${c.detail}`);
+  blockers.push(...safetyExtraBlockers);
   if (!upstreamResult.ok && upstreamResult.issues?.length) {
     blockers.push(...upstreamResult.issues.map(i => `upstream: ${i}`));
   }
@@ -94,6 +114,12 @@ export function runPreSendCheck(reportDate, opts = {}) {
     required_ml_date: reportDate,
     dedup: dup.duplicate ? dup : { duplicate: legacyDup, reason: legacyDup ? 'legacy_log' : null },
     upstream_remediation: upstreamResult.remediated ? upstreamResult : null,
+    safety_check: safety ? {
+      ok: safety.ok,
+      passed: safety.passed_symbols,
+      blocked: safety.blocked_symbols,
+      deliverable_after: safety.deliverable_after,
+    } : null,
   };
 
   if (!ok && logBlock && !dryRun) {

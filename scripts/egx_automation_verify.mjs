@@ -60,6 +60,8 @@ const scripts = [
   'scripts/lib/ops_digest.mjs',
   'scripts/lib/data_quality_gate.mjs',
   'scripts/lib/proof_loop.mjs',
+  'scripts/lib/counterfactual_safety.mjs',
+  'scripts/egx_learning_loop.mjs',
   'egx_rules.json',
 ];
 for (const s of scripts) {

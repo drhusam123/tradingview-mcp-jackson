@@ -34,6 +34,10 @@ try {
     : `✅ ${g.latest_date} trust=${g.trust_score} (${g.trust_status})`;
 } catch { /* optional */ }
 const proofLine = formatProofLoopLine(proof);
+const learn = readJson('data/learning_loop_last.json');
+const learnLine = learn?.counterfactual?.projected_wr != null
+  ? `  Learning:    WR ${learn.counterfactual.actual_wr}%→${learn.counterfactual.projected_wr}% (+${learn.counterfactual.wr_delta ?? 0}pp counterfactual)`
+  : '';
 
 let gitLine = 'git: unknown';
 try {
@@ -56,6 +60,7 @@ console.log(`
   Full verify:  ${verify?.pass ? '✅ PASS' : verify ? '❌ FAIL' : '—'} ${verify?.at?.slice(0, 19) ?? ''}
   Data trust:   ${trustLine}
   ${proofLine}
+${learnLine}
   Git:          ${gitLine}
 
 ── ONE COMMANDS ──
@@ -63,6 +68,7 @@ console.log(`
   npm run egx:automation:status   # runbook + digest + logs
   npm run egx:runbook:next        # next session preview
   npm run egx:proof:forensic      # ULTRA WR breakdown (P6)
+  npm run egx:learning:loop       # forensic + counterfactual + laws
 
 ── DOCS ──
   docs/PRODUCTION_AUTOMATION.md

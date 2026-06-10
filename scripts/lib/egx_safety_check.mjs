@@ -60,13 +60,45 @@ function parseBreakdown(sig) {
   }
 }
 
-function signalContext(d, symbol, signalDate) {
-  const sig = d.prepare(`
+function signalContext(d, symbol, signalDate, { historical = false } = {}) {
+  let sig = d.prepare(`
     SELECT symbol, setup_type, score, entry_price, entry_high, stop_loss,
            t1_target, r_ratio, confidence, source_breakdown
     FROM final_signals
     WHERE trade_date=? AND symbol=? AND actionable=1
   `).get(signalDate, symbol);
+
+  if (!sig && historical) {
+    const ro = d.prepare(`
+      SELECT symbol, signal_date, entry_price, stop_loss, t1_target,
+             behavioral_class, conviction_tier, ues, ml_score
+      FROM recommendation_outcomes
+      WHERE signal_date=? AND symbol=?
+    `).get(signalDate, symbol);
+    const fs = d.prepare(`
+      SELECT setup_type, entry_high, r_ratio, source_breakdown
+      FROM final_signals WHERE trade_date=? AND symbol=?
+    `).get(signalDate, symbol);
+    if (ro) {
+      const bd = parseBreakdown(fs);
+      sig = {
+        symbol: ro.symbol,
+        setup_type: fs?.setup_type ?? null,
+        score: ro.ues ?? null,
+        entry_price: ro.entry_price,
+        entry_high: fs?.entry_high ?? ro.entry_price,
+        stop_loss: ro.stop_loss,
+        t1_target: ro.t1_target,
+        r_ratio: fs?.r_ratio ?? null,
+        confidence: null,
+        source_breakdown: JSON.stringify({
+          ...bd,
+          behavioral_class: ro.behavioral_class,
+          quality_gate_passed: true,
+        }),
+      };
+    }
+  }
 
   const ind = d.prepare(`
     SELECT vol_ratio_20, bb_position, rsi14, close_position
@@ -121,7 +153,7 @@ function cond(name, required, actual, threshold, pass) {
   };
 }
 
-function evaluateOne(symbol, signalDate, rules, filters, behavioralFilters = {}) {
+function evaluateOne(symbol, signalDate, rules, filters, behavioralFilters = {}, opts = {}) {
   const d = dbReadonly();
   if (!d) {
     return {
@@ -134,8 +166,19 @@ function evaluateOne(symbol, signalDate, rules, filters, behavioralFilters = {})
     };
   }
 
-  const ctx = signalContext(d, symbol, signalDate);
+  const ctx = signalContext(d, symbol, signalDate, opts);
   d.close();
+
+  if (!ctx.sig) {
+    return {
+      symbol,
+      signal_date: signalDate,
+      decision: 'BLOCKED',
+      failed_conditions: ['no_signal'],
+      conditions: {},
+      warnings: [],
+    };
+  }
 
   const conditions = {};
   const failed = [];
@@ -144,18 +187,23 @@ function evaluateOne(symbol, signalDate, rules, filters, behavioralFilters = {})
   const nearAth = setup.includes('near ath') || setup.includes('ath');
   const breakoutish = setup.includes('breakout') || setup.includes('power');
 
+  const counterfactual = Boolean(opts.counterfactual || opts.historical);
   const rr = ctx.sig?.r_ratio ?? 0;
-  conditions.min_rr = cond('min_rr', true, rr, rules.min_rr, rr >= rules.min_rr);
-  if (conditions.min_rr.result === 'FAIL') failed.push('min_rr');
+  if (!counterfactual || ctx.sig?.r_ratio != null) {
+    conditions.min_rr = cond('min_rr', true, rr, rules.min_rr, rr >= rules.min_rr);
+    if (conditions.min_rr.result === 'FAIL') failed.push('min_rr');
+  }
 
-  conditions.structural_sl = cond(
-    'structural_sl',
-    true,
-    ctx.sig?.stop_loss ?? null,
-    'present',
-    Boolean(ctx.sig?.stop_loss && ctx.sig.stop_loss > 0),
-  );
-  if (conditions.structural_sl.result === 'FAIL') failed.push('structural_sl');
+  if (!counterfactual) {
+    conditions.structural_sl = cond(
+      'structural_sl',
+      true,
+      ctx.sig?.stop_loss ?? null,
+      'present',
+      Boolean(ctx.sig?.stop_loss && ctx.sig.stop_loss > 0),
+    );
+    if (conditions.structural_sl.result === 'FAIL') failed.push('structural_sl');
+  }
 
   const vol = ctx.ind?.vol_ratio_20 ?? null;
   if (nearAth) {
@@ -190,7 +238,7 @@ function evaluateOne(symbol, signalDate, rules, filters, behavioralFilters = {})
     if (!inBand) warnings.push(`volume ${vol}x outside optimal ${lo}–${hi}x`);
   }
 
-  if (ctx.sig?.entry_high && ctx.lastClose) {
+  if (!counterfactual && ctx.sig?.entry_high && ctx.lastClose) {
     const maxAbove = filters.max_open_above_entry_pct ?? 0.5;
     const entryMid = (ctx.sig.entry_price + ctx.sig.entry_high) / 2;
     const pctAbove = entryMid > 0 ? ((ctx.lastClose - entryMid) / entryMid) * 100 : 0;
@@ -263,6 +311,22 @@ function evaluateOne(symbol, signalDate, rules, filters, behavioralFilters = {})
     ),
     warnings,
   };
+}
+
+/** Evaluate one symbol at a date (supports historical replay via recommendation_outcomes). */
+export function evaluateSignalAtDate(symbol, signalDate, opts = {}) {
+  const rules = loadEgxRules();
+  return evaluateOne(
+    symbol,
+    signalDate,
+    rules,
+    rules.lessons_filters || {},
+    rules.behavioral_filters || {},
+    {
+      historical: Boolean(opts.historical),
+      counterfactual: Boolean(opts.counterfactual),
+    },
+  );
 }
 
 /**

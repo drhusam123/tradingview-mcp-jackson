@@ -437,3 +437,40 @@ Profit Factor    : 2.31x   ← ارتفاع من 2.26 (v2) 🆙
 
 *آخر تحديث: 3 مايو 2026 | الجلسة: #1 مكتملة*
 *يُحدَّث تلقائياً بعد كل post-mortem*
+
+---
+
+## 🧪 P6 Proof Loop — يونيو 2026 (26 ULTRA live samples)
+
+### القاعدة #11 — VOLATILE ليس للعميل بدون تأكيد حجم+زخم
+
+**الدليل:** 5/15 خسارة ULTRA كانت VOLATILE (WR 16.7% للفئة).
+```
+FILTER: if (behavioral_class == "VOLATILE") {
+  require vol_ratio_20 in [2.5, 3.5] AND rsi14 <= 65;
+  else → BLOCK at delivery (egx_safety_check);
+}
+```
+
+### القاعدة #12 — EXPLOSIVE + RSI>70 = فخ شراء
+
+**الدليل:** 7/15 خسارة ULTRA كانت EXPLOSIVE (WR 41.7%).
+```
+FILTER: if (behavioral_class == "EXPLOSIVE" && rsi14 > 70) → BLOCK;
+```
+
+### القاعدة #13 — DORMANT و false_signal_rate>65% ممنوعان للعميل
+
+```
+FILTER: behavioral_class == "DORMANT" → BLOCK
+FILTER: false_signal_rate > 0.65 → BLOCK
+```
+
+### القاعدة #14 — بوابة P6 Beta (calendar-bound)
+
+```
+GATE: ≥30 ULTRA_CONVICTION مكتملة + WR5 ≥ 60% (live outcomes, not backtest)
+الحالي: 26/30 | WR5 42.3% | npm run egx:proof:forensic
+```
+
+**حلقة التعلم المغلقة:** `npm run egx:learning:loop` — forensic → counterfactual → delivery_laws JSON

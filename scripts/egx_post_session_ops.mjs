@@ -77,6 +77,12 @@ try {
 }
 
 try {
+  execSync(`"${NODE}" scripts/egx_learning_loop.mjs`, { cwd: PROJECT_ROOT, stdio: 'inherit', timeout: 120_000 });
+} catch (e) {
+  console.log(`⚠️  Learning loop: ${e.message?.slice(0, 80)}`);
+}
+
+try {
   execSync(`"${NODE}" scripts/egx_full_verify.mjs --skip-tests --skip-cdp`, {
     cwd: PROJECT_ROOT,
     stdio: 'inherit',
