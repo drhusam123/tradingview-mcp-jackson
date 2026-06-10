@@ -36,7 +36,13 @@ Cron wrapper: `egx_telegram_cron.mjs` = prepare-send → live → reconcile → 
 | 17:20 | `egx_telegram_cron` | `logs/telegram.log` |
 | 17:45 | `egx_post_session_ops` | `logs/post_session.log` |
 
+**Weekly (Sun 06:30):** `egx_quality_weekly` → `build_full` deep audit → `logs/quality_weekly.log`
+
 **Weekly (Sun 06:45):** `egx_prod_ready --skip-cdp` → `logs/prod_ready.log`
+
+**Daily L2 gate:** `gate_daily` inside `egx_tv_auto_update` (~1s, blocks ML if stale/corrupt)
+
+**P6 proof loop:** `npm run egx:proof:forensic` → `data/proof_forensic_last.json`
 
 Locks: `egx-tv-sync` | `egx-telegram` | `egx-post-session` (separate — no blocking)
 
@@ -64,7 +70,9 @@ Test: `npm run egx:alert:test` | `npm run egx:alert:test:success`
 | `egx:verify:all` | + TV CDP + unit tests |
 | `egx:tv:verify` | 19 TV MCP integration checks |
 | `egx:accept` | 11 production acceptance gates |
-| `test:ci` | 40 unit tests |
+| `test:ci` | 46 unit tests |
+| `egx:quality:gate` | Fast L2 `gate_daily` |
+| `egx:proof:forensic` | ULTRA WR breakdown |
 
 ## Manual recovery
 

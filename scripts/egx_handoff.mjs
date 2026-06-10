@@ -62,6 +62,7 @@ console.log(`
   npm run egx:prod:ready          # 7-step gate
   npm run egx:automation:status   # runbook + digest + logs
   npm run egx:runbook:next        # next session preview
+  npm run egx:proof:forensic      # ULTRA WR breakdown (P6)
 
 ── DOCS ──
   docs/PRODUCTION_AUTOMATION.md

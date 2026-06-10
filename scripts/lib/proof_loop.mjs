@@ -68,7 +68,8 @@ export function getProofLoopMetrics({ tier = 'ULTRA_CONVICTION', horizon = 't5' 
     n_completed: n,
     n_wins: wins,
     win_rate: wr != null ? Math.round(wr * 10) / 10 : null,
-    avg_return: avgRet != null ? Math.round(avgRet * 10000) / 100 : null,
+    // return_t5 stored as percent (e.g. 8.5 = +8.5%) — do not multiply again
+    avg_return: avgRet != null ? Math.round(avgRet * 10) / 10 : null,
     gate_pass,
     gate_reason,
     samples_needed: Math.max(0, PROOF_MIN_N - n),
