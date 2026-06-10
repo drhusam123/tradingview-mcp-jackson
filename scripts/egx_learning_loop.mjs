@@ -5,6 +5,7 @@
  *
  * Usage: node scripts/egx_learning_loop.mjs [--json]
  */
+import { execSync } from 'child_process';
 import { writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { loadEnv, PROJECT_ROOT } from './lib/load_env.mjs';
@@ -21,7 +22,17 @@ const AS_JSON = process.argv.includes('--json');
 const proof = getProofLoopMetrics();
 writeProofLoopSnapshot();
 const counter = runCounterfactualSafety();
-const autopsy = runLossAutopsy();
+let autopsy = runLossAutopsy();
+if (autopsy.n_residual_losses > 0 && (autopsy.flag_counts?.missing_indicators || 0) >= 2) {
+  try {
+    execSync(`"${process.execPath}" scripts/egx_backfill_indicator_cache.mjs`, {
+      cwd: PROJECT_ROOT,
+      stdio: 'pipe',
+      timeout: 300_000,
+    });
+    autopsy = runLossAutopsy();
+  } catch { /* optional backfill */ }
+}
 
 const directives = [];
 if (proof.samples_needed > 0) {

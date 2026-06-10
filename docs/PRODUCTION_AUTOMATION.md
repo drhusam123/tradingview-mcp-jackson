@@ -77,6 +77,8 @@ Test: `npm run egx:alert:test` | `npm run egx:alert:test:success`
 | `test:ci` | 53 unit tests |
 | `egx:learning:loop` | forensic + counterfactual + delivery laws |
 | `egx:loss:autopsy` | ULTRA loss pattern autopsy |
+| `egx:cache:backfill` | Historical indicators_cache gaps |
+| `egx:p6:status` | P6 samples + counterfactual WR |
 | `egx:quality:gate` | Fast L2 `gate_daily` |
 | `egx:proof:forensic` | ULTRA WR breakdown |
 

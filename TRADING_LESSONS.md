@@ -497,3 +497,13 @@ indicator_cache → BLOCK للتسليم الحي فقط (ليس counterfactual 
 ```
 
 `npm run egx:p6:status` — 4 عينات متبقية + projected WR
+
+### القاعدة #17 — indicators_cache التاريخي (يونيو 2026)
+
+```
+rebuild_indicators يحفظ آخر شمعة فقط — للتواريخ القديمة:
+npm run egx:cache:backfill              # أزواج ULTRA الناقصة
+npm run egx:cache:backfill -- --date YYYY-MM-DD   # يوم كامل
+```
+
+learning_loop يشغّل backfill تلقائياً عند missing_indicators ≥ 2

@@ -76,6 +76,7 @@ ${autopsyLine}
   npm run egx:learning:loop       # forensic + counterfactual + laws
   npm run egx:loss:autopsy        # residual ULTRA loss patterns
   npm run egx:p6:status           # P6 samples + counterfactual
+  npm run egx:cache:backfill      # historical indicators_cache gaps
 
 ── DOCS ──
   docs/PRODUCTION_AUTOMATION.md
