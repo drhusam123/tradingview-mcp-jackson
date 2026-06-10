@@ -225,6 +225,27 @@ def cmd_run(quick=False):
     today_str = datetime.now().strftime('%Y-%m-%d')
     command = "quick" if quick else "run"
 
+    # ── EGX Market Calendar: skip heavy pipeline on holidays / weekends ───
+    # Client delivery is handled only by egx_telegram_daily.mjs quality gates.
+    _today_is_trading = True
+    _today_holiday    = None
+    try:
+        import importlib.util as _cal_ilu, os as _cal_os
+        _cal_path = _cal_os.path.join(_cal_os.path.dirname(__file__), 'event_calendar.py')
+        _cal_spec = _cal_ilu.spec_from_file_location('event_calendar', _cal_path)
+        _cal_mod  = _cal_ilu.module_from_spec(_cal_spec)
+        _cal_spec.loader.exec_module(_cal_mod)
+        _today_is_trading = _cal_mod.is_trading_day(today_str)
+        _today_holiday    = _cal_mod.holiday_name(today_str)
+    except Exception as _ce:
+        print(f"[night_lab] Calendar check failed ({_ce}) — proceeding as trading day", flush=True)
+
+    if not _today_is_trading:
+        _reason = _today_holiday if _today_holiday else "Weekend (Fri/Sat)"
+        print(f"[night_lab] 🎉 Non-trading day: {_reason} — skipping ML pipeline.", flush=True)
+        print(json.dumps({"status": "skipped_non_trading_day", "date": today_str, "reason": _reason}))
+        return
+
     conn = get_db()
     ensure_tables(conn)
 
@@ -236,8 +257,10 @@ def cmd_run(quick=False):
     if row:
         created_at = row['created_at']
         try:
-            run_time = datetime.datetime.fromisoformat(created_at)
-            now = datetime.datetime.utcnow()
+            # FIX BUG-01: 'from datetime import datetime' binds datetime to the class,
+            # not the module — use class methods directly (no .datetime sub-attribute).
+            run_time = datetime.fromisoformat(created_at)
+            now = datetime.utcnow()
             hours_ago = (now - run_time).total_seconds() / 3600
             if hours_ago < 12:
                 print(json.dumps({
@@ -293,12 +316,7 @@ def cmd_run(quick=False):
             f"النظام يوقف التشغيل حتى تُحدَّث البيانات"
         )
         print(msg, flush=True)
-        # Try to send telegram alert
-        try:
-            from telegram_report import send_telegram_message as _stm
-            _stm(f"🚨 EGX Navigator — SYSTEM HALTED\n{msg}\nتشغيل: python3 night_lab.py run")
-        except Exception:
-            pass
+        print("[night_lab] Telegram halt alert blocked; health alerts are internal/log-only by default.", flush=True)
         return {
             'status': 'HALTED_STALE_DATA',
             'days_behind': _freshness['days_behind'],
@@ -672,6 +690,42 @@ def cmd_run(quick=False):
     # ── Step 8: Ensemble Predict + Calibration (كل ليلة) ─────────────────────
     rc, _, _, dur = run_script("egx_ml_trainer.py", "predict_ensemble", timeout=300)
     step_results['ensemble_predict'] = {'status': get_script_status(rc), 'duration': dur}
+
+    # ── Step 8a: Regime History Daily Update — تحديث سجل الأنظمة يومياً (~5s) ──
+    # CRITICAL FIX: regime_history was only updated in cmd_weekly_deep().
+    # Without this, BEAR/BULL/CHOPPY regime used by signal_integration is up to 7
+    # days stale — causing wrong BEAR_REGIME_FILTER decisions and 0 gate_passed.
+    rc_rh, out_rh, _, dur_rh = run_script(
+        "historical_validation.py", "regime_history", '{}', timeout=60
+    )
+    _rh_status = get_script_status(rc_rh)
+    _rh_info = {}
+    try:
+        for line in reversed((out_rh or '').splitlines()):
+            line = line.strip()
+            if line.startswith('{') and 'regime' in line:
+                _rh_info = json.loads(line)
+                break
+    except Exception:
+        pass
+    step_results['regime_history_daily'] = {
+        'status': _rh_status,
+        'duration': round(dur_rh, 1),
+        'n_days': _rh_info.get('n_days', '?'),
+    }
+    print(f"[night_lab] 📅 Regime History: {_rh_status} | n_days={_rh_info.get('n_days','?')} ({dur_rh:.1f}s)", flush=True)
+
+    # ── Step 8b: Signal Integration Re-score — إعادة تسجيل الإشارات (~30s) ──
+    # CRITICAL FIX: Step 5 score_all ran BEFORE predict_ensemble (Step 8), so
+    # unified_signals.gate_passed was computed using yesterday's ML scores.
+    # This second score_all run uses today's fresh explosion_predictions.
+    rc_rs, _, _, dur_rs = run_script("signal_integration.py", "score_all", timeout=1800)
+    _rs_status = get_script_status(rc_rs)
+    step_results['signal_integration_rescore'] = {
+        'status': _rs_status,
+        'duration': round(dur_rs, 1),
+    }
+    print(f"[night_lab] 🔄 Signal Re-score (fresh ML): {_rs_status} ({dur_rs:.1f}s)", flush=True)
 
     # ── Step 9 (Deep): Incremental Online Learning — 30 trees ~12s ───────────
     if not quick:
@@ -1935,6 +1989,84 @@ def cmd_run(quick=False):
             summary['parquet_exported'] = _pq_result.get('exported', [])
         except Exception as _pq_e:
             summary['parquet_error'] = str(_pq_e)
+
+    # ── Forward Test Outcome Update — fills close_5d/close_10d for PENDING rows ──
+    # Runs daily: resolves any predictions that are ≥5 or ≥10 trading days old.
+    # Seeds today's new top-15 predictions into forward_test_predictions table.
+    try:
+        import importlib.util as _ilu, os as _os
+        _fpr_path = _os.path.join(_os.path.dirname(__file__), 'fix_prediction_reliability.py')
+        _fpr_spec = _ilu.spec_from_file_location('fix_prediction_reliability', _fpr_path)
+        _fpr_mod  = _ilu.module_from_spec(_fpr_spec)
+        _fpr_spec.loader.exec_module(_fpr_mod)
+
+        _fpr_conn = get_db()
+        _fpr_conn.execute("PRAGMA journal_mode=WAL")
+        # 1. Seed today's top predictions into forward_test_predictions
+        _fpr_mod.apply_fix_d(_fpr_conn)
+        # 2. Resolve any predictions old enough to have outcome data
+        _fpr_mod.update_forward_test_outcomes(_fpr_conn)
+        _fpr_conn.close()
+
+        step_results['forward_test_update'] = {'status': 'ok', 'duration': 0}
+        print("[night_lab] Forward test outcomes updated.", flush=True)
+    except Exception as _fpr_e:
+        step_results['forward_test_update'] = {'status': f'exception:{_fpr_e}', 'duration': 0}
+        print(f"[night_lab] Forward test update: skipped ({_fpr_e})", flush=True)
+
+    # ── Telegram Visual Cards ───────────────────────────────────────────────────
+    # Night Lab is a research pipeline. Client delivery is owned by
+    # egx_telegram_daily.mjs and its single notify.js QA/freshness gate.
+    # Default is log-only; EGX_NIGHT_LAB_TELEGRAM_OK=1 is internal/manual only.
+    if os.environ.get('EGX_NIGHT_LAB_TELEGRAM_OK') == '1':
+        try:
+            import importlib.util as _tilu, os as _tos
+            _tsc_path = _tos.path.join(_tos.path.dirname(__file__), 'telegram_send_cards.py')
+            _tsc_spec = _tilu.spec_from_file_location('telegram_send_cards', _tsc_path)
+            _tsc_mod  = _tilu.module_from_spec(_tsc_spec)
+            _tsc_spec.loader.exec_module(_tsc_mod)
+
+            _cards_ok = _tsc_mod.send_daily_cards(today_str, dry_run=False)
+            step_results['telegram_cards'] = {
+                'status': 'ok' if _cards_ok else 'warn',
+                'duration': 0
+            }
+            print(f"[night_lab] Telegram cards: {'sent' if _cards_ok else 'failed'}", flush=True)
+        except Exception as _tsc_e:
+            step_results['telegram_cards'] = {'status': f'exception:{_tsc_e}', 'duration': 0}
+            print(f"[night_lab] Telegram cards: skipped ({_tsc_e})", flush=True)
+    else:
+        step_results['telegram_cards'] = {'status': 'blocked_by_delivery_policy', 'duration': 0}
+        print("[night_lab] Telegram cards blocked by delivery policy.", flush=True)
+
+    # ── Portfolio Tracker Daily Update ─────────────────────────────────────────
+    # Updates prices, detects T1/T2/T3/SL hits, and takes a snapshot.
+    # Telegram alerts remain blocked by default for Night Lab.
+    try:
+        import importlib.util as _ptilu, os as _ptos
+        _pt_path = _ptos.path.join(_ptos.path.dirname(__file__), 'portfolio_tracker.py')
+        _pt_spec = _ptilu.spec_from_file_location('portfolio_tracker', _pt_path)
+        _pt_mod  = _ptilu.module_from_spec(_pt_spec)
+        _pt_spec.loader.exec_module(_pt_mod)
+
+        _pt_result = _pt_mod.daily_update(
+            conn=None,
+            send_telegram=os.environ.get('EGX_NIGHT_LAB_TELEGRAM_OK') == '1',
+        )
+        step_results['portfolio_tracker'] = {
+            'status':           _pt_result.get('status', 'ok'),
+            'n_open':           _pt_result.get('n_open', 0),
+            'port_return_pct':  _pt_result.get('port_return_pct', 0),
+            'alerts_sent':      _pt_result.get('alerts', 0),
+        }
+        _pt_open   = _pt_result.get('n_open', 0)
+        _pt_ret    = _pt_result.get('port_return_pct', 0)
+        _pt_alerts = _pt_result.get('alerts', 0)
+        print(f"[night_lab] 💼 Portfolio: open={_pt_open} return={_pt_ret:+.2f}% alerts={_pt_alerts}",
+              flush=True)
+    except Exception as _pt_e:
+        step_results['portfolio_tracker'] = {'status': f'exception:{_pt_e}'}
+        print(f"[night_lab] Portfolio tracker: skipped ({_pt_e})", flush=True)
 
     print(json.dumps({"status": "night_lab_complete", **summary}))
     sys.stdout.flush()

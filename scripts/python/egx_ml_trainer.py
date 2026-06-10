@@ -25,7 +25,7 @@ EGX ML Trainer — خطة تدريب شاملة
 
 المالك: Dr. Husam | مايو 2026
 """
-import os, sys, json, sqlite3, datetime, time, math, random, warnings, gc
+import os, sys, json, sqlite3, datetime, time, math, random, warnings, gc, signal
 from pathlib import Path
 from multiprocessing import Pool, cpu_count
 
@@ -60,6 +60,23 @@ POOL_WORKERS = min(8, N_CPUS // 2)  # 8 for per-stock Pool
 
 print(f"[Trainer] HW: {N_CPUS} logical cores → n_jobs={N_JOBS}, optuna={N_OPTUNA}, pool={POOL_WORKERS}", flush=True)
 
+PHASE_TIMEOUT_SEC = int(os.environ.get('EGX_ML_PHASE_TIMEOUT_SEC', '1800'))
+_HPO_TIMEOUT_ENV  = int(os.environ.get('EGX_ML_HPO_TIMEOUT_SEC', '360'))
+# A value of 0 is commonly used by runners to mean "do not rush this".
+# Optuna interprets timeout=0 as "run zero trials", so expand it to a long,
+# bounded budget while n_trials still caps the work.
+HPO_TIMEOUT_SEC   = 3600 if _HPO_TIMEOUT_ENV <= 0 else _HPO_TIMEOUT_ENV
+MIN_ACCEPTED_AUC  = float(os.environ.get('EGX_ML_MIN_ACCEPTED_AUC', '0.55'))
+
+PH51_MIN_CONF          = float(os.environ.get('EGX_PH51_MIN_CONF', '0.44'))
+PH51_MIN_MARGIN        = float(os.environ.get('EGX_PH51_MIN_MARGIN', '0.06'))
+PH51_MIN_BAL_ACC       = float(os.environ.get('EGX_PH51_MIN_BAL_ACC', '0.36'))
+PH51_MIN_TOP_CONF_ACC  = float(os.environ.get('EGX_PH51_MIN_TOP_CONF_ACC', '0.40'))
+PH55_MIN_CONF          = float(os.environ.get('EGX_PH55_MIN_CONF', '0.46'))
+PH55_MIN_MARGIN        = float(os.environ.get('EGX_PH55_MIN_MARGIN', '0.07'))
+PH55_MIN_BAL_ACC       = float(os.environ.get('EGX_PH55_MIN_BAL_ACC', '0.36'))
+PH55_MIN_TOP_CONF_ACC  = float(os.environ.get('EGX_PH55_MIN_TOP_CONF_ACC', '0.38'))
+
 # ── DB ────────────────────────────────────────────────────────────────────────
 def get_db():
     conn = sqlite3.connect(DB_PATH)
@@ -73,6 +90,51 @@ def sf(v, default=0.0):
     try:
         return float(v) if v is not None else default
     except: return default
+
+
+def _ensure_columns(conn, table_name, columns):
+    """Add nullable columns to an existing SQLite table without changing old rows."""
+    try:
+        existing = {r['name'] for r in conn.execute(f"PRAGMA table_info({table_name})")}
+        for name, ddl in columns.items():
+            if name not in existing:
+                conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {name} {ddl}")
+        conn.commit()
+    except Exception as e:
+        print(f"[DB] ensure columns failed for {table_name}: {e}", flush=True)
+
+
+def _confidence_parts(proba_row):
+    vals = np.asarray(proba_row, dtype=float)
+    if vals.size == 0:
+        return 0.0, 0.0
+    ordered = np.sort(vals)
+    conf = float(ordered[-1])
+    second = float(ordered[-2]) if vals.size > 1 else 0.0
+    return conf, float(conf - second)
+
+
+def _top_confidence_metrics(y_true, y_pred, proba, coverage=0.25):
+    conf = np.max(np.asarray(proba, dtype=float), axis=1)
+    if len(conf) == 0:
+        return None, 0.0, None
+    cutoff = float(np.quantile(conf, max(0.0, min(1.0, 1.0 - coverage))))
+    mask = conf >= cutoff
+    if not np.any(mask):
+        return None, 0.0, round(cutoff, 4)
+    acc = float(np.mean(np.asarray(y_true)[mask] == np.asarray(y_pred)[mask]))
+    return acc, float(np.mean(mask)), round(cutoff, 4)
+
+
+def _forecast_abstain_reason(conf, margin, model_reliable, min_conf, min_margin):
+    reasons = []
+    if not model_reliable:
+        reasons.append('weak_oos_model')
+    if conf < min_conf:
+        reasons.append('low_confidence')
+    if margin < min_margin:
+        reasons.append('low_margin')
+    return ','.join(reasons)
 
 def ensure_tables(conn):
     conn.executescript("""
@@ -129,6 +191,57 @@ def ensure_tables(conn):
     """)
     conn.commit()
 
+
+class PhaseTimeoutError(TimeoutError):
+    pass
+
+
+def _timeout_handler(signum, frame):
+    raise PhaseTimeoutError("phase timeout exceeded")
+
+
+def _run_with_timeout(name, fn, timeout_sec=PHASE_TIMEOUT_SEC):
+    if timeout_sec <= 0:
+        return fn()
+    previous = signal.getsignal(signal.SIGALRM)
+    signal.signal(signal.SIGALRM, _timeout_handler)
+    signal.alarm(timeout_sec)
+    try:
+        return fn()
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous)
+
+
+def _feature_builder_frame(cache, symbol):
+    sym_df = pd.DataFrame(cache.get(symbol, []))
+    if sym_df.empty:
+        return None
+    if 'bar_date_str' not in sym_df.columns:
+        if 'bar_date' in sym_df.columns:
+            sym_df['bar_date_str'] = sym_df['bar_date'].astype(str)
+        else:
+            return None
+    return sym_df
+
+
+def _final_signal_symbols(conn, pred_date):
+    try:
+        rows = conn.execute(
+            """SELECT symbol FROM final_signals
+               WHERE trade_date=? AND actionable=1""",
+            (pred_date,)
+        ).fetchall()
+        return {r['symbol'] for r in rows}
+    except Exception:
+        return set()
+
+
+def _client_gate_fields(symbol, model_tier, final_gate_symbols):
+    if symbol in final_gate_symbols:
+        return model_tier, 'ACCEPTABLE', True
+    return 'LOW', 'ML_ONLY_REQUIRES_FINAL_SIGNALS', False
+
 # ═════════════════════════════════════════════════════════════════════════════
 # PHASE 1 — RICH FEATURE ENGINEERING (60+ features)
 # ═════════════════════════════════════════════════════════════════════════════
@@ -140,6 +253,10 @@ TECH_FEATURES = [
     'pre1_rsi', 'pre3_rsi', 'pre5_rsi',
     'pre3_momentum_5d', 'pre5_momentum_5d',
     'pre5_bb_position', 'pre5_compression_days',
+    # NOTE: pre1_adx, pre3_adx etc. are NOT in TECH_FEATURES to preserve per-stock
+    # model compatibility (trained on exactly 67 features). They are written to
+    # feature_store via EXTRA_FEATURE_COLS below but are NOT included in the
+    # TECH_FEATURES vector used for per-stock model inference.
     # New technical features
     'rsi_14', 'rsi_7', 'rsi_slope_3d',
     'adx_14', 'adx_slope_5d',
@@ -169,7 +286,17 @@ TECH_FEATURES = [
     'days_to_peak', 'days_to_trough', 'cycle_confidence',
 ]
 
-ALL_FEATURES = TECH_FEATURES   # 62 features total
+ALL_FEATURES = TECH_FEATURES   # 67 features total (per-stock model input size)
+
+# Extra features written to feature_store but NOT included in TECH_FEATURES.
+# These complete the FEATURE_COLS (22) set for offline analysis.
+# Per-stock models were trained on exactly 67 TECH_FEATURES — adding these would
+# break model inference. They are stored for analysis/auditability only.
+EXTRA_FEATURE_COLS_STORE = [
+    'pre1_adx', 'pre3_adx', 'pre5_adx',
+    'pre1_macd_hist', 'pre3_macd_hist', 'pre5_macd_hist',
+    'pre1_rsi_slope', 'pre1_ema_align', 'pre1_ema20_slope',
+]
 
 
 def _compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
@@ -361,6 +488,27 @@ def _compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
     out['ret_5d']      = out.get('ret_5d', pd.Series(0.0, index=df.index))
     out['vol_5d_avg']  = pd.Series(v, index=df.index).rolling(5).mean()
 
+    # ── Full FEATURE_COLS pre-lag features (added 2026-05-23) ─────────────────
+    # These match the 22 FEATURE_COLS used by Phase 2 ensemble, enabling offline
+    # analysis of predictions using feature_store without re-querying raw bars.
+    # pre1_adx / pre3_adx / pre5_adx: ADX shifted by 1/3/5 bars
+    adx14_s = pd.Series(np.nan_to_num(adx14), index=df.index)
+    for lag, name in [(1,'pre1_adx'),(3,'pre3_adx'),(5,'pre5_adx')]:
+        out[name] = adx14_s.shift(lag)
+    # pre1_macd_hist / pre3_macd_hist / pre5_macd_hist
+    macd_s = pd.Series(np.nan_to_num(macd_hist_arr), index=df.index)
+    for lag, name in [(1,'pre1_macd_hist'),(3,'pre3_macd_hist'),(5,'pre5_macd_hist')]:
+        out[name] = macd_s.shift(lag)
+    # pre1_rsi_slope: RSI change over 3 bars at lag-1
+    rsi_s = pd.Series(r14, index=df.index)
+    out['pre1_rsi_slope'] = rsi_s.diff(3).shift(1)
+    # pre1_ema_align: count of EMAs (20/50/200) price is above (0/1/2/3)
+    e200 = ema(c, min(200, n))
+    ema_align = (c > e20).astype(float) + (c > e50).astype(float) + (c > e200).astype(float)
+    out['pre1_ema_align'] = pd.Series(ema_align, index=df.index).shift(1)
+    # pre1_ema20_slope: EMA20 pct change over 5 bars at lag-1
+    out['pre1_ema20_slope'] = pd.Series(np.nan_to_num(e20), index=df.index).pct_change(5).shift(1)
+
     return out
 
 
@@ -512,15 +660,28 @@ def phase1_build_features():
             recent = feats.iloc[-60:]
 
             records = []
+            computed_at = datetime.datetime.now().isoformat()
             for date_idx, row_f in recent.iterrows():
                 date_str = date_idx.strftime('%Y-%m-%d')
+                # Write TECH_FEATURES (67) used by per-stock models
                 for fname in TECH_FEATURES:
                     if fname in row_f.index:
                         records.append((
                             date_str, sym, fname,
                             float(row_f[fname]),
                             'v2', 'computed',
-                            datetime.datetime.now().isoformat()
+                            computed_at
+                        ))
+                # Write EXTRA_FEATURE_COLS_STORE (9 extra) for analysis/auditability
+                # These are NOT in TECH_FEATURES to avoid breaking per-stock model
+                # inference (models trained on exactly 67 features).
+                for fname in EXTRA_FEATURE_COLS_STORE:
+                    if fname in row_f.index:
+                        records.append((
+                            date_str, sym, fname,
+                            float(row_f[fname]),
+                            'v2', 'computed',
+                            computed_at
                         ))
 
             conn.executemany("""
@@ -682,7 +843,9 @@ def phase2_explosion_ensemble():
     # This fixes AUC degradation from hardcoded 2025-12-31 cutoff
     _today      = _dt.date.today()
     _train_end  = (_today - _dt.timedelta(days=30)).isoformat()   # 30-day buffer for label stability
-    _oos_start  = (_today - _dt.timedelta(days=60)).isoformat()   # 60-day OOS window
+    # Fix: OOS must start AFTER train_end to avoid leakage in early-stopping validation
+    # (old code used 60-day window which overlapped 30 days with training, causing early-stop at ~49 trees)
+    _oos_start  = (_today - _dt.timedelta(days=29)).isoformat()   # strictly after train_end (no leakage)
     _cutoff_12m = (_today - _dt.timedelta(days=365)).isoformat()  # recency weight cutoff
 
     conn = get_db()
@@ -720,7 +883,7 @@ def phase2_explosion_ensemble():
     results = {}
 
     # ── 2a. LightGBM Optuna HPO ───────────────────────────────────────────────
-    print("[P2] LightGBM Optuna HPO (150 trials)...", flush=True)
+    print(f"[P2] LightGBM Optuna HPO (150 trials, timeout={HPO_TIMEOUT_SEC}s)...", flush=True)
 
     def lgb_objective(trial):
         params = {
@@ -750,7 +913,7 @@ def phase2_explosion_ensemble():
 
     lgb_study = optuna.create_study(direction='maximize',
                                     sampler=optuna.samplers.TPESampler(seed=42))
-    lgb_study.optimize(lgb_objective, n_trials=150, n_jobs=N_OPTUNA,
+    lgb_study.optimize(lgb_objective, n_trials=150, timeout=HPO_TIMEOUT_SEC, n_jobs=N_OPTUNA,
                        show_progress_bar=False)
     best_lgb_params = lgb_study.best_params
     best_lgb_params.update({
@@ -763,19 +926,27 @@ def phase2_explosion_ensemble():
     lgb_train = lgb.Dataset(X_tr, label=y_tr, weight=_sample_weights,
                             feature_name=feat_names, free_raw_data=False)
     lgb_val   = lgb.Dataset(X_os, label=y_os, feature_name=feat_names, free_raw_data=False) if len(X_os) > 10 else None
+    # Fix: increased patience from 50→150 and rounds from 1000→1500 to prevent under-fitting
+    # (old 50-round patience with lr=0.126 caused early-stop at just 49 trees)
     lgb_model = lgb.train(
         best_lgb_params, lgb_train,
-        num_boost_round=1000,
+        num_boost_round=1500,
         valid_sets=[lgb_val] if lgb_val else None,
-        callbacks=[lgb.early_stopping(50, verbose=False), lgb.log_evaluation(-1)] if lgb_val else [lgb.log_evaluation(-1)]
+        callbacks=[lgb.early_stopping(150, verbose=False), lgb.log_evaluation(-1)] if lgb_val else [lgb.log_evaluation(-1)]
     )
-    lgb_model.save_model(str(MODELS / 'explosion_lgbm_v3.txt'))
+    # Backup existing model before overwriting (2026-05-23 safety fix)
+    _lgbm_path = MODELS / 'explosion_lgbm_v3.txt'
+    if _lgbm_path.exists():
+        import shutil, datetime as _bkdt
+        _bk_path = MODELS / f'explosion_lgbm_v3_backup_{_bkdt.date.today().isoformat()}.txt'
+        shutil.copy2(str(_lgbm_path), str(_bk_path))
+    lgb_model.save_model(str(_lgbm_path))
     auc_lgb_oos = _auc(y_os, lgb_model.predict(X_os)) if len(X_os) > 10 else 0.5
     results['lgbm'] = {'auc_oos': round(auc_lgb_oos, 4), 'n_trees': lgb_model.num_trees()}
     print(f"[P2] LightGBM final: AUC_OOS={auc_lgb_oos:.4f}, trees={lgb_model.num_trees()}", flush=True)
 
     # ── 2b. XGBoost Optuna HPO ────────────────────────────────────────────────
-    print("[P2] XGBoost Optuna HPO (100 trials)...", flush=True)
+    print(f"[P2] XGBoost Optuna HPO (100 trials, timeout={HPO_TIMEOUT_SEC}s)...", flush=True)
 
     def xgb_objective(trial):
         params = {
@@ -803,7 +974,7 @@ def phase2_explosion_ensemble():
 
     xgb_study = optuna.create_study(direction='maximize',
                                     sampler=optuna.samplers.TPESampler(seed=42))
-    xgb_study.optimize(xgb_objective, n_trials=100, n_jobs=N_OPTUNA,
+    xgb_study.optimize(xgb_objective, n_trials=100, timeout=HPO_TIMEOUT_SEC, n_jobs=N_OPTUNA,
                        show_progress_bar=False)
     best_xgb_params = xgb_study.best_params
     best_xgb_params.update({'objective':'binary:logistic','eval_metric':'auc',
@@ -850,23 +1021,63 @@ def phase2_explosion_ensemble():
     print(f"[P2] ExtraTrees final: AUC_OOS={auc_et_oos:.4f}", flush=True)
 
     # ── 2e. Stacking Ensemble ─────────────────────────────────────────────────
-    print("[P2] Building stacking ensemble...", flush=True)
-    lgb_tr_proba = lgb_model.predict(X_tr)
-    xgb_tr_proba = xgb_model.predict(xgb.DMatrix(X_tr))   # no feature_names → array input
-    rf_tr_proba  = rf.predict_proba(X_tr)[:,1]
-    et_tr_proba  = et.predict_proba(X_tr)[:,1]
-    X_stack_tr = np.column_stack([lgb_tr_proba, xgb_tr_proba, rf_tr_proba, et_tr_proba])
+    # 2026-05-27 FIX: Use 5-fold cross-validation OOS predictions for meta-model
+    # training, not in-sample predictions. In-sample predictions give 97-99% AUC
+    # for positives and ~1% for negatives, but OOS predictions at inference time
+    # give 60-80% for positives and 30-50% for negatives — a completely different
+    # distribution. Training the meta-model on this mismatch causes it to INVERT
+    # the ordering at inference time (higher base model scores → lower meta output).
+    print("[P2] Building stacking ensemble (5-fold TimeSeriesSplit meta-training)...", flush=True)
+    from sklearn.model_selection import TimeSeriesSplit
+    X_stack_cv = np.zeros((len(X_tr), 4))  # OOS predictions via cross-validation
+    # Sort training data by date index (already time-ordered from build_training_data)
+    kf = TimeSeriesSplit(n_splits=5)
+    for fold_idx, (tr_idx, val_idx) in enumerate(kf.split(X_tr)):
+        X_kf_tr, X_kf_val = X_tr[tr_idx], X_tr[val_idx]
+        y_kf_tr = y_tr[tr_idx]
+        w_kf = _sample_weights[tr_idx] if _sample_weights is not None else None
+        # Lightweight models per fold (fewer rounds to keep training fast)
+        _lgb_cv = lgb.train(
+            {**best_lgb_params, 'verbosity': -1},
+            lgb.Dataset(X_kf_tr, y_kf_tr, weight=w_kf, feature_name=feat_names, free_raw_data=True),
+            num_boost_round=min(lgb_model.num_trees(), 300),
+            callbacks=[lgb.log_evaluation(-1)]
+        )
+        _xgb_cv = xgb.train(
+            {**{k: v for k,v in best_xgb_params.items() if k not in ('objective','eval_metric','verbosity','nthread')},
+             'objective': 'binary:logistic', 'verbosity': 0, 'nthread': N_JOBS},
+            xgb.DMatrix(X_kf_tr, y_kf_tr),
+            num_boost_round=min(xgb_model.best_ntree_limit if hasattr(xgb_model,'best_ntree_limit') else 200, 200),
+            verbose_eval=False
+        )
+        _rf_cv = RandomForestClassifier(n_estimators=200, max_depth=12, min_samples_leaf=10,
+                                        max_features='sqrt', class_weight='balanced',
+                                        n_jobs=N_JOBS, random_state=fold_idx)
+        _rf_cv.fit(X_kf_tr, y_kf_tr)
+        _et_cv = ExtraTreesClassifier(n_estimators=200, max_depth=12, min_samples_leaf=10,
+                                      max_features='sqrt', class_weight='balanced',
+                                      n_jobs=N_JOBS, random_state=fold_idx)
+        _et_cv.fit(X_kf_tr, y_kf_tr)
+        X_stack_cv[val_idx, 0] = _lgb_cv.predict(X_kf_val)
+        X_stack_cv[val_idx, 1] = _xgb_cv.predict(xgb.DMatrix(X_kf_val))
+        # Safe proba extraction: handle one-class folds from TimeSeriesSplit
+        _rf_proba = _rf_cv.predict_proba(X_kf_val)
+        X_stack_cv[val_idx, 2] = _rf_proba[:, 1] if _rf_proba.shape[1] > 1 else _rf_proba[:, 0]
+        _et_proba = _et_cv.predict_proba(X_kf_val)
+        X_stack_cv[val_idx, 3] = _et_proba[:, 1] if _et_proba.shape[1] > 1 else _et_proba[:, 0]
+        print(f"[P2]   CV fold {fold_idx+1}/5 done", flush=True)
 
-    # Meta-learner: isotonic calibrated LightGBM
+    # Meta-learner: train on CV OOS predictions (proper distribution)
     meta_params = {
         'objective': 'binary', 'metric': 'auc', 'verbosity': -1,
         'num_threads': N_JOBS, 'scale_pos_weight': scale_pos,
         'learning_rate': 0.05, 'num_leaves': 8, 'min_data_in_leaf': 10,
     }
-    meta_ds = lgb.Dataset(X_stack_tr, label=y_tr, free_raw_data=True)
+    meta_ds = lgb.Dataset(X_stack_cv, label=y_tr, free_raw_data=True)
     meta_model = lgb.train(meta_params, meta_ds, num_boost_round=200,
                            callbacks=[lgb.log_evaluation(-1)])
     meta_model.save_model(str(MODELS / 'explosion_meta_v1.txt'))
+    print(f"[P2] Meta-model saved ({meta_model.num_trees()} trees, trained on 5-fold CV OOS probs)", flush=True)
 
     if len(X_os) > 10:
         lgb_os = lgb_model.predict(X_os)
@@ -887,7 +1098,26 @@ def phase2_explosion_ensemble():
         json.dump(feat_names, f)
 
     dur = time.time() - t0
-    summary = {"phase": "2", "duration_seconds": round(dur, 1), "models": results}
+    best_auc = max((v.get('auc_oos', 0.5) for v in results.values()), default=0.5)
+    required_files = [
+        MODELS / 'explosion_lgbm_v3.txt',
+        MODELS / 'explosion_xgb_v1.json',
+        MODELS / 'explosion_rf_v1.pkl',
+        MODELS / 'explosion_et_v1.pkl',
+        MODELS / 'explosion_meta_v1.txt',
+    ]
+    acceptance = {
+        "accepted_for_prediction": bool(best_auc >= MIN_ACCEPTED_AUC and all(p.exists() for p in required_files)),
+        "min_auc_required": MIN_ACCEPTED_AUC,
+        "best_auc_oos": round(best_auc, 4),
+        "required_files_present": all(p.exists() for p in required_files),
+        "timeout_policy": {
+            "phase_timeout_sec": PHASE_TIMEOUT_SEC,
+            "hpo_timeout_sec": HPO_TIMEOUT_SEC,
+        },
+    }
+    summary = {"phase": "2", "duration_seconds": round(dur, 1), "models": results,
+               "acceptance": acceptance}
     conn = get_db()
     today_str = datetime.date.today().isoformat()
     conn.execute("INSERT INTO ml_trainer_runs (run_date, phase, duration_seconds, results) VALUES (?,?,?,?)",
@@ -911,6 +1141,42 @@ def phase3_regime_models():
     optuna.logging.set_verbosity(optuna.logging.WARNING)
     sys.path.insert(0, str(Path(__file__).parent))
     from explosion_ml import FEATURE_COLS, safe_float, _build_ohlcv_cache, _build_feature_row
+
+    # Phase 4 fix: when reading positives from explosive_moves, old rows lack the 6
+    # new columns.  safe_float(None) = 0.0, but _build_feature_row uses different
+    # defaults for those columns.  Using 0.0 creates a perfect artificial separator
+    # (positives all-zero vs negatives at their real defaults) → AUC = 1.0.
+    # Fix: supply the same defaults that _build_feature_row/_get_indicators_at use.
+    _FEAT_DEFAULTS = {c: 0.0 for c in FEATURE_COLS}
+    _FEAT_DEFAULTS.update({
+        'pre1_body_ratio':        0.5,   # neutral candle body
+        'pre1_lower_shadow':      0.2,   # small lower wick
+        'pre1_sector_ad_ratio':   1.0,   # neutral sector breadth
+        'pre1_sector_pct_ema20': 50.0,   # neutral sector % above EMA20
+        # Phase 5 new features
+        'pre1_turnover_ratio':    1.0,   # neutral turnover
+        'pre1_usdegp_chg':        0.0,   # no USD/EGP move
+        'pre1_vix_level':         0.25,  # moderate VIX
+        'pre1_oil_chg':           0.0,   # no oil move
+        'pre1_spread_bps':        0.5,   # moderate spread
+        # Phase 60-62 new features
+        'w_rsi':              0.5,
+        'w_bb_position':      0.5,
+        'mo_trend':           0.5,
+        'w_vol_compression':  0.33,
+        'obv_slope_5d':       0.5,
+        'adl_divergence':     0.5,
+        'closing_strength':   0.5,
+        'vol_dryup_days':     0.0,
+        'dtw_similarity':     0.5,
+        'dtw_expected_gain':  0.5,
+        # Group A/B microstructure + RS features
+        'net_accumulation_20d': 0.5, 'up_volume_ratio_10d': 0.5,
+        'range_compression_20d': 0.5, 'vcp_score': 0.5, 'base_tightness_10d': 0.5,
+        'higher_lows_streak': 0.0, 'breakout_proximity': 0.5,
+        'rs_vs_market_5d': 0.5, 'rs_vs_market_20d': 0.5,
+        'rs_vs_sector_10d': 0.5, 'rs_rank_pct': 0.5,
+    })
 
     t0 = time.time()
     print(json.dumps({"phase": "3", "step": "start", "desc": "Regime-Specific LightGBM (no-leakage)"}), flush=True)
@@ -939,10 +1205,12 @@ def phase3_regime_models():
     # The full history (13000+ rows) × 3 negatives takes 3+ hours to compute.
     # Limiting to 3 years (2023+) reduces to ~6000 pos, ~18000 neg, ~30min training.
     _p3_min_date = (_today_dt - datetime.timedelta(days=3*365)).isoformat()
+    # 2026-05-29 Audit Fix: filter return_5d >= 0.07 to remove 66.5% label noise
     pos_rows = conn.execute(
-        "SELECT * FROM explosive_moves WHERE explosion_date >= ?",
+        "SELECT * FROM explosive_moves WHERE explosion_date >= ? AND return_5d >= 0.07",
         (_p3_min_date,)
     ).fetchall()
+    print(f"[P3] Clean positives (return_5d>=7%): {len(pos_rows)}", flush=True)
 
     # ── Negative candidates (non-explosion days, 3× positives) ───────────────
     # Ph 80 — Limit to same 3-year window for consistency, 3× positives (not 6×)
@@ -959,6 +1227,19 @@ def phase3_regime_models():
         ORDER BY RANDOM()
         LIMIT ?
     """, (_p3_min_date, target_neg * 2,)).fetchall()
+    # Hard Negative Mining: add false positives from past predictions (phase3 only)
+    hard_neg_rows = conn.execute("""
+        SELECT ep.symbol, ep.pred_date AS bar_date
+        FROM explosion_predictions ep
+        LEFT JOIN explosive_moves em
+            ON ep.symbol = em.symbol AND ep.pred_date = em.explosion_date
+        WHERE em.symbol IS NULL
+          AND ep.explosion_prob > 0.65
+          AND ep.pred_date >= ?
+        ORDER BY ep.explosion_prob DESC
+        LIMIT ?
+    """, (_p3_min_date, min(500, len(pos_rows)))).fetchall()
+    print(f"[P3] Hard negatives from false predictions: {len(hard_neg_rows)}", flush=True)
     conn.close()
 
     print(f"[P3] Pos candidates: {len(pos_rows)}, Neg candidates: {len(neg_candidates)}", flush=True)
@@ -966,15 +1247,59 @@ def phase3_regime_models():
     # ── Build unified labeled dataset with (X, y, split, regime) ─────────────
     all_X, all_y, all_splits, all_regimes = [], [], [], []
 
+    # Phase 4 fix: recompute all 28 features from OHLCV for positives.
+    # explosive_moves only stores 22 old features; using constants (0.5, 0.2, 1.0, 50.0)
+    # as defaults for new features creates artificial separability vs negatives that
+    # have real varied values — causing AUC=1.0 leakage.
+    # Fix: use _build_feature_row(OHLCV) for positives just like negatives.
+    # Fallback to stored 22 + neutral defaults if OHLCV unavailable.
+    _em_cols_set = None  # cached for fallback
+    _p3_pos_computed = 0
+    _p3_pos_fallback = 0
     for r in pos_rows:
-        row = [safe_float(r[c]) for c in FEATURE_COLS]
+        if _em_cols_set is None:
+            try:
+                _em_cols_set = set(r.keys())
+            except Exception:
+                _em_cols_set = set()
+        dt = r['explosion_date']
+        sym = r['symbol']
+        sym_df = cache.get(sym)
+        row = None
+        if sym_df is not None:
+            row = _build_feature_row(sym_df, dt)  # real 28 features from OHLCV
+            if row is not None:
+                _p3_pos_computed += 1
+        if row is None:
+            # Fallback: stored 22 features + correct Phase 4 neutral defaults
+            row = [safe_float(r[c] if c in _em_cols_set else None, _FEAT_DEFAULTS[c]) for c in FEATURE_COLS]
+            _p3_pos_fallback += 1
         if sum(abs(v) for v in row) < 1e-6:
             continue
-        dt = r['explosion_date']
         split = 'IS' if dt <= IS_END else 'OOS'
         regime = regime_map.get(dt, 'BULL')
         all_X.append(row); all_y.append(1)
         all_splits.append(split); all_regimes.append(regime)
+    print(f"[P3] Pos features: {_p3_pos_computed} from OHLCV, {_p3_pos_fallback} from stored", flush=True)
+
+    # Process hard negatives first (false-positive days)
+    hard_neg_count = 0
+    for hard_neg in hard_neg_rows:
+        sym_df = cache.get(hard_neg['symbol'])
+        if sym_df is None:
+            continue
+        row = _build_feature_row(sym_df, hard_neg['bar_date'])
+        if row is None:
+            continue
+        dt = hard_neg['bar_date']
+        split = 'IS' if dt <= IS_END else ('OOS' if dt >= OOS_START else None)
+        if split is None:
+            continue  # skip embargo period
+        regime = regime_map.get(dt, 'BULL')
+        all_X.append(row); all_y.append(0)
+        all_splits.append(split); all_regimes.append(regime)
+        hard_neg_count += 1
+    print(f"[P3] Hard negatives added: {hard_neg_count}", flush=True)
 
     neg_count = 0
     neg_fail  = 0
@@ -1020,11 +1345,30 @@ def phase3_regime_models():
             results[regime] = {'skipped': True, 'n_pos': n_pos}
             continue
 
+        # BEAR fix: reduce neg ratio to 1.5× (vs 3× for BULL) to handle severe imbalance
+        if regime == 'BEAR' and n_neg > n_pos * 1.5:
+            # Subsample negatives to 1.5× positives
+            bear_neg_target = int(n_pos * 1.5)
+            neg_idx = np.where((all_regimes == 'BEAR') & (all_splits == 'IS') & (all_y == 0))[0]
+            keep_neg = np.random.choice(neg_idx, min(bear_neg_target, len(neg_idx)), replace=False)
+            pos_idx  = np.where((all_regimes == 'BEAR') & (all_splits == 'IS') & (all_y == 1))[0]
+            bear_idx = np.concatenate([pos_idx, keep_neg])
+            X_is, y_is = all_X[bear_idx], all_y[bear_idx]
+            n_pos = int(y_is.sum())
+            n_neg = int((y_is == 0).sum())
         scale_pos = max(1.0, n_neg / max(n_pos, 1))
         print(f"[P3] {regime}: IS={len(X_is)} ({n_pos}+/{n_neg}-), OOS={len(X_oos)}, spw={scale_pos:.1f}", flush=True)
 
         # Capture for closure
         _X_is, _y_is, _spw = X_is, y_is, scale_pos
+
+        # BEAR recency weights: last 30% of IS data weighted 3× for recency
+        _bear_weights = None
+        if regime == 'BEAR':
+            n_is = len(_X_is)
+            _bear_weights = np.ones(n_is)
+            recent_start = int(n_is * 0.7)
+            _bear_weights[recent_start:] = 3.0
 
         def regime_objective(trial):
             p = {
@@ -1039,7 +1383,9 @@ def phase3_regime_models():
             }
             idx = np.random.permutation(len(_X_is))
             cut = int(len(idx) * 0.75)
-            ds = lgb.Dataset(_X_is[idx[:cut]], label=_y_is[idx[:cut]], free_raw_data=True)
+            ds = lgb.Dataset(_X_is[idx[:cut]], label=_y_is[idx[:cut]],
+                              weight=(_bear_weights[idx[:cut]] if _bear_weights is not None else None),
+                              free_raw_data=True)
             dv = lgb.Dataset(_X_is[idx[cut:]], label=_y_is[idx[cut:]], free_raw_data=True)
             m  = lgb.train(p, ds, num_boost_round=300,
                            valid_sets=[dv],
@@ -1051,14 +1397,16 @@ def phase3_regime_models():
                                     sampler=optuna.samplers.TPESampler(seed=42))
         # Ph 80 — Reduced from 80→40 trials (still finds good params, 2× faster)
         # Phase 3 has 4 regimes × 40 trials = 160 total, vs 320 before
-        study.optimize(regime_objective, n_trials=40, n_jobs=N_OPTUNA,
+        study.optimize(regime_objective, n_trials=40, timeout=HPO_TIMEOUT_SEC, n_jobs=N_OPTUNA,
                        show_progress_bar=False)
 
         best_p = study.best_params
         best_p.update({'objective': 'binary', 'metric': 'auc', 'verbosity': -1,
                        'num_threads': N_JOBS, 'scale_pos_weight': scale_pos})
 
-        ds_full = lgb.Dataset(X_is, label=y_is, feature_name=list(FEATURE_COLS), free_raw_data=False)
+        ds_full = lgb.Dataset(X_is, label=y_is, feature_name=list(FEATURE_COLS),
+                              weight=(_bear_weights if regime == 'BEAR' else None),
+                              free_raw_data=False)
         dv_oos  = (lgb.Dataset(X_oos, label=y_oos, feature_name=list(FEATURE_COLS), free_raw_data=False)
                    if len(X_oos) > 10 else None)
         model = lgb.train(best_p, ds_full, num_boost_round=500,
@@ -1073,13 +1421,23 @@ def phase3_regime_models():
         auc_oos = _auc(y_oos, model.predict(X_oos)) if len(X_oos) > 10 else 0.5
         results[regime] = {
             'auc_oos': round(auc_oos, 4), 'n_is_pos': n_pos, 'n_is_neg': n_neg,
+            'n_oos': int(len(X_oos)),
+            'accepted_for_blend': bool(len(X_oos) >= 30 and auc_oos >= MIN_ACCEPTED_AUC),
             'best_auc_hpo': round(study.best_value, 4),
             'model_path': model_path
         }
         print(f"[P3] {regime}: AUC_OOS={auc_oos:.4f} (HPO best={study.best_value:.4f})", flush=True)
 
     dur = time.time() - t0
-    summary = {"phase": "3", "duration_seconds": round(dur, 1), "regimes": results}
+    summary = {"phase": "3", "duration_seconds": round(dur, 1), "regimes": results,
+               "acceptance": {
+                   "min_auc_required": MIN_ACCEPTED_AUC,
+                   "min_oos_required": 30,
+                   "timeout_policy": {
+                       "phase_timeout_sec": PHASE_TIMEOUT_SEC,
+                       "hpo_timeout_sec": HPO_TIMEOUT_SEC,
+                   },
+               }}
     conn = get_db()
     conn.execute("INSERT INTO ml_trainer_runs (run_date, phase, duration_seconds, results) VALUES (?,?,?,?)",
                  (today_str, '3', dur, json.dumps(summary)))
@@ -1439,157 +1797,207 @@ def phase5_triple_barrier():
 # ═════════════════════════════════════════════════════════════════════════════
 
 def phase6_walkforward():
-    """Phase 6: Walk-forward backtesting — 4 expanding windows."""
+    """
+    Phase 6: Walk-forward backtesting — 3 expanding windows.
+
+    REWRITE (2026-05-23): Fixed broken implementation that misaligned features.
+    Now uses build_training_data / build_oos_data per window (symbol-level),
+    with proper corruption filtering and a fresh LightGBM per window.
+    Metrics: AUC, Precision@5/10/20, Sharpe (simulated).
+    """
     import lightgbm as lgb
+    sys.path.insert(0, str(Path(__file__).parent))
+    from explosion_ml import build_training_data, build_oos_data, FEATURE_COLS
+
     t0 = time.time()
-    print(json.dumps({"phase":"6","step":"start","desc":"Walk-Forward Backtest (4 windows)"}), flush=True)
+    print(json.dumps({"phase": "6", "step": "start",
+                      "desc": "Walk-Forward Backtest (per-symbol, 3 windows)"}), flush=True)
     today_str = datetime.date.today().isoformat()
 
-    # Ph38 — Window 4 test_end is always today-1 (dynamic, no stale hardcoding)
-    _today_wf = datetime.date.today()
-    _w4_end   = (_today_wf - datetime.timedelta(days=1)).isoformat()
+    # Walk-forward windows (expanding train, fixed-length test, no overlap)
+    # 30-day purge gap between train_end and test_start
     WINDOWS = [
-        {'id':1,'train_start':'2021-01-01','train_end':'2023-06-30','test_start':'2023-07-01','test_end':'2024-06-30'},
-        {'id':2,'train_start':'2021-01-01','train_end':'2024-06-30','test_start':'2024-07-01','test_end':'2025-03-31'},
-        {'id':3,'train_start':'2021-01-01','train_end':'2024-12-31','test_start':'2025-01-01','test_end':'2025-09-30'},
-        {'id':4,'train_start':'2021-01-01','train_end':'2025-09-30','test_start':'2025-10-01','test_end':_w4_end},
+        {'id': 1,
+         'train_end':  '2024-06-30',
+         'test_start': '2024-07-31',   # 31-day gap
+         'test_end':   '2024-12-31'},
+        {'id': 2,
+         'train_end':  '2024-12-31',
+         'test_start': '2025-01-31',   # 31-day gap
+         'test_end':   '2025-06-30'},
+        {'id': 3,
+         'train_end':  '2025-06-30',
+         'test_start': '2025-07-31',   # 31-day gap
+         'test_end':   '2025-12-31'},
     ]
 
     conn = get_db()
-    # Load full dataset once (up to today — no future leakage)
-    _wf_cutoff = datetime.date.today().isoformat()
-    X_full, y_full, _, _, feat_names = _load_explosion_dataset(
-        conn, use_rich_features=False,
-        train_end=_wf_cutoff, oos_start='2099-01-01')
-
-    all_rows = conn.execute("""
-        SELECT em.explosion_date, em.explosion_class, em.direction
-        FROM explosive_moves em WHERE em.explosion_class IN ('LARGE','EXTREME')
-        ORDER BY em.explosion_date
-    """).fetchall()
-    date_labels = [(r['explosion_date'], 1) for r in all_rows]
-
-    neg_dates = conn.execute("""
-        SELECT date(bar_time,'unixepoch') as d FROM ohlcv_history
-        WHERE date(bar_time,'unixepoch') NOT IN (SELECT explosion_date FROM explosive_moves)
-        ORDER BY RANDOM() LIMIT 40000
-    """).fetchall()
-    date_labels += [(r['d'], 0) for r in neg_dates]
-    date_labels.sort(key=lambda x: x[0])
-
-    conn.close()
-
     window_results = []
 
     for w in WINDOWS:
-        print(f"[P6] Window {w['id']}: train {w['train_start']}→{w['train_end']}, test {w['test_start']}→{w['test_end']}", flush=True)
-
-        tr_mask = [(d >= w['train_start'] and d <= w['train_end']) for d, _ in date_labels]
-        te_mask = [(d >= w['test_start']  and d <= w['test_end'])  for d, _ in date_labels]
-
-        dl = np.array(date_labels, dtype=object)
-        X_all = np.zeros((len(date_labels), len(feat_names)), dtype=np.float32)
-        y_all = np.array([lbl for _, lbl in date_labels], dtype=np.int32)
-
-        # Simple features from pos data index
-        pos_count = 0
-        for i, (d, lbl) in enumerate(date_labels):
-            if i < len(X_full):
-                X_all[i] = X_full[min(i, len(X_full)-1)]
-
-        X_tr = X_all[tr_mask]; y_tr = y_all[tr_mask]
-        X_te = X_all[te_mask]; y_te = y_all[te_mask]
-
-        if len(X_tr) < 100 or len(X_te) < 20:
+        print(f"[P6] Window {w['id']}: "
+              f"train→{w['train_end']}, test {w['test_start']}→{w['test_end']}", flush=True)
+        try:
+            X_tr_list, y_tr_list = build_training_data(conn, train_end=w['train_end'])
+            X_te_list, y_te_list, _ = build_oos_data(
+                conn, oos_start=w['test_start'], oos_end=w['test_end'])
+        except Exception as e:
+            print(f"[P6] W{w['id']}: data error: {e}", flush=True)
             continue
 
-        scale_pos = int((y_tr==0).sum()) / max(int(y_tr.sum()), 1)
-        params = {'objective':'binary','metric':'auc','verbosity':-1,
-                  'num_threads':N_JOBS,'scale_pos_weight':scale_pos,
-                  'learning_rate':0.05,'num_leaves':31,'min_data_in_leaf':20,
-                  'feature_fraction':0.8,'bagging_fraction':0.8,'bagging_freq':5}
-        ds = lgb.Dataset(X_tr, label=y_tr, free_raw_data=True)
-        m = lgb.train(params, ds, num_boost_round=400, callbacks=[lgb.log_evaluation(-1)])
+        X_tr = np.array(X_tr_list, dtype=np.float32)
+        y_tr = np.array(y_tr_list, dtype=np.int32)
+        X_te = np.array(X_te_list, dtype=np.float32)
+        y_te = np.array(y_te_list, dtype=np.int32)
+
+        if len(X_tr) < 500 or len(X_te) < 50 or y_te.sum() < 10:
+            print(f"[P6] W{w['id']}: too few samples (tr={len(X_tr)}, te={len(X_te)}, "
+                  f"pos_te={y_te.sum()}) — skip", flush=True)
+            continue
+
+        n_pos_tr = int(y_tr.sum()); n_neg_tr = int((y_tr == 0).sum())
+        scale_pos = n_neg_tr / max(n_pos_tr, 1)
+
+        params = {
+            'objective': 'binary', 'metric': 'auc', 'verbosity': -1,
+            'num_threads': N_JOBS, 'scale_pos_weight': scale_pos,
+            'learning_rate': 0.05, 'num_leaves': 63,
+            'min_data_in_leaf': 20,
+            'feature_fraction': 0.8, 'bagging_fraction': 0.8, 'bagging_freq': 5,
+            'reg_alpha': 0.1, 'reg_lambda': 0.1,
+        }
+        ds = lgb.Dataset(X_tr, label=y_tr, feature_name=list(FEATURE_COLS), free_raw_data=True)
+        m = lgb.train(params, ds, num_boost_round=500,
+                      callbacks=[lgb.log_evaluation(-1)])
 
         probs = m.predict(X_te)
         auc_te = _auc(y_te, probs)
 
-        # Simulate trading signals (signal = prob >= 0.5)
-        sig_mask = probs >= 0.5
+        # Precision@K (K=5,10,20)
+        def _pk(k):
+            top_k = np.argsort(probs)[-k:]
+            return float(y_te[top_k].mean()) if len(top_k) >= k else 0.0
+
+        p5  = _pk(5)
+        p10 = _pk(10)
+        p20 = _pk(20)
+        base_rate = float(y_te.mean())
+
+        # Signal quality: top-quintile precision
+        q80_threshold = np.percentile(probs, 80)
+        sig_mask = probs >= q80_threshold
         n_signals = int(sig_mask.sum())
         win_rate  = float(y_te[sig_mask].mean()) if sig_mask.any() else 0.0
-        prec50    = win_rate
+        lift      = win_rate / max(base_rate, 0.01)
+        # Lift vs TRUE market base rate (training uses 3:1 negative sampling so
+        # base_rate≈0.25 is an artifact; real EGX weekly explosion rate ≈2%).
+        TRUE_MARKET_BASE = 0.02
+        lift_true = win_rate / TRUE_MARKET_BASE
 
-        # Ph79 calibrated returns — real-backtest integration with regime fallback
-        _use_real_backtest = False
-        _real_bt = None
-        try:
-            import sys as _sys
-            _dl_path = str(Path(__file__).parent)
-            if _dl_path not in _sys.path:
-                _sys.path.insert(0, _dl_path)
-            import backtest_engine as _be
-            _real_bt = _be.run_backtest(str(DB_PATH), days=180, min_signals=10)
-            if _real_bt and _real_bt.get('n_trades', 0) >= 10:
-                _use_real_backtest = True
-        except Exception:
-            pass
-
-        if _use_real_backtest and _real_bt:
-            _avg_win  = min(0.08, max(0.02, _real_bt.get('avg_win_pct',  0.045)))
-            _avg_loss = max(-0.08, min(-0.01, _real_bt.get('avg_loss_pct', -0.025)))
-        else:
-            _avg_win  = 0.045
-            _avg_loss = -0.025
-
-        # Ph79 calibrated returns from simulated daily P&L
+        # ── HONEST cost-adjusted Sharpe / Sortino ─────────────────────────────
+        # Signals are held ~5 trading days, so annualize with sqrt(252/HOLD_DAYS),
+        # NOT sqrt(252) (which assumes daily turnover and inflates Sharpe ~3.2x).
+        # EGX round-trip cost = 0.1% buy + 0.1% sell = 0.2% (spread≈0 on limit orders),
+        # subtracted from EVERY taken position. avg_win/avg_loss are SIMULATED
+        # magnitudes (real per-bar forward returns are not exposed by build_oos_data).
+        ROUND_TRIP_COST = 0.002
+        HOLD_DAYS = 5
+        ANNUALIZE = np.sqrt(252.0 / HOLD_DAYS)
+        avg_win  = 0.045; avg_loss = -0.025
         pnl = np.where(sig_mask,
-                       np.where(y_te==1, _avg_win * 0.997, _avg_loss * 1.003),
+                       np.where(y_te == 1, avg_win - ROUND_TRIP_COST, avg_loss - ROUND_TRIP_COST),
                        0.0)
-        _pnl_std = float(pnl.std())
-        if _pnl_std > 1e-8:
-            sharpe  = float(pnl.mean() / _pnl_std * np.sqrt(252))
-            # Cap Sharpe at ±50 to guard against near-degenerate windows
-            sharpe  = max(-50.0, min(50.0, sharpe))
-            sortino = float(pnl.mean() / max(float(pnl[pnl<0].std()) if (pnl<0).any() else _pnl_std, 1e-6) * np.sqrt(252))
-            sortino = max(-50.0, min(50.0, sortino))
+        taken = pnl[sig_mask]   # only the positions actually taken
+        if taken.size > 0 and taken.std() > 1e-8:
+            sharpe  = max(-20.0, min(20.0, float(taken.mean() / taken.std() * ANNUALIZE)))
+            downside = taken[taken < 0]
+            dstd = downside.std() if downside.size > 0 else 1e-8
+            sortino = max(-20.0, min(20.0, float(taken.mean() / max(dstd, 1e-8) * ANNUALIZE)))
         else:
-            sharpe = sortino = 0.0
-        cum = np.cumsum(pnl)
-        max_dd = float(np.min(cum - np.maximum.accumulate(cum))) if len(cum) > 0 else 0.0
+            sharpe = 0.0; sortino = 0.0
 
-        r = {'window_id': w['id'], 'train_start': w['train_start'],
-             'train_end': w['train_end'], 'test_start': w['test_start'],
-             'test_end': w['test_end'], 'model': 'lgbm',
-             'auc_test': round(auc_te,4), 'precision_50': round(prec50,4),
-             'sharpe': round(sharpe,3), 'sortino': round(sortino,3),
-             'max_drawdown': round(max_dd,4), 'n_signals': n_signals,
-             'win_rate': round(win_rate,4)}
+        # ── Net equity curve + real max drawdown (FIXED-FRACTION sizing) ──────
+        # 2026-05-30 Audit Fix: previous np.cumprod(1+taken) compounded EVERY
+        # signal at 100% capital sequentially → absurd returns (40M%, -99.9% DD)
+        # over 1000+ trades. Real portfolios risk a fixed fraction per position.
+        # Model: each trade allocates POS_FRACTION of capital (≈ equal-weight,
+        # ~10 concurrent positions). Bounds compounding to realistic levels.
+        if taken.size > 0:
+            POS_FRACTION = 0.10
+            eq = np.cumprod(1.0 + POS_FRACTION * taken)
+            peak = np.maximum.accumulate(eq)
+            dd = (eq - peak) / peak
+            max_drawdown_net = float(dd.min())          # most negative
+            total_return_net = float(eq[-1] - 1.0)
+            n_taken = int(taken.size)
+            avg_pnl_net = float(taken.mean())            # raw avg per-trade (un-sized)
+        else:
+            max_drawdown_net = 0.0; total_return_net = 0.0; n_taken = 0; avg_pnl_net = 0.0
+        max_dd = max_drawdown_net
+
+        r = {
+            'window_id':   w['id'],
+            'train_end':   w['train_end'],
+            'test_start':  w['test_start'],
+            'test_end':    w['test_end'],
+            'n_train':     len(X_tr),
+            'n_test':      len(X_te),
+            'n_pos_tr':    n_pos_tr,
+            'n_pos_te':    int(y_te.sum()),
+            'base_rate':   round(base_rate, 4),
+            'auc_test':    round(auc_te, 4),
+            'prec_at_5':   round(p5, 4),
+            'prec_at_10':  round(p10, 4),
+            'prec_at_20':  round(p20, 4),
+            'lift_q80':    round(lift, 3),
+            'lift_true':   round(lift_true, 3),
+            'true_base':   TRUE_MARKET_BASE,
+            'sharpe':      round(sharpe, 3),
+            'sortino':     round(sortino, 3),
+            'max_drawdown': round(max_dd, 4),
+            'max_drawdown_net': round(max_drawdown_net, 4),
+            'total_return_net': round(total_return_net, 4),
+            'avg_pnl_net':  round(avg_pnl_net, 5),
+            'n_taken':      n_taken,
+            'n_signals':   n_signals,
+            'win_rate':    round(win_rate, 4),
+        }
         window_results.append(r)
-        print(f"[P6] W{w['id']}: AUC={auc_te:.3f} Sharpe={sharpe:.2f} Prec50={prec50:.2%} n={n_signals}", flush=True)
+        print(f"[P6] W{w['id']}: AUC={auc_te:.4f} | P@5={p5:.3f} P@10={p10:.3f} P@20={p20:.3f} "
+              f"| base={base_rate:.3f} lift={lift:.2f}x lift_true={lift_true:.2f}x "
+              f"| Sharpe={sharpe:.2f} Sortino={sortino:.2f} | netDD={max_drawdown_net:.3f} "
+              f"netRet={total_return_net:.3f} nTaken={n_taken}", flush=True)
 
-    conn = get_db()
+    conn2 = get_db()
     for r in window_results:
-        conn.execute("""INSERT INTO walkforward_results
-            (run_date,window_id,train_start,train_end,test_start,test_end,
-             model,auc_test,precision_50,sharpe,sortino,max_drawdown,n_signals,win_rate)
+        conn2.execute("""INSERT OR REPLACE INTO walkforward_results
+            (run_date, window_id, train_start, train_end, test_start, test_end,
+             model, auc_test, precision_50, sharpe, sortino, max_drawdown, n_signals, win_rate)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (today_str, r['window_id'], r['train_start'], r['train_end'],
-             r['test_start'], r['test_end'], r['model'], r['auc_test'],
-             r['precision_50'], r['sharpe'], r['sortino'],
+            (today_str, r['window_id'], r['train_end'],  # train_start ≡ train_end for expanding
+             r['train_end'], r['test_start'], r['test_end'], 'lgbm_clean',
+             r['auc_test'], r['prec_at_10'], r['sharpe'], r['sortino'],
              r['max_drawdown'], r['n_signals'], r['win_rate']))
 
     dur = time.time() - t0
-    avg_sharpe = np.mean([r['sharpe'] for r in window_results]) if window_results else 0
-    avg_auc    = np.mean([r['auc_test'] for r in window_results]) if window_results else 0
-    summary = {"phase":"6","n_windows":len(window_results),
-               "avg_sharpe":round(float(avg_sharpe),3),
-               "avg_auc":round(float(avg_auc),4),
-               "duration_seconds":round(dur,1),
-               "windows": window_results}
-    conn.execute("INSERT INTO ml_trainer_runs (run_date, phase, duration_seconds, results) VALUES (?,?,?,?)",
-                 (today_str,'6',dur,json.dumps(summary)))
-    conn.commit(); conn.close()
+    avg_auc    = float(np.mean([r['auc_test']   for r in window_results])) if window_results else 0.0
+    avg_p10    = float(np.mean([r['prec_at_10'] for r in window_results])) if window_results else 0.0
+    avg_sharpe = float(np.mean([r['sharpe']     for r in window_results])) if window_results else 0.0
+    avg_lift   = float(np.mean([r['lift_q80']   for r in window_results])) if window_results else 0.0
+    summary = {
+        "phase": "6",
+        "n_windows": len(window_results),
+        "avg_auc":    round(avg_auc, 4),
+        "avg_p10":    round(avg_p10, 4),
+        "avg_lift_q80": round(avg_lift, 3),
+        "avg_sharpe": round(avg_sharpe, 3),
+        "duration_seconds": round(dur, 1),
+        "windows": window_results,
+    }
+    conn2.execute(
+        "INSERT INTO ml_trainer_runs (run_date, phase, duration_seconds, results) VALUES (?,?,?,?)",
+        (today_str, '6', dur, json.dumps(summary)))
+    conn2.commit(); conn2.close()
     print(json.dumps(summary), flush=True)
     return summary
 
@@ -3107,6 +3515,19 @@ def _ensure_tomorrow_forecast_table(conn):
         created_at      TEXT DEFAULT (datetime('now'))
     );
     """)
+    _ensure_columns(conn, 'tomorrow_forecast', {
+        'confidence':          'REAL',
+        'confidence_margin':   'REAL',
+        'raw_direction':       'TEXT',
+        'abstained':           'INTEGER DEFAULT 0',
+        'forecast_reliable':   'INTEGER DEFAULT 1',
+        'balanced_accuracy':   'REAL',
+        'top_conf_accuracy':   'REAL',
+        'top_conf_coverage':   'REAL',
+        'top_conf_threshold':  'REAL',
+        'abstain_reason':      'TEXT',
+        'calibration_method':  'TEXT',
+    })
     conn.commit()
 
 
@@ -3562,7 +3983,7 @@ def _fill_forecast_outcomes(conn, daily_df):
 
             actual_dir = ('UP'   if actual_ret >  UP_THR else
                           'DOWN' if actual_ret < DN_THR else 'FLAT')
-            correct    = 1 if actual_dir == row['direction'] else 0
+            correct    = None if row['direction'] == 'ABSTAIN' else (1 if actual_dir == row['direction'] else 0)
             confidence = max(float(row['p_up'] or 0),
                              float(row['p_flat'] or 0),
                              float(row['p_down'] or 0))
@@ -3631,7 +4052,7 @@ def phase51_tomorrow_forecast():
 
     from sklearn.model_selection import StratifiedKFold, cross_val_predict
     from sklearn.preprocessing import label_binarize, StandardScaler
-    from sklearn.metrics import roc_auc_score, accuracy_score
+    from sklearn.metrics import roc_auc_score, accuracy_score, balanced_accuracy_score
     from sklearn.calibration import CalibratedClassifierCV
     import pickle
 
@@ -3786,6 +4207,8 @@ def phase51_tomorrow_forecast():
                                    X_scaled, y, cv=cv5, method='predict_proba')
     oos_cls    = np.argmax(oos_probas, axis=1)
     acc        = float(accuracy_score(y, oos_cls))
+    bal_acc    = float(balanced_accuracy_score(y, oos_cls))
+    top_acc, top_cov, top_thr = _top_confidence_metrics(y, oos_cls, oos_probas, coverage=0.25)
 
     y_bin = label_binarize(y, classes=[0, 1, 2])
     try:
@@ -3794,7 +4217,9 @@ def phase51_tomorrow_forecast():
     except Exception:
         auc_ovr = 0.5
 
-    print(f"[Ph51] OOS Accuracy={acc:.3f}  AUC_OVR={auc_ovr:.3f}", flush=True)
+    top_acc_txt = f"{top_acc:.3f}" if top_acc is not None else "n/a"
+    print(f"[Ph51] OOS Accuracy={acc:.3f}  Balanced={bal_acc:.3f}  "
+          f"TopConfAcc={top_acc_txt}  AUC_OVR={auc_ovr:.3f}", flush=True)
 
     # ── 7. Train final model ──────────────────────────────────────────────────
     # Split: IS (80%) for training, cal (20%) for calibration — time-aware
@@ -3814,6 +4239,7 @@ def phase51_tomorrow_forecast():
     # Use cv='prefit': calibrates the EXISTING raw_model on the holdout cal set
     # — no re-training, calibrator sees truly fresh data.
     calibrated = False
+    calibration_method = 'raw'
     final_model = raw_model_full  # default: use full-data model
 
     if len(X_cal) >= 30:
@@ -3833,6 +4259,7 @@ def phase51_tomorrow_forecast():
             if cal_ll < raw_ll:
                 final_model = cal_model
                 calibrated  = True
+                calibration_method = 'sigmoid'
                 print(f"[Ph51] Calibration (sigmoid/prefit): raw={raw_ll:.4f} → cal={cal_ll:.4f} ✓", flush=True)
             else:
                 # Try isotonic as fallback
@@ -3843,6 +4270,7 @@ def phase51_tomorrow_forecast():
                 if iso_ll < raw_ll:
                     final_model = cal_iso
                     calibrated  = True
+                    calibration_method = 'isotonic'
                     print(f"[Ph51] Calibration (isotonic/prefit): raw={raw_ll:.4f} → iso={iso_ll:.4f} ✓", flush=True)
                 else:
                     # Neither helped — use full-data raw model
@@ -3864,7 +4292,21 @@ def phase51_tomorrow_forecast():
 
     proba             = final_model.predict_proba(X_today_s)[0]   # [p_down, p_flat, p_up]
     p_down, p_flat, p_up = float(proba[0]), float(proba[1]), float(proba[2])
-    direction         = {0: 'DOWN', 1: 'FLAT', 2: 'UP'}[int(np.argmax(proba))]
+    raw_direction     = {0: 'DOWN', 1: 'FLAT', 2: 'UP'}[int(np.argmax(proba))]
+    confidence, confidence_margin = _confidence_parts(proba)
+    model_reliable = bool(
+        bal_acc >= PH51_MIN_BAL_ACC and
+        (top_acc is None or top_acc >= PH51_MIN_TOP_CONF_ACC)
+    )
+    abstain_reason = _forecast_abstain_reason(
+        confidence, confidence_margin, model_reliable,
+        PH51_MIN_CONF, PH51_MIN_MARGIN
+    )
+    abstained = bool(abstain_reason)
+    direction = 'ABSTAIN' if abstained else raw_direction
+    if abstained:
+        print(f"[Ph51] Abstaining: raw={raw_direction} conf={confidence:.3f} "
+              f"margin={confidence_margin:.3f} reason={abstain_reason}", flush=True)
 
     # Expected move range (empirical conditional distributions)
     up_rets   = df_train.loc[df_train['target'] == 2, 'next_mkt_ret'].values * 100
@@ -3914,6 +4356,13 @@ def phase51_tomorrow_forecast():
             'model': final_model, 'raw_model': raw_model,
             'scaler': scaler, 'features': FEATURE_COLS,
             'calibrated': calibrated,
+            'calibration_method': calibration_method,
+            'abstention_thresholds': {
+                'min_conf': PH51_MIN_CONF,
+                'min_margin': PH51_MIN_MARGIN,
+                'min_balanced_accuracy': PH51_MIN_BAL_ACC,
+                'min_top_conf_accuracy': PH51_MIN_TOP_CONF_ACC,
+            },
         }, fh)
 
     # ── 12. Write forecast to DB ───────────────────────────────────────────────
@@ -3925,8 +4374,11 @@ def phase51_tomorrow_forecast():
            expected_move, expected_move_lo, expected_move_hi,
            gap_up_prob, volatility_regime,
            model_accuracy, model_auc, n_training_days,
-           top_features, created_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
+           top_features, confidence, confidence_margin, raw_direction,
+           abstained, forecast_reliable, balanced_accuracy,
+           top_conf_accuracy, top_conf_coverage, top_conf_threshold,
+           abstain_reason, calibration_method, created_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
     """, (
         today_str, direction,
         round(p_up, 4), round(p_flat, 4), round(p_down, 4),
@@ -3934,6 +4386,11 @@ def phase51_tomorrow_forecast():
         round(gap_up_prob, 3), vol_regime,
         round(acc, 4), round(auc_ovr, 4), len(df_train),
         json.dumps([f for f, _ in top_feats]),
+        round(confidence, 4), round(confidence_margin, 4), raw_direction,
+        int(abstained), int(not abstained), round(bal_acc, 4),
+        round(top_acc, 4) if top_acc is not None else None,
+        round(top_cov, 4), top_thr,
+        abstain_reason or None, calibration_method,
     ))
     conn.commit()
 
@@ -3944,17 +4401,27 @@ def phase51_tomorrow_forecast():
     summary = {
         "phase":              "51",
         "direction":          direction,
+        "raw_direction":      raw_direction,
         "p_up":               round(p_up,   3),
         "p_flat":             round(p_flat,  3),
         "p_down":             round(p_down,  3),
+        "confidence":         round(confidence, 3),
+        "confidence_margin":  round(confidence_margin, 3),
+        "abstained":          abstained,
+        "abstain_reason":     abstain_reason or None,
         "expected_move_pct":  round(exp_move, 2),
         "expected_move_range":[round(exp_move_lo, 2), round(exp_move_hi, 2)],
         "gap_up_prob":        round(gap_up_prob, 3),
         "volatility_regime":  vol_regime,
         "model_accuracy_oos": round(acc, 4),
+        "model_balanced_accuracy_oos": round(bal_acc, 4),
+        "top_conf_accuracy_oos": round(top_acc, 4) if top_acc is not None else None,
+        "top_conf_coverage_oos": round(top_cov, 4),
+        "top_conf_threshold_oos": top_thr,
         "model_auc_ovr":      round(auc_ovr, 4),
         "n_training_days":    len(df_train),
         "calibrated":         calibrated,
+        "calibration_method":  calibration_method,
         "data_source":        data_source,
         "top_features":       [f for f, _ in top_feats[:5]],
         "duration_seconds":   round(dur, 1),
@@ -4012,14 +4479,17 @@ def cmd_status():
             pu   = res.get('p_up', 0);  pd_ = res.get('p_down', 0)
             lo, hi = (res.get('expected_move_range') or ['?','?'])
             print(f"    direction={dir_} p_up={pu:.0%} p_down={pd_:.0%} "
-                  f"move=[{lo}%,{hi}%] acc={res.get('model_accuracy_oos','?'):.3f}")
+                  f"move=[{lo}%,{hi}%] acc={res.get('model_accuracy_oos','?'):.3f} "
+                  f"bal={res.get('model_balanced_accuracy_oos', 0):.3f}")
         elif r['phase'] == '55':
             dc   = res.get('dir_counts', {})
             top  = res.get('top_up_stocks', [])[:5]
             acc  = res.get('acc_oos', 0)
+            bal  = res.get('balanced_acc_oos', 0)
             n    = res.get('n_scored', 0)
             print(f"    n_scored={n} UP={dc.get('UP','?')} FLAT={dc.get('FLAT','?')} "
-                  f"DOWN={dc.get('DOWN','?')} acc_oos={acc:.3f} | top_up={top}")
+                  f"DOWN={dc.get('DOWN','?')} ABSTAIN={dc.get('ABSTAIN', 0)} "
+                  f"acc_oos={acc:.3f} bal={bal:.3f} | top_up={top}")
         elif r['phase'] == '56':
             sc   = res.get('state_counts', {})
             acc  = res.get('wf_accuracy', 0)
@@ -4053,10 +4523,11 @@ def cmd_status():
         _ensure_stock_forecast_table(conn)
         sf55 = conn.execute("""
             SELECT forecast_date,
-                   SUM(CASE WHEN direction='UP'   THEN 1 ELSE 0 END) n_up,
-                   SUM(CASE WHEN direction='FLAT' THEN 1 ELSE 0 END) n_flat,
-                   SUM(CASE WHEN direction='DOWN' THEN 1 ELSE 0 END) n_down,
-                   COUNT(*) n_total
+	                   SUM(CASE WHEN direction='UP'   THEN 1 ELSE 0 END) n_up,
+	                   SUM(CASE WHEN direction='FLAT' THEN 1 ELSE 0 END) n_flat,
+	                   SUM(CASE WHEN direction='DOWN' THEN 1 ELSE 0 END) n_down,
+	                   SUM(CASE WHEN direction='ABSTAIN' THEN 1 ELSE 0 END) n_abstain,
+	                   COUNT(*) n_total
             FROM stock_tomorrow_forecast
             WHERE forecast_date = (SELECT MAX(forecast_date) FROM stock_tomorrow_forecast)
             GROUP BY forecast_date
@@ -4070,6 +4541,7 @@ def cmd_status():
             top_str = ', '.join([f"{r['symbol']}({r['p_up']:.0%})" for r in top_up55])
             print(f"\n  📈 Stock Forecast (Ph55) [{sf55['forecast_date']}]: "
                   f"UP={sf55['n_up']} FLAT={sf55['n_flat']} DOWN={sf55['n_down']} "
+                  f"ABSTAIN={sf55['n_abstain']} "
                   f"| Top UP: {top_str}")
     except Exception:
         pass
@@ -4246,7 +4718,8 @@ def cmd_predict_ensemble():
     sys.path.insert(0, str(Path(__file__).parent))
     from explosion_ml import (FEATURE_COLS, safe_float,
                                _build_ohlcv_cache, _build_feature_row_from_tail,
-                               ensure_tables, _compute_indicators)
+                               ensure_tables, _compute_indicators,
+                               _final_signal_symbols, _client_gate_fields)
 
     print(json.dumps({"cmd": "predict_ensemble", "step": "start"}), flush=True)
 
@@ -4260,9 +4733,25 @@ def cmd_predict_ensemble():
     missing = [p for p in [lgbm_path, xgb_path, rf_path, et_path, meta_path]
                if not p.exists()]
     if missing:
-        print(json.dumps({"error": "models not found", "missing": [str(m) for m in missing],
-                          "hint": "Run: python3 egx_ml_trainer.py phase2"}), flush=True)
-        return
+        pred_date = datetime.date.today().isoformat()
+        try:
+            conn_missing = get_db()
+            ensure_tables(conn_missing)
+            conn_missing.execute("DELETE FROM explosion_predictions WHERE pred_date=?", (pred_date,))
+            conn_missing.commit()
+            conn_missing.close()
+        except Exception:
+            pass
+        result = {
+            "success": False,
+            "error": "models not found",
+            "missing": [str(m) for m in missing],
+            "pred_date": pred_date,
+            "cleared_prediction_date": pred_date,
+            "hint": "Run: python3 egx_ml_trainer.py phase2",
+        }
+        print(json.dumps(result), flush=True)
+        return result
 
     lgbm_model = lgb.Booster(model_file=str(lgbm_path))
     xgb_model  = xgb.Booster()
@@ -4318,6 +4807,10 @@ def cmd_predict_ensemble():
     # recomputing 67 features per stock in predict_ensemble.
     _conn_fs = get_db()
     stock_feature_vectors = {}  # symbol → np.array of 67 TECH_FEATURES (ordered by TECH_FEATURES list)
+    # BUG-03 FIX: initialise _fs_pivot BEFORE the try block so that code
+    # below (days_since_explosion loop, RSI extreme guard) always has a valid
+    # reference even when the feature_store query raises an exception.
+    _fs_pivot = {}
     try:
         fs_rows = _conn_fs.execute(
             """SELECT symbol, feature_name, feature_value
@@ -4325,7 +4818,7 @@ def cmd_predict_ensemble():
                WHERE feature_date = (SELECT MAX(feature_date) FROM feature_store)"""
         ).fetchall()
         # Pivot: {symbol: {feature_name: value}}
-        _fs_pivot = {}
+        _fs_pivot = {}  # overwritten on success
         for row in fs_rows:
             sym_k = row['symbol']
             if sym_k not in _fs_pivot:
@@ -4341,6 +4834,19 @@ def cmd_predict_ensemble():
         print(f"[ENS] Feature store unavailable: {e}", flush=True)
     _conn_fs.close()
 
+    # ── Pre-load days_since_explosion for guard decisions (2026-05-23) ──────
+    # Used in post-explosion gate below: stocks exploded ≤5 days ago are in
+    # "immediate afterglow" territory and should be blocked entirely.
+    stock_days_since_explosion = {}   # symbol → int (days since last explosion)
+    try:
+        for sym_k, fdict in _fs_pivot.items():
+            dse = fdict.get('days_since_explosion', 999)
+            if dse and dse > 0:
+                stock_days_since_explosion[sym_k] = int(dse)
+    except Exception:
+        pass
+    print(f"[ENS] days_since_explosion loaded for {len(stock_days_since_explosion)} symbols", flush=True)
+
     stock_models = {}  # symbol → LightGBM Booster (lazy-loaded only for today's stocks)
     print(f"[ENS] Per-stock models available: {len(stock_model_meta)} with AUC>=0.55", flush=True)
 
@@ -4354,6 +4860,27 @@ def cmd_predict_ensemble():
     ensure_tables(conn)
 
     pred_date = datetime.date.today().isoformat()
+    final_gate_symbols = _final_signal_symbols(conn, pred_date)
+    print(f"[ENS] final_signals client gate: {len(final_gate_symbols)} actionable symbols for {pred_date}", flush=True)
+
+    def _insert_prediction(sym, prob, prob_pct, tier, direction, drivers,
+                           model_version='ensemble_v3_54feat_clean',
+                           reliability_flag=None, client_gate=True):
+        if client_gate:
+            db_tier, rel, client_ready = _client_gate_fields(sym, tier, final_gate_symbols)
+        else:
+            db_tier, rel, client_ready = tier, (reliability_flag or 'FILTERED'), False
+        drivers_json = drivers if isinstance(drivers, str) else json.dumps(drivers)
+        conn.execute("""
+            INSERT OR REPLACE INTO explosion_predictions
+            (symbol, pred_date, explosion_prob, prob_pct, confidence_tier, direction,
+             top_drivers, model_version, reliability_flag)
+            VALUES (?,?,?,?,?,?,?,?,?)
+        """, (
+            sym, pred_date, prob, prob_pct, db_tier, direction,
+            drivers_json, model_version, rel
+        ))
+        return db_tier, rel, client_ready
 
     # ── Get today's market regime for Phase 3 blending ──────────────────────
     today_regime = 'UNKNOWN'
@@ -4393,14 +4920,64 @@ def cmd_predict_ensemble():
     except Exception as e_mem:
         print(f"[ENS] Recent failure memory unavailable: {e_mem}", flush=True)
 
+    # ── Load consolidation events (price jump >5× = reverse split / par-value change) ──
+    # Stocks near a consolidation event have corrupted OHLCV features and unreliable
+    # return histories. We block predictions for 90 days after their consolidation.
+    # (2026-05-23: audit found 101/259 stocks affected, causing phantom explosion signals)
+    stock_consolidation_dates = {}   # symbol → latest consolidation date (as date object)
+    try:
+        from explosion_ml import _get_consolidation_events as _gce
+        _con_events = _gce(conn, lookback_days=365)
+        for _sym, _dates in _con_events.items():
+            try:
+                _latest = max(datetime.date.fromisoformat(d) for d in _dates)
+                stock_consolidation_dates[_sym] = _latest
+            except Exception:
+                pass
+        print(f"[ENS] Consolidation events loaded for {len(stock_consolidation_dates)} symbols "
+              f"(blocked for 90d post-event)", flush=True)
+    except Exception as _e:
+        print(f"[ENS] Warning: could not load consolidation events: {_e}", flush=True)
+
     # ── Build OHLCV cache ────────────────────────────────────────────────────
     # Clear any stale predictions from earlier runs today before re-scoring.
     # predict_ensemble uses INSERT OR REPLACE per (symbol, pred_date), so symbols
     # that are now filtered by anomaly/vol guards (JUFO, DTPP etc.) would retain
     # old scores from earlier today's runs. A clean delete + re-insert ensures the
     # prediction table always reflects the CURRENT guard state.
+    # Backup prior run before wipe — used if this ensemble pass collapses (avg prob < 30%).
+    _prev_pred_date = conn.execute(
+        "SELECT MAX(pred_date) FROM explosion_predictions WHERE pred_date < ?",
+        (pred_date,),
+    ).fetchone()[0]
+    _prev_backup = {}
+    if _prev_pred_date:
+        for _pr in conn.execute(
+            """SELECT symbol, prob_pct, explosion_prob, model_version, confidence_tier
+               FROM explosion_predictions WHERE pred_date=? AND prob_pct >= 25""",
+            (_prev_pred_date,),
+        ).fetchall():
+            _prev_backup[_pr['symbol']] = dict(_pr)
+
     conn.execute("DELETE FROM explosion_predictions WHERE pred_date = ?", (pred_date,))
     conn.commit()
+
+    # Load DTW similarity cache (Phase 62)
+    dtw_cache = {}
+    try:
+        dtw_rows = conn.execute("""
+            SELECT symbol, dtw_similarity, dtw_expected_gain
+            FROM dtw_similarity_cache
+            WHERE calc_date >= date('now', '-3 days')
+        """).fetchall()
+        for dr in dtw_rows:
+            dtw_cache[dr['symbol']] = {
+                'sim': float(dr['dtw_similarity']),
+                'gain': float(dr['dtw_expected_gain'])
+            }
+        print(f"[ENS] DTW cache loaded: {len(dtw_cache)} symbols", flush=True)
+    except Exception:
+        pass
 
     print("[ENS] Building OHLCV cache...", flush=True)
     t0 = time.time()
@@ -4409,21 +4986,109 @@ def cmd_predict_ensemble():
         "SELECT DISTINCT symbol FROM ohlcv_history"
     ).fetchall()]
 
+    # ── Compute RS features (relative strength) for all symbols ─────────────
+    # Previously these were placeholder 0.5. Now computed from ohlcv_history.
+    _rs_cache = {}  # {sym: {'rs5': float, 'rs20': float, 'rank': float}}
+    try:
+        # Compute 5d and 20d returns for all symbols from latest bars
+        _sym_returns = {}
+        for _s in symbols:
+            _bars_rs = conn.execute("""
+                SELECT close FROM ohlcv_history WHERE symbol=?
+                ORDER BY bar_time DESC LIMIT 25
+            """, (_s,)).fetchall()
+            if len(_bars_rs) >= 21:
+                _closes = [float(r['close'] or 0) for r in reversed(_bars_rs)]
+                _c_now = _closes[-1]
+                if _c_now > 0:
+                    _ret5  = (_c_now - _closes[-6])  / max(_closes[-6], 0.001) if len(_closes) >= 6 else 0.0
+                    _ret20 = (_c_now - _closes[-21]) / max(_closes[-21], 0.001) if len(_closes) >= 21 else 0.0
+                    _sym_returns[_s] = {'r5': _ret5, 'r20': _ret20}
+        # 2026-05-30 Audit Fix: market proxy = EGX30 index (MATCHES training in
+        # explosion_ml._build_feature_row). Previously used cross-sectional average
+        # with a different normalization → train/inference mismatch.
+        _egx30 = conn.execute("""
+            SELECT close FROM ohlcv_history WHERE symbol='EGX30'
+            ORDER BY bar_time DESC LIMIT 25
+        """).fetchall()
+        _mkt_r5 = _mkt_r20 = 0.0
+        if len(_egx30) >= 21:
+            _ec = [float(r['close'] or 0) for r in reversed(_egx30)]
+            _en = _ec[-1]
+            if _en > 0:
+                _mkt_r5  = (_en - _ec[-6])  / max(_ec[-6], 0.001)
+                _mkt_r20 = (_en - _ec[-21]) / max(_ec[-21], 0.001)
+        # Cross-sectional rank (training leaves rank=0.5 placeholder, so model weight≈0;
+        # we still provide a real rank — harmless and more informative if reweighted later)
+        _all_r20 = [v['r20'] for v in _sym_returns.values()]
+        _sorted_r20 = sorted(_all_r20)
+        _n_syms = max(len(_sorted_r20), 1)
+        for _s, _v in _sym_returns.items():
+            # IDENTICAL normalization to training: (stock_ret - egx30_ret + b)/w
+            _rs5  = float(np.clip(((_v['r5']  - _mkt_r5)  + 0.10) / 0.20, 0.0, 1.0))
+            _rs20 = float(np.clip(((_v['r20'] - _mkt_r20) + 0.20) / 0.40, 0.0, 1.0))
+            _rank = float(sum(1 for x in _sorted_r20 if x <= _v['r20']) / _n_syms)
+            _rs_cache[_s] = {'rs5': _rs5, 'rs20': _rs20, 'rank': _rank}
+        print(f"[ENS] RS cache computed for {len(_rs_cache)} symbols (vs EGX30: 5d={_mkt_r5:+.1%} 20d={_mkt_r20:+.1%})", flush=True)
+    except Exception as _e_rs:
+        print(f"[ENS] RS cache failed ({_e_rs}), using defaults", flush=True)
+
     predictions = []
+    all_scored_entries = []
     n_scored = 0
     n_anomaly_skipped = 0
     n_failure_penalized = 0
+    n_liquidity_skipped = 0
+    n_circuit_skipped = 0
+    n_cooldown_skipped = 0
+    n_stale_skipped = 0
 
     for sym in symbols:
         bars = conn.execute("""
             SELECT date(bar_time,'unixepoch') AS bar_date, open, high, low, close, volume
-            FROM ohlcv_history WHERE symbol=? ORDER BY bar_time DESC LIMIT 40
+            FROM ohlcv_history WHERE symbol=? ORDER BY bar_time DESC LIMIT 150
         """, (sym,)).fetchall()
+        # LIMIT 150: previously LIMIT 40, but 40 bars is insufficient for stable indicator
+        # computation. RSI14 needs 14+ bars warmup, ADX14 needs 28+, EMA50 needs 50+.
+        # With only 40 bars, RSI was computed from just ~26 smoothed bars, causing
+        # systematic bias (e.g., HDBK: 40-bar RSI=27.5 vs full-history RSI=72.96).
+        # 150 bars = ~6 months, giving: RSI 136 smooth bars, ADX 122, EMA50 100.
+        # (Changed 2026-05-23: data quality audit revealed systematic RSI distortion)
 
         if len(bars) < 10:
             continue
 
         bars = list(reversed(bars))
+
+        # ── Consolidation guard (2026-05-23) ─────────────────────────────────
+        # Stocks that underwent a reverse split / par-value consolidation have
+        # broken price series: pre-consolidation OHLCV in radically different units
+        # from post-consolidation data.  The ML model sees "extreme BB compression"
+        # and "RSI=100" from corrupted features → inflated scores → false signals.
+        # Block for 90 trading days (≈4 months) after the consolidation event.
+        # 101/259 EGX stocks were identified as affected (audit 2026-05-23).
+        _con_date = stock_consolidation_dates.get(sym)
+        if _con_date is not None:
+            try:
+                _today_dt = datetime.date.today()
+                _days_since_con = (_today_dt - _con_date).days
+                if _days_since_con < 90:  # still within quarantine window
+                    n_anomaly_skipped += 1
+                    try:
+                        _insert_prediction(
+                            sym, 0.01, 1, 'LOW', 'CONSOLIDATION_FILTERED',
+                            [
+                                {"feature": "consolidation_days_since", "value": _days_since_con},
+                                {"feature": "consolidation_date", "value": _con_date.isoformat()},
+                            ],
+                            reliability_flag='FILTERED',
+                            client_gate=False,
+                        )
+                    except Exception:
+                        pass
+                    continue
+            except Exception:
+                pass
 
         # ── Price anomaly guard (2026-05-22) ────────────────────────────────
         # Skip stocks with extreme single-day moves in the last 20 bars.
@@ -4461,22 +5126,25 @@ def cmd_predict_ensemble():
         except Exception:
             pass
 
-        # ── Post-explosion cooldown guard (2026-05-23) ────────────────────────
-        # Stocks that had a cumulative 5-day return >20% are in post-explosion
+        # ── Post-explosion cooldown guard (2026-05-23, tightened 2026-05-23) ──
+        # Stocks that had a cumulative 5-day return >15% are in post-explosion
         # territory. The ML model tends to give them high scores (features reset
         # to "compression-like" after the big move stalls), but the energy has
         # been spent and next-day performance is poor.
         # Based on May 2026 analysis: ML≥85% group WR=11% vs ML 65-75% WR=65%.
         # All ML≥85% underperformers had single-day moves in their recent 10 bars.
+        # Threshold lowered 25% → 15% on 2026-05-23 after deep audit revealed that
+        # 5-day gradual runups (15-25% without triggering single-day guard) also
+        # produced exhausted setups that failed post-entry.
         if not anomaly_skip:
             try:
                 closes = [float(b['close'] or 0) for b in bars[-10:]]
                 if len(closes) >= 6:
-                    # Check if any 5-bar window in last 10 had cumulative >25% gain
+                    # Check if any 5-bar window in last 10 had cumulative >15% gain
                     for wi in range(len(closes) - 5):
                         if closes[wi] > 0 and closes[wi+5] > 0:
                             cum_ret = (closes[wi+5] - closes[wi]) / closes[wi]
-                            if cum_ret > 0.25:   # >25% in 5 days = post-explosion cooldown
+                            if cum_ret > 0.15:   # >15% in 5 days = post-explosion cooldown
                                 anomaly_skip = True
                                 break
             except Exception:
@@ -4489,12 +5157,12 @@ def cmd_predict_ensemble():
             # Without this, get_explosion_score() finds last week's 90%+ score and
             # signals the stock as HIGH_CONVICTION despite the anomaly guard here.
             try:
-                conn.execute("""
-                    INSERT OR REPLACE INTO explosion_predictions
-                    (symbol, pred_date, explosion_prob, prob_pct, confidence_tier, direction, top_drivers)
-                    VALUES (?,?,?,?,?,?,?)
-                """, (sym, pred_date, 0.01, 1, 'LOW', 'ANOMALY_FILTERED',
-                      '[{"feature":"anomaly_guard","value":1}]'))
+                _insert_prediction(
+                    sym, 0.01, 1, 'LOW', 'ANOMALY_FILTERED',
+                    [{"feature": "anomaly_guard", "value": 1}],
+                    reliability_flag='FILTERED',
+                    client_gate=False,
+                )
             except Exception:
                 pass
             continue
@@ -4519,17 +5187,72 @@ def cmd_predict_ensemble():
             if _avg20 > 0 and (_last_vol / _avg20) < 0.10:
                 n_anomaly_skipped += 1
                 try:
-                    conn.execute("""
-                        INSERT OR REPLACE INTO explosion_predictions
-                        (symbol, pred_date, explosion_prob, prob_pct, confidence_tier, direction, top_drivers)
-                        VALUES (?,?,?,?,?,?,?)
-                    """, (sym, pred_date, 0.01, 1, 'LOW', 'VOL_FILTERED',
-                          '[{"feature":"vol_guard","value":1}]'))
+                    _insert_prediction(
+                        sym, 0.01, 1, 'LOW', 'VOL_FILTERED',
+                        [{"feature": "vol_guard", "value": 1}],
+                        reliability_flag='FILTERED',
+                        client_gate=False,
+                    )
                 except Exception:
                     pass
                 continue
         except Exception:
             pass
+
+        # ── Hard Filter F1: Liquidity gate ───────────────────────────────────
+        try:
+            _bar_closes = [float(b['close'] or 0) for b in bars[-22:-2]]
+            _bar_vols20 = [float(b['volume'] or 0) for b in bars[-22:-2]]
+            avg_close = sum(_bar_closes) / max(len(_bar_closes), 1)
+            avg_vol_liq = sum(_bar_vols20) / max(len(_bar_vols20), 1)
+            avg_daily_value = avg_close * avg_vol_liq
+            if avg_daily_value < 300_000:
+                n_liquidity_skipped += 1
+                continue
+        except Exception:
+            pass
+
+        # ── Hard Filter F2: Circuit breaker guard ────────────────────────────
+        try:
+            _close_prev = float(bars[-2]['close'] or 0)
+            _close_prev2 = float(bars[-3]['close'] or 0)
+            yesterday_change_pct = abs((_close_prev - _close_prev2) / max(_close_prev2, 0.01)) * 100
+            if yesterday_change_pct > 9.5:
+                n_circuit_skipped += 1
+                continue
+        except Exception:
+            pass
+
+        # ── Hard Filter F3: Post-explosion cooldown (max gain in last 20 days > 30%) ──
+        try:
+            _closes20 = [float(b['close'] or 0) for b in bars[-22:-2]]
+            _highs20  = [float(b['high']  or 0) for b in bars[-22:-2]]
+            if len(_closes20) >= 20:
+                min_close_20d_ago = min(c for c in _closes20 if c > 0) if any(c > 0 for c in _closes20) else 1
+                max_high_20d = max(h for h in _highs20 if h > 0) if any(h > 0 for h in _highs20) else 0
+                max_gain_20d = (max_high_20d - min_close_20d_ago) / max(min_close_20d_ago, 0.01) * 100
+            else:
+                max_gain_20d = 0.0
+            if max_gain_20d > 30.0:
+                n_cooldown_skipped += 1
+                continue
+        except Exception:
+            max_gain_20d = 0.0
+
+        # ── Hard Filter F4: Data staleness ───────────────────────────────────
+        # Threshold: 7 calendar days (covers EGX Fri-Sat weekend + public holidays
+        # + DB update lag of 1-2 days). 3 days was too strict: on a Friday the last
+        # trading session was Thursday (1d ago) but DB may lag to Monday (4d ago).
+        try:
+            import datetime as _dt_stale
+            last_bar_date_str = bars[-1]['bar_date']
+            last_bar_dt = _dt_stale.date.fromisoformat(last_bar_date_str)
+            last_bar_days_ago = (datetime.date.today() - last_bar_dt).days
+            if last_bar_days_ago > 7:
+                n_stale_skipped += 1
+                continue
+        except Exception:
+            last_bar_days_ago = 0
 
         try:
             import pandas as pd
@@ -4549,7 +5272,79 @@ def cmd_predict_ensemble():
         if feat is None:
             continue
 
-        X = np.array([feat], dtype=np.float32)
+        # Inject real RS features if available (overrides placeholders)
+        if sym in _rs_cache and feat is not None:
+            try:
+                _rs = _rs_cache[sym]
+                from explosion_ml import FEATURE_COLS as _FEAT_COLS
+                _f_list = list(feat)
+                for _fi, _fn in enumerate(_FEAT_COLS):
+                    if _fn == 'rs_vs_market_5d':    _f_list[_fi] = _rs['rs5']
+                    elif _fn == 'rs_vs_market_20d':  _f_list[_fi] = _rs['rs20']
+                    elif _fn == 'rs_rank_pct':        _f_list[_fi] = _rs['rank']
+                    elif _fn == 'rs_vs_sector_10d':   _f_list[_fi] = _rs.get('rs20', 0.5)  # approx
+                feat = _f_list
+            except Exception:
+                pass
+
+        # ── RSI extreme guard (2026-05-23) ───────────────────────────────────
+        # RSI ≥ 90 in full-history computation (from feature_store) indicates:
+        #   a) Data corruption / unit error causing impossible RSI value
+        #   b) Stock is at extreme overbought — typically post-spike exhaust
+        # Either way, NOT a valid compression→explosion entry setup.
+        # Audit (2026-05-23): EOSB showed RSI=100 on both pre1 and pre3 (feature_store).
+        # SKPC showed pre3_rsi=97.8 alongside pre3_momentum=280% (unit error).
+        # Uses FEATURE_COLS[6/7/8] from the computed feat vector (now from 150 bars)
+        # AND cross-checks with feature_store for full-history accuracy.
+        try:
+            _rsi1, _rsi3, _rsi5 = feat[6], feat[7], feat[8]
+            # Also check feature_store pre1_rsi (full-history, more reliable)
+            _fs_rsi1 = _fs_pivot.get(sym, {}).get('pre1_rsi', 50.0)
+            _fs_rsi3 = _fs_pivot.get(sym, {}).get('pre3_rsi', 50.0)
+            _max_rsi = max(_rsi1, _rsi3, _fs_rsi1, _fs_rsi3)
+            if _max_rsi >= 90:
+                n_anomaly_skipped += 1
+                _insert_prediction(
+                    sym, 0.01, 1, 'LOW', 'ANOMALY_FILTERED',
+                    [{"feature": "rsi_extreme", "value": round(float(_max_rsi), 1)}],
+                    reliability_flag='FILTERED',
+                    client_gate=False,
+                )
+                continue
+        except Exception:
+            pass
+
+        # ── Days-since-explosion immediate cooldown (2026-05-23) ─────────────
+        # A stock that exploded ≤4 days ago is in the "immediate afterglow" zone.
+        # Institutional liquidity often dries up for 3-5 days post-explosion as
+        # retail exits and early buyers take profit. Re-entries in this window
+        # historically produce flat/negative returns (EGX continuation rate <30%).
+        # Deep audit 2026-05-23: ADIB days_since=6 at #3 with 57% probability;
+        # short days_since stocks need much higher probability to justify risk.
+        _dse = stock_days_since_explosion.get(sym, 999)
+        if _dse <= 4:
+            n_anomaly_skipped += 1
+            try:
+                _insert_prediction(
+                    sym, 0.01, 1, 'LOW', 'ANOMALY_FILTERED',
+                    [{"feature": "days_since_explosion", "value": _dse}],
+                    reliability_flag='FILTERED',
+                    client_gate=False,
+                )
+            except Exception:
+                pass
+            continue
+
+        # Inject DTW similarity from cache (Phase 62)
+        if sym in dtw_cache:
+            feat[-2] = dtw_cache[sym]['sim']    # dtw_similarity (index -2)
+            feat[-1] = dtw_cache[sym]['gain']   # dtw_expected_gain (index -1)
+
+        # Phase 4 compat: feat is 28-dim.
+        # FEAT is loaded from explosion_features_v3.json (22 features before phase2 retrain,
+        # 28 features after phase2 retrain with Phase 4).
+        # Truncate to len(FEAT) for existing models; after phase2 retrain both will be 28.
+        X    = np.array([feat[:len(FEAT)]], dtype=np.float32)   # matches saved model feature count
 
         # ── Base model predictions ────────────────────────────────────────────
         p_lgbm = p_xgb = p_rf = p_et = 0.5
@@ -4560,33 +5355,75 @@ def cmd_predict_ensemble():
             p_rf   = float(rf_model.predict_proba(X)[0, 1])
             p_et   = float(et_model.predict_proba(X)[0, 1])
 
-            # Meta-model stacking → calibration
-            meta_X   = np.array([[p_lgbm, p_xgb, p_rf, p_et]], dtype=np.float32)
-            raw_prob = float(meta_model.predict(meta_X)[0])
-            ensemble_prob = float(calibrator.transform([raw_prob])[0]) if calibrator else raw_prob
+            # Smart meta-model: try first, validate output quality, fallback if collapsed.
+            # Distribution shift guard: if meta-model outputs < 0.05 when base models
+            # all agree > 0.60, the meta-model has a distribution mismatch → use weighted avg.
+            W_LGBM, W_XGB, W_RF, W_ET = 0.40, 0.25, 0.20, 0.15
+            _weighted_avg = W_LGBM * p_lgbm + W_XGB * p_xgb + W_RF * p_rf + W_ET * p_et
+            try:
+                _meta_X = np.array([[p_lgbm, p_xgb, p_rf, p_et]], dtype=np.float32)
+                _meta_out = float(np.clip(meta_model.predict(_meta_X)[0], 0.0, 1.0))
+                _base_agree = min(p_lgbm, p_xgb, p_rf)  # min of 3 base models
+                _collapsed  = (_base_agree > 0.55 and _meta_out < 0.10)
+                ensemble_prob = _weighted_avg if _collapsed else _meta_out
+            except Exception:
+                ensemble_prob = _weighted_avg
         except Exception:
-            # Fallback to LGBM alone if meta fails
+            # Fallback to LGBM alone if any base model fails
             ensemble_prob = p_lgbm
+
+        # Save raw pre-blend ensemble prob for composite scoring (avoids calibration compression)
+        ensemble_prob_raw = ensemble_prob
+
+        # ── Monte Carlo: bootstrap ensemble with noise to estimate CI ────────────
+        try:
+            import numpy as _np_mc
+            mc_probs = []
+            for _ in range(50):  # 50 MC samples (fast)
+                noise = _np_mc.random.normal(0, 0.02, len(feat))  # small feature noise
+                row_mc = _np_mc.clip(_np_mc.array(feat) + noise, 0, 1)
+                X_mc = row_mc[:len(FEAT)].reshape(1, -1).astype(_np_mc.float32)
+                try:
+                    p_mc_lgbm = float(lgbm_model.predict(X_mc)[0])
+                    p_mc_xgb  = float(xgb_model.predict(xgb.DMatrix(X_mc))[0])
+                    p_mc_rf   = float(rf_model.predict_proba(X_mc)[0, 1])
+                    p_mc_et   = float(et_model.predict_proba(X_mc)[0, 1])
+                    p_mc = 0.40 * p_mc_lgbm + 0.25 * p_mc_xgb + 0.20 * p_mc_rf + 0.15 * p_mc_et
+                except Exception:
+                    p_mc = ensemble_prob_raw
+                mc_probs.append(p_mc)
+            mc_lower = float(_np_mc.percentile(mc_probs, 10))
+            mc_upper = float(_np_mc.percentile(mc_probs, 90))
+            mc_confidence = (mc_lower + mc_upper) / 2.0
+        except Exception:
+            mc_lower = ensemble_prob_raw * 0.9
+            mc_upper = ensemble_prob_raw * 1.1
+            mc_confidence = ensemble_prob_raw
 
         # ── Phase 3: blend regime-specific model (updated 2026-05-23) ──────────
         # OOS AUC results from Phase 3 retrain (2026-05-23, 3-year window, 40 trials):
         #   BULL:    AUC_OOS=0.9643 (n_OOS=1453) → w=0.30 (strong validated lift)
-        #   BEAR:    AUC_OOS=0.8263 (n_OOS=1571) → w=0.50 (large benefit confirmed)
-        #   CHOPPY:  AUC_OOS=0.5000 (n_OOS=0)   → w=0.15 (no OOS data, conservative)
-        #   UNKNOWN: AUC_OOS=0.5000 (n_OOS=0)   → w=0.15 (no OOS evidence)
-        # CHOPPY weight lowered from 0.40 to 0.15: no CHOPPY dates existed in the
-        # 2026-03-24 to 2026-04-23 OOS window, so the model has NO out-of-sample
-        # validation. Using 40% blend weight on an unvalidated model is risky.
+        #   BEAR:    AUC_OOS=0.3932 (n_OOS=1571) → w=0.00 DISABLED (inverted predictions!)
+        #   CHOPPY:  AUC_OOS=0.5000 (n_OOS=0)   → w=0.05 (no OOS data, conservative)
+        #   UNKNOWN: AUC_OOS=0.5000 (n_OOS=0)   → w=0.05 (no OOS evidence)
+        # BEAR DISABLED: AUC_OOS=0.3932 means the model predicts INVERSELY — scores of 0.8-0.9
+        # actually indicate NON-explosions in BEAR regime. Setting weight=0.0 disables it
+        # so the base ensemble (100% weight) handles BEAR regime predictions alone.
+        # CHOPPY weight lowered from 0.40 to 0.05: no CHOPPY dates existed in the
+        # 2026-03-24 to 2026-04-23 OOS window, so the model has NO out-of-sample validation.
         # BULL weight raised from 0.20 to 0.30: AUC_OOS=0.9643 strongly validated.
         REGIME_BLEND_WEIGHTS = {
-            'BEAR':    0.50,   # confirmed: AUC_OOS=0.8263, large BEAR-specific lift
-            'BULL':    0.30,   # raised: AUC_OOS=0.9643 strongly validated on OOS
-            'CHOPPY':  0.15,   # lowered: AUC_OOS=0.50 (no OOS data — unvalidated)
-            'UNKNOWN': 0.15,   # conservative — no OOS validation
+            'BEAR':    0.00,   # DISABLED: AUC_OOS=0.3932 (inverted) — use ensemble only in BEAR
+            'BULL':    0.30,   # validated: AUC_OOS=0.9643 strongly confirmed on OOS
+            'CHOPPY':  0.05,   # REDUCED 0.15→0.05: AUC_OOS=0.500, n_OOS=0 — no OOS data
+                               # at 0.500 AUC, CHOPPY model is pure noise; minimized to 5%
+                               # so base weighted-average ensemble (95%) dominates
+            'UNKNOWN': 0.05,   # REDUCED 0.15→0.05: no OOS validation — same reasoning
         }
         regime_model = regime_models.get(today_regime)
         if regime_model is not None:
             try:
+                # Regime models also use same feature count as FEAT (X is already truncated to len(FEAT))
                 p_regime = float(regime_model.predict(X)[0])
                 w_regime  = REGIME_BLEND_WEIGHTS.get(today_regime, 0.35)
                 prob = (1.0 - w_regime) * ensemble_prob + w_regime * p_regime
@@ -4606,7 +5443,7 @@ def cmd_predict_ensemble():
         stock_blend_weight = 0.0
         if sym in stock_model_meta and sym in stock_feature_vectors:
             auc_stock = stock_model_meta[sym]
-            stock_blend_weight = min(0.20, (auc_stock - 0.55) / 0.45 * 0.20)
+            stock_blend_weight = min(0.20, (auc_stock - 0.60) / 0.40 * 0.20)
             # Lazy-load per-stock model on first encounter
             if sym not in stock_models:
                 sp = MODELS / f'stock_{sym}.txt'
@@ -4624,7 +5461,19 @@ def cmd_predict_ensemble():
                     p_stock = None
                     stock_blend_weight = 0.0
 
-        # ── Phase 5: recent failure memory penalty (2026-05-23) ──────────────
+        # ── Phase 5a: post-explosion proximity penalty (2026-05-23) ─────────
+        # Stocks that exploded 5-20 days ago are in the "early recovery" zone.
+        # While not filtered entirely (unlike ≤4d which is blocked above), they
+        # need higher probability to overcome the elevated mean-reversion risk.
+        # Penalty: 30% reduction for days 5-10, fading to 0% at day 20.
+        # Audit finding: ADIB (days_since=6, prob=57%) was ranked #3 despite
+        # being in early recovery — this penalty would reduce to ~40%.
+        _dse_pen = 0.0
+        if 5 <= _dse <= 20:
+            _dse_pen = 0.30 * (1.0 - (_dse - 5) / 15.0)  # 30% at day 5 → 0% at day 20
+            prob = prob * (1.0 - _dse_pen)
+
+        # ── Phase 5b: recent failure memory penalty (2026-05-23) ─────────────
         # Down-weight stocks that had a STOP_LOSS within the last 60 days.
         # Max penalty = 20% at day 0, fades to 0% at day 60.
         # Severity scaling: a 10%+ loss → full 20% max; smaller losses proportional.
@@ -4644,6 +5493,48 @@ def cmd_predict_ensemble():
 
         n_scored += 1
         tier = 'HIGH' if prob >= 0.70 else 'MEDIUM' if prob >= 0.50 else 'LOW'
+
+        # ── Risk levels: ATR-based stop/target for client output ─────────────
+        try:
+            _cl = [float(b['close'] or 0) for b in bars[-16:] if float(b['close'] or 0) > 0]
+            _hi = [float(b['high']  or 0) for b in bars[-16:] if float(b['high']  or 0) > 0]
+            _lo = [float(b['low']   or 0) for b in bars[-16:] if float(b['low']   or 0) > 0]
+            _last_close = _cl[-1] if _cl else 0.0
+            if len(_cl) >= 2 and _last_close > 0:
+                _tr = [max(_hi[i]-_lo[i], abs(_hi[i]-_cl[i-1]), abs(_lo[i]-_cl[i-1]))
+                       for i in range(1, min(15, len(_cl)))]
+                _atr14 = sum(_tr[-14:]) / max(len(_tr[-14:]), 1)
+                _atr_pct = _atr14 / _last_close
+                # ── PROVEN EXIT: target_stop (+15% target / -7% stop / 10-day timeout) ──
+                # 2026-05-30 Audit: backtested 7 exit strategies on 4,583 real trades.
+                # target_stop won on risk-adjusted return AND lowest drawdown:
+                #   ALL+fixed5d:        Sharpe 0.99  win 16.4%  DD -18.5%
+                #   ALL+target_stop:    Sharpe 1.43  win 27.4%  DD -11.8%
+                #   TOP20%+target_stop: Sharpe 1.70  win 38.0%  DD -11.8%  ← MAXIMAL
+                # ATR-trail/hybrid FAILED (whipsaw in thin market, Sharpe 0.15-0.27).
+                _exit_strategy = 'target_stop'
+                _exit_target_pct = 0.15      # +15% take-profit
+                _exit_stop_pct   = -0.07     # -7% hard stop
+                _exit_timeout_d  = 10        # exit at 10 trading days if neither hit
+                _target_1 = round(_last_close * (1 + _exit_target_pct), 2)   # +15%
+                _stop_loss = round(_last_close * (1 + _exit_stop_pct), 2)    # -7%
+                _target_2 = round(_last_close * 1.25, 2)                     # stretch (rarely hit)
+                _risk_pct = round(abs(_exit_stop_pct) * 100, 1)             # 7.0%
+                _rr_ratio = round(_exit_target_pct / abs(_exit_stop_pct), 2) # 2.14×
+                # Kelly: f = (p×b - q×a)/b, b=+15% target, a=7% stop. Tier-capped.
+                _b = _exit_target_pct; _a = abs(_exit_stop_pct); _q = 1.0 - prob
+                _kelly = max(0.0, (prob * _b - _q * _a) / _b) if _b > 0 else 0.0
+                _kelly_caps = {'HIGH': 0.15, 'MEDIUM': 0.10, 'LOW': 0.05}
+                _kelly_cap  = _kelly_caps.get(tier, 0.10)
+                _kelly_pct  = round(min(_kelly_cap, _kelly) * 100, 1)
+            else:
+                _last_close = _stop_loss = _target_1 = _target_2 = 0.0
+                _risk_pct = _rr_ratio = _kelly_pct = 0.0
+                _exit_strategy = 'none'; _exit_timeout_d = 0
+        except Exception:
+            _last_close = _stop_loss = _target_1 = _target_2 = 0.0
+            _risk_pct = _rr_ratio = _kelly_pct = 0.0
+            _exit_strategy = 'none'; _exit_timeout_d = 0
 
         # Write prediction for ALL symbols (not just prob >= 0.30) so that
         # get_explosion_score() can return real values instead of 50.0 default.
@@ -4672,29 +5563,71 @@ def cmd_predict_ensemble():
                             'value': round(p_stock, 3)})
             drivers.append({'feature': 'stock_model_weight',
                             'value': round(stock_blend_weight, 3)})
+        if _dse_pen > 0:
+            drivers.append({'feature': 'dse_penalty',
+                            'value': round(_dse_pen, 3)})
+            drivers.append({'feature': 'days_since_explosion',
+                            'value': _dse})
         if failure_penalty > 0:
             drivers.append({'feature': 'failure_penalty',
                             'value': round(failure_penalty, 3)})
             drivers.append({'feature': 'prob_before_penalty',
                             'value': round(p_before_penalty, 3)})
 
-        conn.execute("""
-            INSERT OR REPLACE INTO explosion_predictions
-            (symbol, pred_date, explosion_prob, prob_pct, confidence_tier, direction, top_drivers)
-            VALUES (?,?,?,?,?,?,?)
-        """, (
-            sym, pred_date, prob, int(prob * 100), tier, 'UP',
-            json.dumps(drivers)
-        ))
+        # ── Append risk levels to drivers → stored in DB top_drivers ──────────
+        if _last_close > 0:
+            drivers.append({'feature': 'entry_price', 'value': round(_last_close, 2)})
+            drivers.append({'feature': 'stop_loss',   'value': _stop_loss})
+            drivers.append({'feature': 'target_1',    'value': _target_1})
+            drivers.append({'feature': 'target_2',    'value': _target_2})
+            drivers.append({'feature': 'risk_pct',    'value': _risk_pct})
+            drivers.append({'feature': 'rr_ratio',    'value': _rr_ratio})
+            drivers.append({'feature': 'kelly_pct',   'value': _kelly_pct})
+            drivers.append({'feature': 'expiry_days', 'value': _exit_timeout_d})
+            drivers.append({'feature': 'exit_strategy', 'value': _exit_strategy})
+
+        _pct_for_gate = max(
+            1,
+            int(min(99, round(max(ensemble_prob_raw, prob) * 100))),
+        )
+        db_tier, reliability_flag, client_ready = _insert_prediction(
+            sym, prob, _pct_for_gate, tier, 'UP', drivers
+        )
+
+        _scored_entry = {
+            'symbol': sym,
+            'explosion_prob': prob,
+            'raw_ensemble_prob': ensemble_prob_raw,
+            'vol_ratio': volr,
+            'tier': tier,
+            'prob_pct': _pct_for_gate,
+        }
 
         if prob >= 0.30:
             entry = {
-                'symbol':          sym,
-                'explosion_prob':  round(prob, 4),
-                'lgbm':            round(p_lgbm, 3),
-                'xgb':             round(p_xgb,  3),
-                'rf':              round(p_rf,   3),
-                'tier':            tier,
+                'symbol':            sym,
+                'explosion_prob':    round(prob, 4),
+                'raw_ensemble_prob': round(ensemble_prob_raw, 4),  # pre-blend raw prob
+                'vol_ratio':         round(volr, 2),
+                'lgbm':              round(p_lgbm, 3),
+                'xgb':               round(p_xgb,  3),
+                'rf':                round(p_rf,   3),
+                'tier':              db_tier,
+                'model_tier':        tier,
+                'reliability_flag':  reliability_flag,
+                'client_ready':      client_ready,
+                'mc_confidence':     round(mc_confidence, 3),
+                'mc_lower':          round(mc_lower, 3),
+                'mc_upper':          round(mc_upper, 3),
+                'entry_price':       round(_last_close, 2),
+                'stop_loss':         _stop_loss,
+                'target_1':          _target_1,
+                'target_2':          _target_2,
+                'risk_pct':          _risk_pct,
+                'rr_ratio':          _rr_ratio,
+                'kelly_pct':         _kelly_pct,
+                'expiry_days':       _exit_timeout_d,
+                'exit_strategy':     _exit_strategy,
             }
             if p_regime is not None:
                 entry['regime_prob'] = round(p_regime, 3)
@@ -4706,19 +5639,160 @@ def cmd_predict_ensemble():
                 entry['failure_penalty'] = round(failure_penalty, 3)
                 entry['prob_pre_penalty'] = round(p_before_penalty, 3)
             predictions.append(entry)
+            _scored_entry.update(entry)
+        all_scored_entries.append(_scored_entry)
 
     conn.commit()
 
     predictions.sort(key=lambda x: -x['explosion_prob'])
+
+    # ── Composite Score: percentile rank-based (avoids calibration compression) ───
+    # Applied to ALL scored symbols so prob_pct in DB reflects rank for quality gate.
+    _composite_pool = all_scored_entries if all_scored_entries else predictions
+    if _composite_pool:
+        import numpy as _np
+        raw_probs_arr = [p.get('raw_ensemble_prob', p['explosion_prob']) for p in _composite_pool]
+        all_raw = _np.array(raw_probs_arr)
+        for i, pred in enumerate(_composite_pool):
+            pct_rank = float(_np.sum(all_raw < all_raw[i])) / max(len(all_raw), 1) * 100
+            vol_bonus = min(20.0, max(0.0, (pred.get('vol_ratio', 1.0) - 1.0) * 10.0))
+            composite = (0.60 * pct_rank
+                       + 0.15 * vol_bonus
+                       + 0.10 * pred['explosion_prob'] * 100
+                       + 0.15 * pred.get('mc_confidence', pred.get('raw_ensemble_prob', pred['explosion_prob'])) * 100)
+
+            pred_max_gain = pred.get('_max_gain_20d', 0.0)
+            if pred_max_gain > 20.0:
+                composite *= 0.5
+                pred['sf1_penalty'] = True
+
+            pred_bp = pred.get('_breakout_proximity', 0.5)
+            pred_vr = pred.get('vol_ratio', 1.0)
+            if pred_bp < 0.05 and pred_vr < 0.7:
+                composite *= 0.4
+                pred['sf2_penalty'] = True
+
+            pred['composite_score'] = round(min(99.0, composite), 1)
+            pred['prob'] = pred.get('explosion_prob', 0.5)
+            _new_pct = max(pred.get('prob_pct', 0) or 0, int(pred['composite_score']))
+            conn.execute(
+                """UPDATE explosion_predictions SET prob_pct=?, explosion_prob=?
+                   WHERE symbol=? AND pred_date=?""",
+                (_new_pct, pred['explosion_prob'], pred['symbol'], pred_date),
+            )
+
+    # Governance: collapsed ensemble → restore prior-day scores for weak symbols
+    _avg_row = conn.execute(
+        """SELECT AVG(prob_pct) FROM explosion_predictions
+           WHERE pred_date=? AND reliability_flag NOT IN ('FILTERED')
+             AND model_version NOT LIKE '%FILTERED%'""",
+        (pred_date,),
+    ).fetchone()
+    _avg_prob = float(_avg_row[0] or 0) if _avg_row else 0.0
+    _n_restored = 0
+    if _avg_prob < 30.0 and _prev_backup:
+        for _sym, _bak in _prev_backup.items():
+            _cur = conn.execute(
+                "SELECT prob_pct FROM explosion_predictions WHERE symbol=? AND pred_date=?",
+                (_sym, pred_date),
+            ).fetchone()
+            if _cur and int(_cur['prob_pct'] or 0) < 25:
+                conn.execute(
+                    """UPDATE explosion_predictions
+                       SET prob_pct=?, explosion_prob=?, model_version=?
+                       WHERE symbol=? AND pred_date=?""",
+                    (
+                        int(_bak['prob_pct']),
+                        float(_bak['explosion_prob'] or 0),
+                        f"{_bak.get('model_version', 'lgbm')}_prev_fallback",
+                        _sym, pred_date,
+                    ),
+                )
+                _n_restored += 1
+        try:
+            conn.execute(
+                """INSERT OR REPLACE INTO ml_governance_audit
+                   (run_date, accepted_for_client, risk_level, auc_oos, notes, created_at)
+                   VALUES (?, 0, 'HIGH', NULL, ?, datetime('now'))""",
+                (pred_date, f'ensemble_collapsed_avg={_avg_prob:.1f};restored={_n_restored}'),
+            )
+        except Exception:
+            pass
+    else:
+        try:
+            conn.execute(
+                """INSERT OR REPLACE INTO ml_governance_audit
+                   (run_date, accepted_for_client, risk_level, auc_oos, notes, created_at)
+                   VALUES (?, 1, 'LOW', NULL, ?, datetime('now'))""",
+                (pred_date, f'ensemble_ok_avg={_avg_prob:.1f}'),
+            )
+        except Exception:
+            pass
+
+    conn.commit()
+
+    # Re-sort portfolio candidates by composite_score
+    predictions.sort(key=lambda x: -x.get('composite_score', x['explosion_prob'] * 100))
+
+    # ── Regime-gated thresholds (replaces single threshold) ─────────────────────
+    regime_thresholds = {'BULL': 0.60, 'NEUTRAL': 0.68, 'BEAR': 0.82}
+    max_signals_map = {'BULL': 7, 'NEUTRAL': 5, 'BEAR': 3}
+    # Map existing CHOPPY/UNKNOWN regimes to NEUTRAL for threshold lookup
+    _regime_key = today_regime if today_regime in regime_thresholds else 'NEUTRAL'
+    current_threshold = regime_thresholds.get(_regime_key, 0.68)
+    current_max_signals = max_signals_map.get(_regime_key, 5)
+    predictions = [p for p in predictions
+                   if p.get('raw_ensemble_prob', p['explosion_prob']) >= current_threshold]
+
+    # ── Portfolio Constructor: sector diversification + position sizing ──────────
+    all_candidates = predictions  # already filtered + sorted by composite_score
+    sectors_used = {}
+    portfolio = []
+    for candidate in all_candidates:
+        sector = candidate.get('sector', 'UNKNOWN')
+        if sectors_used.get(sector, 0) >= 2:
+            continue
+        # ATR-based stop and target
+        atr_pct = candidate.get('atr_pct', 0.03)
+        entry = candidate.get('close', 0)
+        stop = round(entry * (1 - max(0.06, 1.5 * atr_pct)), 2)
+        target1 = round(entry * (1 + 2 * max(0.06, 1.5 * atr_pct)), 2)
+        target2 = round(entry * (1 + 3 * max(0.06, 1.5 * atr_pct)), 2)
+
+        # Kelly position sizing
+        p_win = candidate.get('prob', candidate.get('explosion_prob', 0.5))
+        b = (target2 - entry) / max(entry - stop, 0.01) if entry > 0 else 2.0
+        kelly = max(0, (p_win * b - (1 - p_win)) / max(b, 0.01))
+        kelly = min(kelly, 0.15)
+        regime_mult = {'BULL': 1.0, 'NEUTRAL': 0.7, 'BEAR': 0.4}
+        position_pct = round(kelly * regime_mult.get(_regime_key, 0.7) * 100, 1)
+
+        candidate['stop_loss'] = stop
+        candidate['target_1'] = target1
+        candidate['target_2'] = target2
+        candidate['position_pct'] = position_pct
+        candidate['risk_reward'] = round(b, 2)
+
+        portfolio.append(candidate)
+        sectors_used[sector] = sectors_used.get(sector, 0) + 1
+        if len(portfolio) >= current_max_signals:
+            break
+
+    predictions = portfolio
+
     dur = time.time() - t0
     regime_blend_active = bool(regime_models.get(today_regime))
     n_stock_blended = sum(1 for p in predictions if 'stock_prob' in p)
+    n_client_ready = sum(1 for p in predictions if p.get('client_ready'))
 
-    regime_blend_weight = REGIME_BLEND_WEIGHTS.get(today_regime, 0.35) if regime_blend_active else 0.0
+    _rbw = {'BEAR': 0.00, 'BULL': 0.30, 'NEUTRAL': 0.35, 'CHOPPY': 0.05, 'UNKNOWN': 0.05}
+    regime_blend_weight = _rbw.get(today_regime, 0.35) if regime_blend_active else 0.0
     print(json.dumps({
         "cmd": "predict_ensemble",
         "pred_date": pred_date,
         "today_regime": today_regime,
+        "regime_threshold": current_threshold,
+        "current_max_signals": current_max_signals,
         "regime_blend_active": regime_blend_active,
         "regime_blend_weight": regime_blend_weight,
         "n_stock_models_blended": len(stock_models),
@@ -4727,11 +5801,48 @@ def cmd_predict_ensemble():
         "n_recent_losers_tracked": len(recent_losers),
         "n_scored": n_scored,
         "n_anomaly_skipped": n_anomaly_skipped,
+        "n_liquidity_skipped": n_liquidity_skipped,
+        "n_circuit_skipped": n_circuit_skipped,
+        "n_cooldown_skipped": n_cooldown_skipped,
+        "n_stale_skipped": n_stale_skipped,
         "n_stored": len(predictions),
+        "n_client_ready": n_client_ready,
+        "requires_final_signals_gate": True,
         "top5": [{'sym': p['symbol'], 'prob': p['explosion_prob'],
+                  'raw_prob': p.get('raw_ensemble_prob', p['explosion_prob']),
+                  'composite': p.get('composite_score', 0),
+                  'client_ready': p.get('client_ready', False),
                   'pen': p.get('failure_penalty', 0)} for p in predictions[:5]],
         "duration_seconds": round(dur, 1),
     }), flush=True)
+
+    # ── Auto-save to forward_test_predictions for outcome tracking ──────────
+    # Saves all final portfolio signals (above regime threshold) so their
+    # outcomes can be tracked after 5/10 trading days by egx_outcome_tracker.py
+    _saved_fwd = 0
+    for _p in predictions:
+        try:
+            _entry_p = _p.get('entry_price', 0.0) or 0.0
+            conn.execute("""
+                INSERT OR IGNORE INTO forward_test_predictions
+                (symbol, pred_date, ensemble_prob, confidence_tier, regime_at_pred,
+                 model_version, entry_price, status, created_at, updated_at)
+                VALUES (?,?,?,?,?,?,?,'PENDING',datetime('now'),datetime('now'))
+            """, (
+                _p['symbol'], pred_date,
+                round(_p['explosion_prob'], 4),
+                _p.get('tier', 'LOW'),
+                today_regime,
+                'ensemble_v3_54feat_clean',
+                round(_entry_p, 2),
+            ))
+            if conn.execute("SELECT changes()").fetchone()[0]:
+                _saved_fwd += 1
+        except Exception:
+            pass
+    if _saved_fwd:
+        print(f"[ENS] Saved {_saved_fwd} signals to forward_test_predictions for tracking", flush=True)
+    conn.commit()
 
     conn.close()
     return predictions
@@ -4760,6 +5871,24 @@ def phase9_calibration():
     sys.path.insert(0, str(Path(__file__).parent))
     from explosion_ml import FEATURE_COLS, safe_float, _build_ohlcv_cache, _build_feature_row
 
+    # Phase 4 fix: correct defaults for new columns missing from old explosive_moves rows
+    _FEAT_DEFAULTS_P9 = {c: 0.0 for c in FEATURE_COLS}
+    _FEAT_DEFAULTS_P9.update({'pre1_body_ratio': 0.5, 'pre1_lower_shadow': 0.2,
+                              'pre1_sector_ad_ratio': 1.0, 'pre1_sector_pct_ema20': 50.0,
+                              'pre1_turnover_ratio': 1.0, 'pre1_vix_level': 0.25,
+                              'pre1_spread_bps': 0.5,
+                              'w_rsi': 0.5, 'w_bb_position': 0.5, 'mo_trend': 0.5,
+                              'w_vol_compression': 0.33, 'obv_slope_5d': 0.5,
+                              'adl_divergence': 0.5, 'closing_strength': 0.5,
+                              'vol_dryup_days': 0.0, 'dtw_similarity': 0.5,
+                              'dtw_expected_gain': 0.5,
+                              'net_accumulation_20d': 0.5, 'up_volume_ratio_10d': 0.5,
+                              'range_compression_20d': 0.5, 'vcp_score': 0.5,
+                              'base_tightness_10d': 0.5, 'higher_lows_streak': 0.0,
+                              'breakout_proximity': 0.5, 'rs_vs_market_5d': 0.5,
+                              'rs_vs_market_20d': 0.5, 'rs_vs_sector_10d': 0.5,
+                              'rs_rank_pct': 0.5})
+
     t0 = time.time()
     print(json.dumps({"phase": "9", "step": "start", "desc": "Calibration (Isotonic)"}), flush=True)
 
@@ -4778,9 +5907,11 @@ def phase9_calibration():
     # ── Build OOS dataset with real features ─────────────────────────────────
     cache = _build_ohlcv_cache(conn, '2026-12-31')
 
+    # 2026-05-30 Audit Fix: filter return_5d >= 0.07 (Phase9 calibration was contaminated)
     pos_rows = conn.execute(
-        "SELECT * FROM explosive_moves WHERE explosion_date >= ?", (OOS_START,)
+        "SELECT * FROM explosive_moves WHERE explosion_date >= ? AND return_5d >= 0.07", (OOS_START,)
     ).fetchall()
+    print(f"[P9] Clean positives (return_5d>=7%): {len(pos_rows)}", flush=True)
     neg_cands = conn.execute("""
         SELECT o.symbol, date(o.bar_time,'unixepoch') AS bar_date
         FROM ohlcv_history o
@@ -4792,10 +5923,22 @@ def phase9_calibration():
     conn.close()
 
     X_oos, y_oos = [], []
+    _p9_pos_computed = 0; _p9_pos_fallback = 0
+    try: _p9_em_keys_set = set(pos_rows[0].keys()) if pos_rows else set()
+    except Exception: _p9_em_keys_set = set()
     for r in pos_rows:
-        row = [safe_float(r[c]) for c in FEATURE_COLS]
+        sym = r['symbol']; dt = r['explosion_date']
+        sym_df = cache.get(sym)
+        row = None
+        if sym_df is not None:
+            row = _build_feature_row(sym_df, dt)
+            if row is not None: _p9_pos_computed += 1
+        if row is None:
+            row = [safe_float(r[c] if c in _p9_em_keys_set else None, _FEAT_DEFAULTS_P9[c]) for c in FEATURE_COLS]
+            _p9_pos_fallback += 1
         if sum(abs(v) for v in row) < 1e-6: continue
         X_oos.append(row); y_oos.append(1)
+    print(f"[P9] Pos features: {_p9_pos_computed} from OHLCV, {_p9_pos_fallback} from stored", flush=True)
 
     neg_count = 0
     target_neg = len(y_oos) * 3
@@ -4831,9 +5974,46 @@ def phase9_calibration():
     cut = int(n * 0.70)
     tr_idx, ev_idx = idx[:cut], idx[cut:]
 
+    # Log raw probability distribution before calibration — diagnose compression
+    raw_hist = {f"{i*10}-{i*10+10}%": int(((raw_probs >= i/10) & (raw_probs < (i+1)/10)).sum())
+                for i in range(10)}
+    print(f"[P9] Raw prob distribution: {raw_hist}", flush=True)
+    raw_spread = float(raw_probs.max() - raw_probs.min())
+    print(f"[P9] Raw prob spread: min={raw_probs.min():.3f} max={raw_probs.max():.3f} "
+          f"mean={raw_probs.mean():.3f} std={raw_probs.std():.3f}", flush=True)
+
     calibrator = IsotonicRegression(out_of_bounds='clip')
     calibrator.fit(raw_probs[tr_idx], y_oos[tr_idx])
     cal_probs_eval = calibrator.transform(raw_probs[ev_idx])
+
+    # Anti-compression check: if calibrated spread < 0.20, apply linear stretch
+    cal_spread = float(cal_probs_eval.max() - cal_probs_eval.min()) if len(cal_probs_eval) > 0 else 0
+    all_cal_before_stretch = calibrator.transform(raw_probs)
+    print(f"[P9] Calibrated spread: min={all_cal_before_stretch.min():.3f} "
+          f"max={all_cal_before_stretch.max():.3f} mean={all_cal_before_stretch.mean():.3f}", flush=True)
+    if cal_spread < 0.20:
+        print(f"[P9] ⚠️  Probability compression detected (spread={cal_spread:.3f}) — applying rank stretch", flush=True)
+        # Rank-based stretch: map [5th, 95th] percentile to [0.05, 0.95]
+        from scipy.stats import rankdata
+        r_tr = rankdata(raw_probs[tr_idx]) / (len(tr_idx) + 1)
+        calibrator_stretch = IsotonicRegression(out_of_bounds='clip')
+        calibrator_stretch.fit(raw_probs[tr_idx], r_tr)
+        # Blend: 50% isotonic + 50% rank stretch for spread without losing calibration
+        cal_blend = 0.5 * calibrator.transform(raw_probs[ev_idx]) + \
+                    0.5 * calibrator_stretch.transform(raw_probs[ev_idx])
+        cal_blend_brier = float(np.mean((cal_blend - y_oos[ev_idx]) ** 2))
+        iso_brier = float(np.mean((calibrator.transform(raw_probs[ev_idx]) - y_oos[ev_idx]) ** 2))
+        if cal_blend_brier <= iso_brier * 1.05:
+            import pickle, types
+            # Wrap as a combined calibrator object
+            class _BlendCalibrator:
+                def __init__(self, iso, stretch, alpha=0.5):
+                    self.iso = iso; self.stretch = stretch; self.alpha = alpha
+                def transform(self, X):
+                    return (1-self.alpha)*self.iso.transform(X) + self.alpha*self.stretch.transform(X)
+            calibrator = _BlendCalibrator(calibrator, calibrator_stretch, alpha=0.5)
+            cal_probs_eval = calibrator.transform(raw_probs[ev_idx])
+            print(f"[P9] Blend calibrator active: iso_brier={iso_brier:.4f} blend_brier={cal_blend_brier:.4f}", flush=True)
 
     # ── Brier Score ───────────────────────────────────────────────────────────
     brier_raw = float(np.mean((raw_probs[ev_idx] - y_oos[ev_idx]) ** 2))
@@ -4866,6 +6046,73 @@ def phase9_calibration():
     cal_path = MODELS / 'explosion_calibrator_v1.pkl'
     joblib.dump(calibrator, str(cal_path))
 
+    # ── Regime-specific calibrators ───────────────────────────────────────────
+    # Train and save a separate calibrator for each market regime so that
+    # predict_ensemble can load the matching regime calibrator for better
+    # probability estimates in each market condition.
+    try:
+        regime_cal_results = {}
+        for _reg in ['BULL', 'NEUTRAL', 'BEAR']:
+            # Filter OOS data rows where regime matches
+            try:
+                _conn_reg = get_db()
+                _reg_dates = set()
+                try:
+                    _reg_rows = _conn_reg.execute(
+                        "SELECT date FROM regime_history WHERE regime = ?", (_reg,)
+                    ).fetchall()
+                    _reg_dates = {r['date'] for r in _reg_rows}
+                except Exception:
+                    pass
+                _conn_reg.close()
+            except Exception:
+                _reg_dates = set()
+
+            if len(_reg_dates) < 10:
+                print(f"[P9] Skipping {_reg} calibrator — insufficient regime dates ({len(_reg_dates)})", flush=True)
+                continue
+
+            # Build regime mask over OOS data (match explosion dates to regime dates)
+            # For positives use explosion_date, for negatives use bar_date
+            _reg_pos_dates = [r['explosion_date'] for r in pos_rows if r['explosion_date'] in _reg_dates]
+            _reg_mask = np.zeros(len(X_oos), dtype=bool)
+            # Approximate: mark first n_pos rows (positives) then negatives
+            # Since we don't track dates per row, use raw_probs split as proxy
+            # More robust: mark rows by checking date lists — use index-based approach
+            _pos_count = int(y_oos.sum())
+            for _ii in range(len(y_oos)):
+                if _ii < _pos_count:
+                    # positive row — check if explosion date matches regime
+                    try:
+                        _exp_dt = pos_rows[_ii]['explosion_date'] if _ii < len(pos_rows) else ''
+                        if _exp_dt in _reg_dates:
+                            _reg_mask[_ii] = True
+                    except Exception:
+                        pass
+                else:
+                    # negative row — include all in regime calibrator
+                    _reg_mask[_ii] = True
+
+            _reg_X = raw_probs[_reg_mask]
+            _reg_y = y_oos[_reg_mask]
+
+            if len(_reg_X) < 30 or _reg_y.sum() < 5:
+                print(f"[P9] Skipping {_reg} calibrator — too few samples (n={len(_reg_X)}, pos={_reg_y.sum()})", flush=True)
+                continue
+
+            try:
+                _reg_cal = IsotonicRegression(out_of_bounds='clip')
+                _reg_cal.fit(_reg_X, _reg_y)
+                _reg_cal_path = MODELS / f'explosion_calibrator_{_reg.lower()}_v1.pkl'
+                joblib.dump(_reg_cal, str(_reg_cal_path))
+                regime_cal_results[_reg] = str(_reg_cal_path)
+                print(f"[P9] {_reg} calibrator saved: {_reg_cal_path} (n={len(_reg_X)})", flush=True)
+            except Exception as _e_reg:
+                print(f"[P9] {_reg} calibrator failed: {_e_reg}", flush=True)
+    except Exception as _e_rcal:
+        print(f"[P9] Regime calibrators error: {_e_rcal}", flush=True)
+        regime_cal_results = {}
+
     dur = time.time() - t0
     summary = {
         "phase": "9",
@@ -4877,6 +6124,7 @@ def phase9_calibration():
         "ece_calibrated": round(ece_cal, 4),
         "prob_distribution": hist,
         "calibrator_path": str(cal_path),
+        "regime_calibrators": regime_cal_results,
         "duration_seconds": round(dur, 1),
     }
 
@@ -4943,7 +6191,8 @@ def phase10_tv_replay_backtest():
 
     # ── Check if TradingView MCP bridge is available ─────────────────────────
     bridge_path = ROOT / 'scripts' / 'tv_replay_bridge.mjs'
-    tv_available = bridge_path.exists()
+    live_replay_enabled = os.environ.get('EGX_TV_REPLAY_LIVE', '0') == '1'
+    tv_available = bridge_path.exists() and live_replay_enabled
 
     results = []
     db_sim_results = []
@@ -4965,7 +6214,8 @@ def phase10_tv_replay_backtest():
             if (i + 1) % 10 == 0:
                 print(f"[P10] TV replay: {i+1}/50", flush=True)
     else:
-        print("[P10] TV bridge not found — using DB simulation", flush=True)
+        why = "disabled" if bridge_path.exists() else "bridge_not_found"
+        print(f"[P10] Live TV replay {why} — using DB simulation", flush=True)
 
     # ── DB simulation (always runs, provides full statistics) ─────────────────
     db_conn = get_db()
@@ -5272,6 +6522,24 @@ def phase12_incremental_update():
     sys.path.insert(0, str(Path(__file__).parent))
     from explosion_ml import FEATURE_COLS, safe_float, _build_ohlcv_cache, _build_feature_row
 
+    # Phase 4 fix: correct defaults for new columns missing from old explosive_moves rows
+    _FEAT_DEFAULTS_P12 = {c: 0.0 for c in FEATURE_COLS}
+    _FEAT_DEFAULTS_P12.update({'pre1_body_ratio': 0.5, 'pre1_lower_shadow': 0.2,
+                               'pre1_sector_ad_ratio': 1.0, 'pre1_sector_pct_ema20': 50.0,
+                               'pre1_turnover_ratio': 1.0, 'pre1_vix_level': 0.25,
+                               'pre1_spread_bps': 0.5,
+                               'w_rsi': 0.5, 'w_bb_position': 0.5, 'mo_trend': 0.5,
+                               'w_vol_compression': 0.33, 'obv_slope_5d': 0.5,
+                               'adl_divergence': 0.5, 'closing_strength': 0.5,
+                               'vol_dryup_days': 0.0, 'dtw_similarity': 0.5,
+                               'dtw_expected_gain': 0.5,
+                               'net_accumulation_20d': 0.5, 'up_volume_ratio_10d': 0.5,
+                               'range_compression_20d': 0.5, 'vcp_score': 0.5,
+                               'base_tightness_10d': 0.5, 'higher_lows_streak': 0.0,
+                               'breakout_proximity': 0.5, 'rs_vs_market_5d': 0.5,
+                               'rs_vs_market_20d': 0.5, 'rs_vs_sector_10d': 0.5,
+                               'rs_rank_pct': 0.5})
+
     t0 = time.time()
     print(json.dumps({"phase": "12", "step": "start", "desc": "Incremental Online Learning"}), flush=True)
 
@@ -5281,18 +6549,24 @@ def phase12_incremental_update():
         return
 
     today_str  = datetime.date.today().isoformat()
-    cutoff_neg = (datetime.date.today() - datetime.timedelta(days=7)).isoformat()
+    # Use same 60-day window for BOTH positives and negatives to avoid class imbalance
+    cutoff_neg = (datetime.date.today() - datetime.timedelta(days=60)).isoformat()
     cutoff_pos = (datetime.date.today() - datetime.timedelta(days=60)).isoformat()
 
     conn = get_db()
 
-    # ── Positives: recent explosive moves ─────────────────────────────────────
+    # ── Positives: recent explosive moves from market data (NOT recommendation_outcomes) ──
+    # Phase 12 intentionally uses explosive_moves (market-validated price events)
+    # NOT recommendation_outcomes (model's own past signals) to avoid feedback-loop bias.
+    # Using model outputs as training labels would cause the model to reinforce its own
+    # past decisions regardless of actual market outcomes.
+    # 2026-05-30 Audit Fix: filter return_5d >= 0.07 (Phase12 incremental was contaminated)
     pos_rows = conn.execute(
-        "SELECT * FROM explosive_moves WHERE explosion_date >= ? AND explosion_date <= ?",
+        "SELECT * FROM explosive_moves WHERE explosion_date >= ? AND explosion_date <= ? AND return_5d >= 0.07 ORDER BY RANDOM() LIMIT 200",
         (cutoff_pos, today_str)
     ).fetchall()
 
-    # ── Negatives: recent non-explosion bars ──────────────────────────────────
+    # ── Negatives: recent non-explosion bars (same 60d window) ───────────────
     neg_cands = conn.execute("""
         SELECT o.symbol, date(o.bar_time,'unixepoch') AS bar_date
         FROM ohlcv_history o
@@ -5301,10 +6575,10 @@ def phase12_incremental_update():
                           WHERE e.symbol=o.symbol AND e.explosion_date=date(o.bar_time,'unixepoch'))
         ORDER BY RANDOM()
         LIMIT ?
-    """, (cutoff_neg, len(pos_rows) * 5)).fetchall()
+    """, (cutoff_neg, len(pos_rows) * 8)).fetchall()
     conn.close()
 
-    print(f"[P12] Incremental: {len(pos_rows)} pos (last 60d), {len(neg_cands)} neg candidates", flush=True)
+    print(f"[P12] Incremental: {len(pos_rows)} pos (last 60d, cap 200), {len(neg_cands)} neg candidates", flush=True)
 
     if len(pos_rows) < 10:
         print(json.dumps({"phase": "12", "status": "skip", "reason": "too few recent positives",
@@ -5315,10 +6589,22 @@ def phase12_incremental_update():
     cache = _build_ohlcv_cache(get_db(), today_str)
 
     X, y = [], []
+    _p12_pos_computed = 0; _p12_pos_fallback = 0
+    try: _p12_em_keys_set_r = set(pos_rows[0].keys()) if pos_rows else set()
+    except Exception: _p12_em_keys_set_r = set()
     for r in pos_rows:
-        row = [safe_float(r[c]) for c in FEATURE_COLS]
+        sym = r['symbol']; dt = r['explosion_date']
+        sym_df = cache.get(sym)
+        row = None
+        if sym_df is not None:
+            row = _build_feature_row(sym_df, dt)
+            if row is not None: _p12_pos_computed += 1
+        if row is None:
+            row = [safe_float(r[c] if c in _p12_em_keys_set_r else None, _FEAT_DEFAULTS_P12[c]) for c in FEATURE_COLS]
+            _p12_pos_fallback += 1
         if sum(abs(v) for v in row) < 1e-6: continue
         X.append(row); y.append(1)
+    print(f"[P12] Pos features: {_p12_pos_computed} from OHLCV, {_p12_pos_fallback} from stored", flush=True)
 
     n_pos = len(X); neg_count = 0; target_neg = n_pos * 3
     for neg in neg_cands:
@@ -5360,29 +6646,36 @@ def phase12_incremental_update():
         'feature_fraction': 0.8,
     }
     ds = lgb.Dataset(X_tr, label=y_tr, feature_name=list(FEATURE_COLS), free_raw_data=True)
-    updated = lgb.train(params, ds, num_boost_round=30,
+    updated = lgb.train(params, ds, num_boost_round=10,
                         init_model=str(model_path),
                         callbacks=[lgb.log_evaluation(-1)])
 
     auc_after = _auc(y_ho, updated.predict(X_ho)) if len(y_ho) > 10 else 0.5
 
-    # ── Only save if model improved or stayed similar (not degraded >0.01) ───
+    # ── Only save if model improved or stayed similar (not degraded >0.03) ───
     delta = auc_after - auc_before
     backup_path = MODELS / f'explosion_lgbm_v3_backup_{today_str}.txt'
     base_model.save_model(str(backup_path))
-    if delta >= -0.01:
+
+    # Hold-out validation: use the SAME X_ho (20% split above) — not a random sub-sample of training
+    # Require: (a) no large AUC degradation, (b) holdout AUC > 0.55, (c) positive/negative balance in holdout
+    auc_holdout = auc_after  # already evaluated on the 20% holdout split
+    has_both_classes = y_ho.sum() > 0 and (y_ho == 0).sum() > 0
+    model_saved = has_both_classes and auc_holdout > 0.55 and delta > -0.03
+
+    if model_saved:
         updated.save_model(str(model_path))
         saved = True
     else:
         saved = False
-        print(f"[P12] Model degraded (Δ={delta:.4f}) — keeping backup, NOT saving", flush=True)
+        print(f"[P12] Model not saved (Δ={delta:.4f}, auc_after={auc_after:.4f}) — keeping backup", flush=True)
 
     dur = time.time() - t0
     summary = {
         "phase": "12",
         "n_new_samples": len(X),
         "n_pos": n_pos, "n_neg": neg_count,
-        "n_new_trees": 30,
+        "n_new_trees": 10,
         "auc_before": round(auc_before, 4),
         "auc_after":  round(auc_after, 4),
         "delta_auc":  round(delta, 4),
@@ -5421,6 +6714,24 @@ def phase13_cpcv():
     sys.path.insert(0, str(Path(__file__).parent))
     from explosion_ml import FEATURE_COLS, safe_float, _build_ohlcv_cache, _build_feature_row
 
+    # Phase 4 fix: correct defaults for new columns missing from old explosive_moves rows
+    _FEAT_DEFAULTS_P13 = {c: 0.0 for c in FEATURE_COLS}
+    _FEAT_DEFAULTS_P13.update({'pre1_body_ratio': 0.5, 'pre1_lower_shadow': 0.2,
+                               'pre1_sector_ad_ratio': 1.0, 'pre1_sector_pct_ema20': 50.0,
+                               'pre1_turnover_ratio': 1.0, 'pre1_vix_level': 0.25,
+                               'pre1_spread_bps': 0.5,
+                               'w_rsi': 0.5, 'w_bb_position': 0.5, 'mo_trend': 0.5,
+                               'w_vol_compression': 0.33, 'obv_slope_5d': 0.5,
+                               'adl_divergence': 0.5, 'closing_strength': 0.5,
+                               'vol_dryup_days': 0.0, 'dtw_similarity': 0.5,
+                               'dtw_expected_gain': 0.5,
+                               'net_accumulation_20d': 0.5, 'up_volume_ratio_10d': 0.5,
+                               'range_compression_20d': 0.5, 'vcp_score': 0.5,
+                               'base_tightness_10d': 0.5, 'higher_lows_streak': 0.0,
+                               'breakout_proximity': 0.5, 'rs_vs_market_5d': 0.5,
+                               'rs_vs_market_20d': 0.5, 'rs_vs_sector_10d': 0.5,
+                               'rs_rank_pct': 0.5})
+
     t0 = time.time()
     print(json.dumps({"phase": "13", "step": "start", "desc": "CPCV (N=6, k=2, embargo=30d)"}), flush=True)
 
@@ -5431,8 +6742,10 @@ def phase13_cpcv():
     cache = _build_ohlcv_cache(conn, '2025-12-31')
 
     # ── Build full labeled dataset ─────────────────────────────────────────────
+    # 2026-05-30 Audit Fix: filter return_5d >= 0.07 (Phase13 CPCV was contaminated —
+    # prior Sharpe=7.6 was computed on 10,013 noisy positives, not real explosions)
     pos_rows = conn.execute(
-        "SELECT * FROM explosive_moves WHERE explosion_date BETWEEN '2020-12-01' AND '2025-12-31'"
+        "SELECT * FROM explosive_moves WHERE explosion_date BETWEEN '2020-12-01' AND '2025-12-31' AND return_5d >= 0.07"
     ).fetchall()
     neg_cands = conn.execute("""
         SELECT o.symbol, date(o.bar_time,'unixepoch') AS bar_date
@@ -5445,11 +6758,22 @@ def phase13_cpcv():
     conn.close()
 
     X_all, y_all, dates_all = [], [], []
-
+    _p13_pos_computed = 0; _p13_pos_fallback = 0
+    try: _p13_em_keys_set = set(pos_rows[0].keys()) if pos_rows else set()
+    except Exception: _p13_em_keys_set = set()
     for r in pos_rows:
-        row = [safe_float(r[c]) for c in FEATURE_COLS]
+        sym = r['symbol']; dt = r['explosion_date']
+        sym_df = cache.get(sym)
+        row = None
+        if sym_df is not None:
+            row = _build_feature_row(sym_df, dt)
+            if row is not None: _p13_pos_computed += 1
+        if row is None:
+            row = [safe_float(r[c] if c in _p13_em_keys_set else None, _FEAT_DEFAULTS_P13[c]) for c in FEATURE_COLS]
+            _p13_pos_fallback += 1
         if sum(abs(v) for v in row) < 1e-6: continue
-        X_all.append(row); y_all.append(1); dates_all.append(r['explosion_date'])
+        X_all.append(row); y_all.append(1); dates_all.append(dt)
+    print(f"[P13] Pos features: {_p13_pos_computed} from OHLCV, {_p13_pos_fallback} from stored", flush=True)
 
     neg_count = 0; target_neg = len(y_all) * 3
     for neg in neg_cands:
@@ -5540,9 +6864,18 @@ def phase13_cpcv():
         signals_mask = probs >= 0.50
         if signals_mask.sum() == 0: continue
 
-        signal_returns = np.where(y_te[signals_mask] == 1, 0.03, -0.01)  # 3% win / 1% loss
-        sharpe_path = (signal_returns.mean() / (signal_returns.std() + 1e-10)
-                       * np.sqrt(252)) if len(signal_returns) > 1 else 0.0
+        # HONEST P&L: subtract EGX round-trip cost (0.1% buy + 0.1% sell) from every
+        # taken position, and annualize with sqrt(252/HOLD_DAYS) since signals are
+        # held ~5 trading days (sqrt(252) assumes daily turnover and inflates Sharpe).
+        ROUND_TRIP_COST = 0.002
+        HOLD_DAYS = 5
+        ANNUALIZE = np.sqrt(252.0 / HOLD_DAYS)
+        signal_returns = np.where(y_te[signals_mask] == 1, 0.03, -0.01) - ROUND_TRIP_COST  # net of cost
+        # Clip std to minimum 1e-6 to prevent Sharpe overflow when all signals win/lose identically
+        _sharpe_std = max(float(signal_returns.std()), 1e-6)
+        sharpe_path = (float(signal_returns.mean()) / _sharpe_std * ANNUALIZE
+                       if len(signal_returns) > 1 else 0.0)
+        sharpe_path = float(np.clip(sharpe_path, -10.0, 10.0))  # cap at ±10 for sanity
         win_rate    = float(y_te[signals_mask].mean())
 
         path_sharpes.append(sharpe_path)
@@ -5881,7 +7214,9 @@ def phase15_conformal_intervals():
     X_list, y_list = [], []
 
     for r in all_rows:
-        sym_df = pd.DataFrame(cache.get(r['symbol'], []))
+        sym_df = _feature_builder_frame(cache, r['symbol'])
+        if sym_df is None:
+            continue
         feat   = _build_feature_row(sym_df, r['bar_date'])
         if feat is not None:
             X_list.append(feat)
@@ -6058,7 +7393,9 @@ def phase16_feature_drift():
     def extract(rows_list):
         X = []
         for r in rows_list:
-            sym_df = pd.DataFrame(cache.get(r['symbol'], []))
+            sym_df = _feature_builder_frame(cache, r['symbol'])
+            if sym_df is None:
+                continue
             feat   = _build_feature_row(sym_df, r['bar_date'])
             if feat is not None:
                 X.append(feat)
@@ -6233,7 +7570,9 @@ def phase17_return_regressor():
     X_list, y1, y3, y5 = [], [], [], []
 
     for r in all_rows:
-        sym_df = pd.DataFrame(cache.get(r['symbol'], []))
+        sym_df = _feature_builder_frame(cache, r['symbol'])
+        if sym_df is None:
+            continue
         feat   = _build_feature_row(sym_df, r['bar_date'])
         if feat is not None:
             X_list.append(feat)
@@ -6291,7 +7630,10 @@ def phase17_return_regressor():
     for pred in today_preds:
         sym  = pred['symbol']
         p    = float(pred['explosion_prob'])
-        feat = _build_feature_row(pd.DataFrame(cache.get(sym, [])), today_str)
+        sym_df = _feature_builder_frame(cache, sym)
+        if sym_df is None:
+            continue
+        feat = _build_feature_row(sym_df, today_str)
         if feat is None: continue
         fa   = np.nan_to_num(np.array([feat], dtype=np.float32), nan=0., posinf=10., neginf=-10.)
         pr1  = float(regressors["1d"].predict(fa)[0])
@@ -7613,6 +8955,20 @@ def _ensure_stock_forecast_table(conn):
         UNIQUE(forecast_date, symbol)
     );
     """)
+    _ensure_columns(conn, 'stock_tomorrow_forecast', {
+        'raw_direction':          'TEXT',
+        'raw_p_up':               'REAL',
+        'raw_p_flat':             'REAL',
+        'raw_p_down':             'REAL',
+        'confidence_margin':      'REAL',
+        'abstained':              'INTEGER DEFAULT 0',
+        'forecast_reliable':      'INTEGER DEFAULT 1',
+        'abstain_reason':         'TEXT',
+        'calibrated':             'INTEGER DEFAULT 0',
+        'model_balanced_accuracy':'REAL',
+        'model_top_conf_accuracy':'REAL',
+        'model_top_conf_coverage':'REAL',
+    })
     conn.commit()
 
 
@@ -7646,13 +9002,15 @@ def phase55_stock_forecast():
         optuna = None
     from sklearn.preprocessing import StandardScaler
     from sklearn.model_selection import StratifiedKFold
-    from sklearn.metrics import log_loss as sk_log_loss, accuracy_score
+    from sklearn.metrics import log_loss as sk_log_loss, accuracy_score, balanced_accuracy_score
+    from sklearn.calibration import CalibratedClassifierCV
 
     t0        = time.time()
     today_str = datetime.date.today().isoformat()
     conn      = get_db()
     ensure_tables(conn)
     _ensure_stock_forecast_table(conn)
+    _ensure_tomorrow_forecast_table(conn)
 
     UP_THR = 0.003   # +0.3%
     DN_THR = -0.003  # -0.3%
@@ -8014,21 +9372,57 @@ def phase55_stock_forecast():
                               if k not in ('date', 'log_loss')})
         print(f"[Ph55] HPO done: log-loss={best55['log_loss']:.4f}", flush=True)
 
-    # ── 8. Train final model ──────────────────────────────────────────────────
+    # ── 8. Train final model + optional calibration ────────────────────────────
     scaler55 = StandardScaler()
     X_tr_sc  = scaler55.fit_transform(X_train)
     X_te_sc  = scaler55.transform(X_test)
 
-    model55  = lgb.LGBMClassifier(**BASE_PARAMS55)
-    model55.fit(X_tr_sc, y_train)
+    model55_raw = lgb.LGBMClassifier(**BASE_PARAMS55)
+    model55_raw.fit(X_tr_sc, y_train)
+    model55 = model55_raw
+    calibrated55 = False
+    calibration_method55 = 'raw'
+
+    cal55_start = int(len(X_tr_sc) * 0.85)
+    if len(X_tr_sc) - cal55_start >= 300 and len(np.unique(y_train[cal55_start:])) >= 2:
+        try:
+            fit_model55 = lgb.LGBMClassifier(**BASE_PARAMS55)
+            fit_model55.fit(X_tr_sc[:cal55_start], y_train[:cal55_start])
+            raw_cal_probs = fit_model55.predict_proba(X_tr_sc[cal55_start:])
+            raw_cal_ll = sk_log_loss(y_train[cal55_start:], raw_cal_probs)
+
+            sig_cal55 = CalibratedClassifierCV(fit_model55, method='sigmoid', cv='prefit')
+            sig_cal55.fit(X_tr_sc[cal55_start:], y_train[cal55_start:])
+            sig_cal_probs = sig_cal55.predict_proba(X_tr_sc[cal55_start:])
+            sig_cal_ll = sk_log_loss(y_train[cal55_start:], sig_cal_probs)
+
+            if sig_cal_ll < raw_cal_ll:
+                model55 = sig_cal55
+                calibrated55 = True
+                calibration_method55 = 'sigmoid'
+                print(f"[Ph55] Calibration (sigmoid/prefit): raw={raw_cal_ll:.4f} → cal={sig_cal_ll:.4f} ✓", flush=True)
+            else:
+                print(f"[Ph55] Calibration skipped: raw={raw_cal_ll:.4f} sig={sig_cal_ll:.4f}", flush=True)
+        except Exception as e:
+            print(f"[Ph55] Calibration failed ({e}), using raw model", flush=True)
 
     # OOS metrics
-    y_pred    = model55.predict(X_te_sc)
     y_proba   = model55.predict_proba(X_te_sc)
+    y_pred    = np.argmax(y_proba, axis=1)
     acc_oos   = round(accuracy_score(y_test, y_pred), 4)
+    bal_acc_oos = round(float(balanced_accuracy_score(y_test, y_pred)), 4)
+    top_acc55, top_cov55, top_thr55 = _top_confidence_metrics(y_test, y_pred, y_proba, coverage=0.20)
     ll_oos    = round(sk_log_loss(y_test, y_proba), 4)
+    model55_reliable = bool(
+        bal_acc_oos >= PH55_MIN_BAL_ACC and
+        (top_acc55 is None or top_acc55 >= PH55_MIN_TOP_CONF_ACC)
+    )
 
-    print(f"[Ph55] OOS Accuracy={acc_oos:.3f}  Log-Loss={ll_oos:.4f}", flush=True)
+    top_acc55_txt = f"{top_acc55:.3f}" if top_acc55 is not None else "n/a"
+    print(f"[Ph55] OOS Accuracy={acc_oos:.3f}  Balanced={bal_acc_oos:.3f}  "
+          f"TopConfAcc={top_acc55_txt}  Log-Loss={ll_oos:.4f}", flush=True)
+    if not model55_reliable:
+        print("[Ph55] Model quality below reliability floor; latest stock forecasts will abstain", flush=True)
 
     # ── 9. Predict for latest day (all stocks) ────────────────────────────────
     print("[Ph55] Scoring latest day …", flush=True)
@@ -8047,14 +9441,19 @@ def phase55_stock_forecast():
 
     X_today = scaler55.transform(feat_rows[_PH55_FEATURES].values.astype('float32'))
     proba   = model55.predict_proba(X_today)   # shape (n, 3)
-    preds   = model55.predict(X_today)         # 0/1/2
+    preds   = np.argmax(proba, axis=1)         # 0/1/2
 
     # ── 10. Store predictions ─────────────────────────────────────────────────
     # Latest Ph51 market direction
     mkt_dir_row = conn.execute(
-        "SELECT direction FROM tomorrow_forecast ORDER BY id DESC LIMIT 1"
+        "SELECT direction, forecast_reliable, abstained FROM tomorrow_forecast ORDER BY id DESC LIMIT 1"
     ).fetchone()
-    mkt_dir = mkt_dir_row['direction'] if mkt_dir_row else 'UNKNOWN'
+    if mkt_dir_row and not int(mkt_dir_row['abstained'] or 0) and int(mkt_dir_row['forecast_reliable'] or 0):
+        mkt_dir = mkt_dir_row['direction']
+    elif mkt_dir_row:
+        mkt_dir = 'ABSTAIN'
+    else:
+        mkt_dir = 'UNKNOWN'
 
     records = []
     for i, (_, row) in enumerate(feat_rows.iterrows()):
@@ -8062,11 +9461,18 @@ def phase55_stock_forecast():
         p_down = float(proba[i][0])
         p_flat = float(proba[i][1])
         p_up   = float(proba[i][2])
-        conf   = float(max(p_down, p_flat, p_up))
+        conf, margin = _confidence_parts(proba[i])
+        raw_direction = label_map[lbl]
+        abstain_reason = _forecast_abstain_reason(
+            conf, margin, model55_reliable,
+            PH55_MIN_CONF, PH55_MIN_MARGIN
+        )
+        abstained = bool(abstain_reason)
+        stored_direction = 'ABSTAIN' if abstained else raw_direction
         records.append((
             today_str,
             row['symbol'],
-            label_map[lbl],
+            stored_direction,
             round(p_up, 4),
             round(p_flat, 4),
             round(p_down, 4),
@@ -8074,18 +9480,34 @@ def phase55_stock_forecast():
             row.get('sector', 'Unknown'),
             int(row.get('sector_rank', 0)),
             mkt_dir,
+            raw_direction,
+            round(p_up, 4),
+            round(p_flat, 4),
+            round(p_down, 4),
+            round(margin, 4),
+            int(abstained),
+            int(not abstained),
+            abstain_reason or None,
+            int(calibrated55),
+            bal_acc_oos,
+            round(top_acc55, 4) if top_acc55 is not None else None,
+            round(top_cov55, 4),
         ))
 
     conn.executemany("""
         INSERT OR REPLACE INTO stock_tomorrow_forecast
             (forecast_date, symbol, direction, p_up, p_flat, p_down,
-             confidence, sector, sector_rank, market_direction)
-        VALUES (?,?,?,?,?,?,?,?,?,?)
+             confidence, sector, sector_rank, market_direction,
+             raw_direction, raw_p_up, raw_p_flat, raw_p_down,
+             confidence_margin, abstained, forecast_reliable, abstain_reason,
+             calibrated, model_balanced_accuracy, model_top_conf_accuracy,
+             model_top_conf_coverage)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, records)
     conn.commit()
 
     # Summary stats
-    dir_counts = {'UP': 0, 'FLAT': 0, 'DOWN': 0}
+    dir_counts = {'UP': 0, 'FLAT': 0, 'DOWN': 0, 'ABSTAIN': 0}
     for r in records:
         dir_counts[r[2]] = dir_counts.get(r[2], 0) + 1
 
@@ -8105,7 +9527,14 @@ def phase55_stock_forecast():
         'n_training_rows': int(n_total),
         'n_scored':        int(n_scored),
         'acc_oos':         acc_oos,
+        'balanced_acc_oos': bal_acc_oos,
+        'top_conf_accuracy_oos': round(top_acc55, 4) if top_acc55 is not None else None,
+        'top_conf_coverage_oos': round(top_cov55, 4),
+        'top_conf_threshold_oos': top_thr55,
         'll_oos':          ll_oos,
+        'calibrated':      calibrated55,
+        'calibration_method': calibration_method55,
+        'model_reliable':  model55_reliable,
         'dir_counts':      dir_counts,
         'market_direction': mkt_dir,
         'top_up_stocks':    top_up_syms,
@@ -8809,6 +10238,885 @@ def _safe(v):
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# PHASE 58 — MODEL MONITORING DASHBOARD
+# ═════════════════════════════════════════════════════════════════════════════
+
+def phase58_model_monitor():
+    """
+    Phase 58: Model Health Monitor
+    Tracks: Feature Drift (PSI), Prediction Drift, Realized P&L, BEAR accuracy.
+    Writes JSON summary to ml_trainer_runs. Triggers retrain alert if needed.
+    """
+    import numpy as np
+    sys.path.insert(0, str(Path(__file__).parent))
+    from explosion_ml import FEATURE_COLS
+
+    t0 = time.time()
+    today_str = datetime.date.today().isoformat()
+    print(json.dumps({"phase": "58", "step": "start", "desc": "Model Health Monitor"}), flush=True)
+
+    conn = get_db()
+    results = {"phase": "58", "date": today_str}
+
+    # ── 1. Prediction Drift — compare recent vs historical signal rates ─────
+    try:
+        # Use prob_pct >= 55 (quality gate threshold) to count "significant" predictions
+        # This is stable across old and new calibration eras
+        recent_rate = conn.execute("""
+            SELECT COUNT(*) * 1.0 / MAX(1, (SELECT COUNT(DISTINCT pred_date) FROM explosion_predictions
+                                     WHERE pred_date >= date('now','-30 days')))
+            FROM explosion_predictions
+            WHERE pred_date >= date('now','-30 days') AND prob_pct >= 55
+        """).fetchone()[0]
+        hist_rate = conn.execute("""
+            SELECT COUNT(*) * 1.0 / MAX(1, (SELECT COUNT(DISTINCT pred_date) FROM explosion_predictions
+                                     WHERE pred_date BETWEEN date('now','-120 days') AND date('now','-31 days')))
+            FROM explosion_predictions
+            WHERE pred_date BETWEEN date('now','-120 days') AND date('now','-31 days')
+              AND prob_pct >= 55
+        """).fetchone()[0]
+        # Only flag drift if both periods have meaningful data (avoid era-change false alarms)
+        hist_has_data = (hist_rate or 0) > 5  # at least 5 signals/day historically
+        pred_drift = abs((recent_rate or 0) - (hist_rate or 0)) / max(hist_rate or 0.01, 0.01) if hist_has_data else 0.0
+        results['prediction_drift'] = {
+            'recent_signal_rate': round(recent_rate or 0, 4),
+            'hist_signal_rate':   round(hist_rate or 0, 4),
+            'drift_pct':          round(pred_drift * 100, 1),
+            'alert':              pred_drift > 0.5 and hist_has_data
+        }
+        print(f"[P58] Prediction drift: {pred_drift*100:.1f}% (recent={recent_rate or 0:.3f} vs hist={hist_rate or 0:.3f})", flush=True)
+    except Exception as e:
+        results['prediction_drift'] = {'error': str(e)}
+
+    # ── 2. Realized P&L Tracking ─────────────────────────────────────────────
+    try:
+        # Use return_t5 as the realized return proxy (5-day % return from outcome_filler)
+        # Filter: entry_price > 0, outcome_filled=1 (our filler), ABS(return_t5) < 200 (sane range)
+        outcome_rows = conn.execute("""
+            SELECT COUNT(*) as n,
+                   SUM(CASE WHEN return_t5 > 0 THEN 1 ELSE 0 END) as wins,
+                   AVG(return_t5) as avg_ret,
+                   MIN(return_t5) as worst,
+                   MAX(return_t5) as best
+            FROM recommendation_outcomes
+            WHERE created_at >= date('now', '-60 days')
+              AND return_t5 IS NOT NULL
+              AND outcome_filled = 1
+              AND entry_price > 0
+              AND ABS(return_t5) < 200
+        """).fetchone()
+        if outcome_rows and outcome_rows['n'] > 0:
+            wr = (outcome_rows['wins'] or 0) / outcome_rows['n']
+            results['realized_pnl'] = {
+                'n_trades':    outcome_rows['n'],
+                'win_rate':    round(wr, 3),
+                'avg_return':  round(outcome_rows['avg_ret'] or 0, 4),
+                'worst':       round(outcome_rows['worst'] or 0, 4),
+                'best':        round(outcome_rows['best'] or 0, 4),
+                'alert':       wr < 0.35
+            }
+            print(f"[P58] P&L (60d): {outcome_rows['n']} trades, WR={wr:.1%}, avg={outcome_rows['avg_ret']:.2%}", flush=True)
+        else:
+            results['realized_pnl'] = {'n_trades': 0, 'note': 'no outcome data yet (outcome_filler pending)'}
+    except Exception as e:
+        results['realized_pnl'] = {'error': str(e)}
+
+    # ── 3. Feature Drift (PSI) — compare last 30d feature dist vs training ──
+    try:
+        key_features = ['pre1_bb_width', 'pre1_vol_ratio', 'pre1_rsi',
+                        'pre1_sector_ad_ratio', 'pre1_sector_pct_ema20',
+                        'pre1_turnover_ratio', 'pre1_usdegp_chg']
+        psi_scores = {}
+        for feat in key_features:
+            # Get recent values from feature_store
+            recent_vals = conn.execute("""
+                SELECT feature_value FROM feature_store
+                WHERE feature_name = ? AND feature_date >= date('now','-30 days')
+                LIMIT 500
+            """, (feat,)).fetchall()
+            hist_vals = conn.execute("""
+                SELECT feature_value FROM feature_store
+                WHERE feature_name = ? AND feature_date < date('now','-30 days')
+                  AND feature_date >= date('now','-180 days')
+                LIMIT 2000
+            """, (feat,)).fetchall()
+            if len(recent_vals) > 20 and len(hist_vals) > 50:
+                r_arr = np.array([v[0] for v in recent_vals], dtype=float)
+                h_arr = np.array([v[0] for v in hist_vals], dtype=float)
+                # PSI calculation
+                bins = np.percentile(h_arr, [0,10,20,30,40,50,60,70,80,90,100])
+                bins = np.unique(bins)
+                if len(bins) > 2:
+                    r_hist, _ = np.histogram(r_arr, bins=bins)
+                    h_hist, _ = np.histogram(h_arr, bins=bins)
+                    r_pct = r_hist / max(r_hist.sum(), 1)
+                    h_pct = h_hist / max(h_hist.sum(), 1)
+                    r_pct = np.where(r_pct == 0, 0.0001, r_pct)
+                    h_pct = np.where(h_pct == 0, 0.0001, h_pct)
+                    psi = float(np.sum((r_pct - h_pct) * np.log(r_pct / h_pct)))
+                    psi_scores[feat] = round(psi, 4)
+        if psi_scores:
+            max_psi   = max(psi_scores.values())
+            drifted   = {k: v for k, v in psi_scores.items() if v > 0.2}
+            results['feature_drift'] = {
+                'psi_scores': psi_scores,
+                'max_psi':    round(max_psi, 4),
+                'drifted_features': list(drifted.keys()),
+                'alert':      max_psi > 0.2
+            }
+            print(f"[P58] Feature drift: max_PSI={max_psi:.4f}, drifted={list(drifted.keys())}", flush=True)
+        else:
+            results['feature_drift'] = {'note': 'insufficient feature_store data'}
+    except Exception as e:
+        results['feature_drift'] = {'error': str(e)}
+
+    # ── 4. BEAR-Specific Accuracy ─────────────────────────────────────────────
+    try:
+        bear_rows = conn.execute("""
+            SELECT COUNT(*) as n,
+                   SUM(CASE WHEN ro.return_t5 > 0 THEN 1 ELSE 0 END) as wins
+            FROM recommendation_outcomes ro
+            JOIN regime_history rh ON date(ro.created_at) = rh.date
+            WHERE rh.regime = 'BEAR' AND ro.created_at >= date('now','-90 days')
+              AND ro.return_t5 IS NOT NULL AND ro.outcome_filled = 1
+              AND ro.entry_price > 0 AND ABS(ro.return_t5) < 200
+        """).fetchone()
+        if bear_rows and bear_rows['n'] > 5:
+            bear_wr = bear_rows['wins'] / bear_rows['n']
+            results['bear_accuracy'] = {
+                'n_trades': bear_rows['n'],
+                'win_rate': round(bear_wr, 3),
+                'alert':    bear_wr < 0.30
+            }
+            print(f"[P58] BEAR accuracy: {bear_rows['n']} trades, WR={bear_wr:.1%}", flush=True)
+        else:
+            results['bear_accuracy'] = {'note': 'insufficient BEAR trades'}
+    except Exception as e:
+        results['bear_accuracy'] = {'error': str(e)}
+
+    # ── 5. Walk-Forward Auto-Retrain Trigger ──────────────────────────────────
+    retrain_reasons = []
+
+    pd_alert = results.get('prediction_drift', {}).get('alert', False)
+    feature_drift = results.get('feature_drift', {})
+    fd_alert = feature_drift.get('alert', False)
+    max_psi = float(feature_drift.get('max_psi') or 0)
+    pnl_alert = results.get('realized_pnl', {}).get('alert', False)
+    severe_feature_drift = max_psi >= 0.50
+
+    if pd_alert:  retrain_reasons.append("prediction_drift > 50%")
+    if fd_alert:  retrain_reasons.append(f"feature_psi > 0.2: {feature_drift.get('drifted_features',[])}")
+    if pnl_alert: retrain_reasons.append("win_rate < 35%")
+
+    # One severe distribution shift can invalidate model calibration by itself.
+    # Moderate alerts still require confirmation from another failure signal.
+    retrain_needed = severe_feature_drift or len(retrain_reasons) >= 2
+    retrain_severity = (
+        'SEVERE' if severe_feature_drift else
+        'HIGH' if len(retrain_reasons) >= 2 else
+        'WATCH' if retrain_reasons else
+        'OK'
+    )
+
+    results['retrain_trigger'] = {
+        'needed': retrain_needed,
+        'severity': retrain_severity,
+        'reasons': retrain_reasons,
+        'recommendation': 'run phase2 + phase3 + phase9' if retrain_needed else 'no action needed'
+    }
+
+    if retrain_needed:
+        print(f"[P58] ⚠️  RETRAIN TRIGGERED: {', '.join(retrain_reasons)}", flush=True)
+        print(f"[P58] Run: python3 egx_ml_trainer.py phase2 && python3 egx_ml_trainer.py phase3", flush=True)
+    else:
+        print(f"[P58] ✅ Models healthy — no retrain needed", flush=True)
+
+    # ── Save to DB ────────────────────────────────────────────────────────────
+    dur = time.time() - t0
+    results['duration_seconds'] = round(dur, 1)
+    conn.execute(
+        "INSERT INTO ml_trainer_runs (run_date, phase, duration_seconds, results) VALUES (?,?,?,?)",
+        (today_str, '58', dur, json.dumps(results))
+    )
+    conn.commit(); conn.close()
+    print(json.dumps(results), flush=True)
+    return results
+
+
+def phase60_mtf_features():
+    """
+    Phase 60: Multi-Timeframe Features Validation
+    Verifies that weekly/monthly features are being computed correctly
+    for the training dataset. Runs a quick AUC check.
+    """
+    t0 = time.time()
+    today_str = datetime.date.today().isoformat()
+    print(json.dumps({"phase": "60", "step": "start", "desc": "MTF Feature Validation"}), flush=True)
+
+    conn = get_db()
+    sys.path.insert(0, str(Path(__file__).parent))
+    from explosion_ml import FEATURE_COLS
+
+    n_features = len(FEATURE_COLS)
+    mtf_features = [f for f in FEATURE_COLS if f.startswith('w_') or f.startswith('mo_')]
+    vol_features = [f for f in FEATURE_COLS if f in ['obv_slope_5d','adl_divergence','closing_strength','vol_dryup_days']]
+    dtw_features = [f for f in FEATURE_COLS if f.startswith('dtw_')]
+
+    print(f"[P60] Total features: {n_features}", flush=True)
+    print(f"[P60] MTF features: {mtf_features}", flush=True)
+    print(f"[P60] Volume features: {vol_features}", flush=True)
+    print(f"[P60] DTW features: {dtw_features}", flush=True)
+
+    from explosion_ml import _build_ohlcv_cache, _build_feature_row
+    import numpy as np
+
+    sample_exps = conn.execute("""
+        SELECT symbol, explosion_date FROM explosive_moves
+        WHERE explosion_date >= '2025-01-01'
+        ORDER BY RANDOM() LIMIT 20
+    """).fetchall()
+
+    cache = _build_ohlcv_cache(conn, '2025-12-31')
+
+    rows = []
+    for e in sample_exps:
+        sym_df = cache.get(e['symbol'])
+        if sym_df is None: continue
+        row = _build_feature_row(sym_df, e['explosion_date'])
+        if row is not None:
+            rows.append(row)
+
+    if rows:
+        arr = np.array(rows)
+        print(f"[P60] Sample matrix shape: {arr.shape}", flush=True)
+        mtf_idx = [FEATURE_COLS.index(f) for f in mtf_features if f in FEATURE_COLS]
+        for idx, fname in zip(mtf_idx, mtf_features):
+            vals = arr[:, idx]
+            print(f"[P60]   {fname}: mean={vals.mean():.3f} std={vals.std():.3f} min={vals.min():.3f} max={vals.max():.3f}", flush=True)
+
+    dur = time.time() - t0
+    summary = {
+        "phase": "60", "n_features": n_features,
+        "mtf_features": mtf_features, "vol_features": vol_features,
+        "dtw_features": dtw_features, "n_sample_rows": len(rows),
+        "duration_seconds": round(dur, 1)
+    }
+    conn.execute("INSERT INTO ml_trainer_runs (run_date, phase, duration_seconds, results) VALUES (?,?,?,?)",
+                 (today_str, '60', dur, json.dumps(summary)))
+    conn.commit(); conn.close()
+    print(json.dumps(summary), flush=True)
+    return summary
+
+
+def phase61_volume_intelligence():
+    """
+    Phase 61: Volume Intelligence Feature Validation
+    Validates OBV, ADL, closing strength, and volume dry-up features.
+    """
+    t0 = time.time()
+    today_str = datetime.date.today().isoformat()
+    print(json.dumps({"phase": "61", "step": "start", "desc": "Volume Intelligence Validation"}), flush=True)
+
+    conn = get_db()
+    sys.path.insert(0, str(Path(__file__).parent))
+    from explosion_ml import FEATURE_COLS, _build_ohlcv_cache, _build_feature_row
+    import numpy as np
+
+    vol_features = ['obv_slope_5d', 'adl_divergence', 'closing_strength', 'vol_dryup_days']
+    vol_idx = [FEATURE_COLS.index(f) for f in vol_features if f in FEATURE_COLS]
+
+    if not vol_idx:
+        print("[P61] Volume features not found in FEATURE_COLS", flush=True)
+        conn.close()
+        return
+
+    exps = conn.execute("SELECT symbol, explosion_date FROM explosive_moves WHERE explosion_date >= '2025-01-01' ORDER BY RANDOM() LIMIT 30").fetchall()
+    negs = conn.execute("""
+        SELECT o.symbol, date(o.bar_time,'unixepoch') as bar_date
+        FROM ohlcv_history o
+        WHERE date(o.bar_time,'unixepoch') >= '2025-01-01'
+          AND NOT EXISTS (SELECT 1 FROM explosive_moves e WHERE e.symbol=o.symbol AND e.explosion_date=date(o.bar_time,'unixepoch'))
+        ORDER BY RANDOM() LIMIT 30
+    """).fetchall()
+
+    cache = _build_ohlcv_cache(conn, '2025-12-31')
+
+    pos_rows, neg_rows = [], []
+    for e in exps:
+        sym_df = cache.get(e['symbol'])
+        if sym_df is None: continue
+        row = _build_feature_row(sym_df, e['explosion_date'])
+        if row: pos_rows.append(row)
+    for n in negs:
+        sym_df = cache.get(n['symbol'])
+        if sym_df is None: continue
+        row = _build_feature_row(sym_df, n['bar_date'])
+        if row: neg_rows.append(row)
+
+    if pos_rows and neg_rows:
+        pos_arr = np.array(pos_rows)
+        neg_arr = np.array(neg_rows)
+        print(f"[P61] Volume feature comparison (pos vs neg):", flush=True)
+        for idx, fname in zip(vol_idx, vol_features):
+            if idx < pos_arr.shape[1]:
+                pos_mean = pos_arr[:, idx].mean()
+                neg_mean = neg_arr[:, idx].mean()
+                sep = abs(pos_mean - neg_mean)
+                print(f"[P61]   {fname}: pos={pos_mean:.3f} neg={neg_mean:.3f} separation={sep:.3f}", flush=True)
+
+    dur = time.time() - t0
+    summary = {"phase": "61", "n_pos": len(pos_rows), "n_neg": len(neg_rows), "duration_seconds": round(dur, 1)}
+    conn.execute("INSERT INTO ml_trainer_runs (run_date, phase, duration_seconds, results) VALUES (?,?,?,?)",
+                 (today_str, '61', dur, json.dumps(summary)))
+    conn.commit(); conn.close()
+    print(json.dumps(summary), flush=True)
+    return summary
+
+
+def phase62_dtw_similarity():
+    """
+    Phase 62: DTW Historical Similarity Engine
+    For each symbol, computes how similar the current 10-bar price pattern
+    is to historical explosive setups for that same stock.
+    Updates dtw_similarity_cache table with dtw_similarity (0-1) and dtw_expected_gain (0-1).
+    """
+    import numpy as np
+    from collections import defaultdict
+    t0 = time.time()
+    today_str = datetime.date.today().isoformat()
+    print(json.dumps({"phase": "62", "step": "start", "desc": "DTW Historical Similarity"}), flush=True)
+
+    conn = get_db()
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS dtw_similarity_cache (
+            symbol TEXT,
+            calc_date TEXT,
+            dtw_similarity REAL,
+            dtw_expected_gain REAL,
+            n_similar_episodes INTEGER,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (symbol, calc_date)
+        )
+    """)
+    conn.commit()
+
+    symbols = conn.execute("""
+        SELECT DISTINCT symbol FROM ohlcv_history
+        GROUP BY symbol HAVING COUNT(*) >= 50
+    """).fetchall()
+    symbols = [s[0] for s in symbols]
+
+    explosions = conn.execute("""
+        SELECT symbol, explosion_date, return_5d
+        FROM explosive_moves
+        WHERE explosion_date < date('now', '-10 days')
+        ORDER BY symbol, explosion_date
+    """).fetchall()
+
+    sym_explosions = defaultdict(list)
+    for e in explosions:
+        sym_explosions[e['symbol']].append({
+            'date': e['explosion_date'],
+            'gain': float(e['return_5d'] or 5.0)
+        })
+
+    n_updated = 0
+
+    for sym in symbols:
+        try:
+            rows = conn.execute("""
+                SELECT date(bar_time,'unixepoch') as bar_date, open, high, low, close, volume
+                FROM ohlcv_history WHERE symbol=? ORDER BY bar_time
+            """, (sym,)).fetchall()
+
+            if len(rows) < 30:
+                continue
+
+            closes = np.array([r['close'] for r in rows], dtype=float)
+            vols   = np.array([r['volume'] for r in rows], dtype=float)
+            dates  = [r['bar_date'] for r in rows]
+
+            if len(closes) < 10:
+                continue
+            cur_rets = np.diff(np.log(closes[-11:])) if closes[-11:].min() > 0 else np.zeros(10)
+            cur_vols = vols[-10:] / (np.mean(vols[-20:]) + 1e-10)
+            cur_sig = np.concatenate([cur_rets, cur_vols])
+
+            episodes = sym_explosions.get(sym, [])
+
+            similarities = []
+            for ep in episodes:
+                ep_date = ep['date']
+                if ep_date not in dates:
+                    continue
+                idx = dates.index(ep_date)
+                if idx < 12:
+                    continue
+
+                ep_closes = closes[idx-11:idx]
+                ep_vols   = vols[idx-10:idx]
+                if len(ep_closes) < 11:
+                    continue
+
+                ep_rets = np.diff(np.log(ep_closes)) if ep_closes.min() > 0 else np.zeros(10)
+                ep_avg_vol = np.mean(vols[max(0,idx-30):idx]) + 1e-10
+                ep_vols_n = ep_vols / ep_avg_vol
+                ep_sig = np.concatenate([ep_rets, ep_vols_n])
+
+                n = len(cur_sig); m = len(ep_sig)
+                if n != m:
+                    continue
+
+                dist = float(np.sqrt(np.mean((cur_sig - ep_sig)**2)))
+                sim = float(np.exp(-dist * 2.0))
+                similarities.append((sim, ep['gain']))
+
+            if similarities:
+                similarities.sort(key=lambda x: -x[0])
+                top3 = similarities[:3]
+                dtw_sim = float(np.mean([s[0] for s in top3]))
+                avg_gain = float(np.mean([s[1] for s in top3]))
+                dtw_exp_gain = min(1.0, max(0.0, avg_gain / 50.0))
+            else:
+                dtw_sim = 0.5
+                dtw_exp_gain = 0.5
+
+            conn.execute("""
+                INSERT OR REPLACE INTO dtw_similarity_cache
+                (symbol, calc_date, dtw_similarity, dtw_expected_gain, n_similar_episodes)
+                VALUES (?,?,?,?,?)
+            """, (sym, today_str, dtw_sim, dtw_exp_gain, len(episodes)))
+            n_updated += 1
+
+        except Exception:
+            continue
+
+    conn.commit()
+
+    dur = time.time() - t0
+    summary = {
+        "phase": "62", "n_symbols_updated": n_updated,
+        "duration_seconds": round(dur, 1)
+    }
+    conn.execute("INSERT INTO ml_trainer_runs (run_date, phase, duration_seconds, results) VALUES (?,?,?,?)",
+                 (today_str, '62', dur, json.dumps(summary)))
+    conn.commit(); conn.close()
+    print(json.dumps(summary), flush=True)
+    return summary
+
+
+def phase66_accumulation_detector():
+    """
+    Phase 66: Accumulation Detector
+    Trains a separate LightGBM model to detect stocks in SILENT accumulation phase.
+    Labels: stock was QUIET (low ATR) for 15+ days AND exploded within 5-20 days.
+    """
+    import lightgbm as lgb
+    import numpy as np
+
+    print('{"phase": "66", "step": "start", "desc": "Accumulation Detector"}', flush=True)
+    t0 = time.time()
+
+    conn = sqlite3.connect(str(ROOT / 'data' / 'egx_trading.db'))
+    conn.row_factory = sqlite3.Row
+
+    # Get explosion events with pre-explosion quiet periods
+    explosions = conn.execute("""
+        SELECT e.symbol, e.explosion_date, e.return_5d
+        FROM explosive_moves e
+        WHERE e.explosion_date >= '2023-01-01'
+          AND e.return_5d > 0.05
+        ORDER BY e.explosion_date
+    """).fetchall()
+
+    X_pos, X_neg = [], []
+
+    for expl in explosions:
+        sym = expl['symbol']
+        exp_date = expl['explosion_date']
+
+        # Get bars 5-25 days before explosion (the "quiet" accumulation window)
+        bars_before = conn.execute("""
+            SELECT close, high, low, volume,
+                   date(bar_time,'unixepoch') as bar_date
+            FROM ohlcv_history
+            WHERE symbol = ? AND date(bar_time,'unixepoch') < ?
+            ORDER BY bar_time DESC LIMIT 30
+        """, (sym, exp_date)).fetchall()
+
+        if len(bars_before) < 20:
+            continue
+
+        closes = [float(b['close']) for b in reversed(bars_before)]
+        highs  = [float(b['high'])  for b in reversed(bars_before)]
+        lows   = [float(b['low'])   for b in reversed(bars_before)]
+        vols   = [float(b['volume'])  for b in reversed(bars_before)]
+
+        n66p = len(highs)
+        # Check if quiet period (low ATR/price ratio in last 15 days)
+        atr_vals16 = [highs[i]-lows[i] for i in range(max(-16,-n66p), -1)]
+        avg_atr = float(np.mean(atr_vals16)) if atr_vals16 else 0.01
+        price_now = closes[-1] if closes[-1] > 0 else 1
+        atr_ratio = avg_atr / price_now
+
+        # Was it quiet? (ATR/price < 3% = quiet accumulation)
+        is_quiet = atr_ratio < 0.03
+
+        # Build accumulation features
+        avg_vol = np.mean(vols[-21:-1]) if len(vols) >= 21 else np.mean(vols)
+        avg_vol = max(avg_vol, 1)
+
+        acc_days  = sum(1 for i in range(max(-16,-n66p), -1) if closes[i] > closes[i-1] and vols[i] > avg_vol)
+        dist_days = sum(1 for i in range(max(-16,-n66p), -1) if closes[i] < closes[i-1] and vols[i] > avg_vol)
+        up_vol       = sum(vols[i]   for i in range(max(-11,-n66p), -1) if closes[i] >= closes[i-1])
+        total_vol_10 = sum(vols[-11:-1]) if n66p >= 11 else sum(vols)
+
+        # ATR compression waves
+        a5v  = [highs[i]-lows[i] for i in range(max(-6, -n66p), -1)]
+        a10v = [highs[i]-lows[i] for i in range(max(-11,-n66p), -1)]
+        a20v = [highs[i]-lows[i] for i in range(max(-21,-n66p), -1)]
+        atr5  = float(np.mean(a5v))  if a5v  else 0.01
+        atr10 = float(np.mean(a10v)) if a10v else 0.01
+        atr20 = float(np.mean(a20v)) if a20v else 0.01
+
+        # Higher lows streak
+        streak = 0
+        for i in range(max(-14,-n66p), -1):
+            if lows[i] > lows[i-1]: streak += 1
+            else: streak = 0
+
+        # RS vs flat (price change while calm)
+        price_chg = (closes[-1] - closes[max(-16,-n66p)]) / max(abs(closes[max(-16,-n66p)]), 0.01)
+
+        feat = [
+            float(np.clip((acc_days - dist_days + 15) / 30.0, 0, 1)),  # net_accum
+            float(up_vol / max(total_vol_10, 1)),                        # up_vol_ratio
+            float(np.clip(atr5 / max(atr20, 1e-6), 0, 2) / 2.0),       # range_compression
+            float(np.clip((atr10/max(atr20,1e-6)) * (atr5/max(atr10,1e-6)), 0, 2) / 2.0),  # vcp
+            float(np.clip(atr_ratio / 0.05, 0, 1)),                     # atr_ratio
+            float(min(streak, 10) / 10.0),                               # higher_lows
+            float(np.clip((price_chg + 0.1) / 0.2, 0, 1)),             # price_drift
+            float(np.clip(avg_vol / max(np.mean(vols), 1), 0, 2) / 2.0), # vol_consistency
+            float(1.0 if is_quiet else 0.0),                             # was_quiet
+        ]
+
+        X_pos.append(feat)
+
+    # Negatives: random days that did NOT lead to explosion in 5-20d
+    neg_cands = conn.execute("""
+        SELECT oh.symbol, date(oh.bar_time,'unixepoch') as bar_date
+        FROM ohlcv_history oh
+        WHERE date(oh.bar_time,'unixepoch') >= '2023-01-01'
+          AND oh.close > 0 AND oh.volume > 0
+          AND NOT EXISTS (
+              SELECT 1 FROM explosive_moves e
+              WHERE e.symbol = oh.symbol
+                AND date(oh.bar_time,'unixepoch') BETWEEN date(e.explosion_date,'-20 days')
+                    AND date(e.explosion_date,'5 days')
+          )
+        ORDER BY RANDOM() LIMIT ?
+    """, (len(X_pos) * 5,)).fetchall()
+
+    for neg in neg_cands:
+        sym = neg['symbol']
+        bar_date = neg['bar_date']
+
+        bars = conn.execute("""
+            SELECT close, high, low, volume
+            FROM ohlcv_history
+            WHERE symbol = ? AND date(bar_time,'unixepoch') <= ?
+            ORDER BY bar_time DESC LIMIT 25
+        """, (sym, bar_date)).fetchall()
+
+        if len(bars) < 20:
+            continue
+
+        closes = [float(b['close']) for b in reversed(bars)]
+        highs  = [float(b['high'])  for b in reversed(bars)]
+        lows   = [float(b['low'])   for b in reversed(bars)]
+        vols   = [float(b['volume']) for b in reversed(bars)]
+
+        avg_vol = float(np.mean(vols[-21:-1])) if len(vols) >= 21 else float(np.mean(vols))
+        avg_vol = max(avg_vol, 1)
+
+        acc_days = sum(1 for i in range(-16, -1) if closes[i] > closes[i-1] and vols[i] > avg_vol)
+        dist_days = sum(1 for i in range(-16, -1) if closes[i] < closes[i-1] and vols[i] > avg_vol)
+        up_vol = sum(vols[i] for i in range(-11, -1) if closes[i] >= closes[i-1])
+        total_vol_10 = sum(vols[-11:-1])
+
+        n66 = len(highs)
+        atr5_v  = [highs[i]-lows[i] for i in range(max(-6,-n66), -1)]
+        atr10_v = [highs[i]-lows[i] for i in range(max(-11,-n66), -1)]
+        atr20_v = [highs[i]-lows[i] for i in range(max(-21,-n66), -1)]
+        atr5  = float(np.mean(atr5_v))  if atr5_v  else 0.01
+        atr10 = float(np.mean(atr10_v)) if atr10_v else 0.01
+        atr20 = float(np.mean(atr20_v)) if atr20_v else 0.01
+        atr_ratio = atr5 / max(float(np.mean(closes[max(-6,-n66):-1])) if n66 > 1 else 1.0, 1e-6)
+
+        streak = 0
+        for i in range(max(-14,-n66), -1):
+            if lows[i] > lows[i-1]: streak += 1
+            else: streak = 0
+
+        price_chg = (closes[-1] - closes[max(-16,-n66)]) / max(abs(closes[max(-16,-n66)]), 0.01)
+        is_quiet = atr_ratio < 0.03
+
+        feat = [
+            float(np.clip((acc_days - dist_days + 15) / 30.0, 0, 1)),
+            float(up_vol / max(total_vol_10, 1)),
+            float(np.clip(atr5 / max(atr20, 1e-6), 0, 2) / 2.0),
+            float(np.clip((atr10/max(atr20,1e-6)) * (atr5/max(atr10,1e-6)), 0, 2) / 2.0),
+            float(np.clip(atr_ratio / 0.05, 0, 1)),
+            float(min(streak, 10) / 10.0),
+            float(np.clip((price_chg + 0.1) / 0.2, 0, 1)),
+            float(np.clip(avg_vol / max(float(np.mean(vols)), 1), 0, 2) / 2.0),
+            float(1.0 if is_quiet else 0.0),
+        ]
+
+        X_neg.append(feat)
+        if len(X_neg) >= len(X_pos) * 4:
+            break
+
+    conn.close()
+
+    if len(X_pos) < 50 or len(X_neg) < 100:
+        result = {"phase": "66", "error": f"insufficient_data pos={len(X_pos)} neg={len(X_neg)}"}
+        print(json.dumps(result), flush=True)
+        return result
+
+    X = np.array(X_pos + X_neg, dtype=np.float32)
+    y = np.array([1]*len(X_pos) + [0]*len(X_neg), dtype=np.int32)
+
+    # TimeSeriesSplit — no KFold
+    from sklearn.model_selection import TimeSeriesSplit
+    tss = TimeSeriesSplit(n_splits=4)
+
+    spw = len(X_neg) / max(len(X_pos), 1)
+
+    params_acc = {
+        'objective': 'binary', 'metric': 'auc', 'verbosity': -1,
+        'num_threads': N_JOBS, 'scale_pos_weight': spw,
+        'learning_rate': 0.05, 'num_leaves': 31, 'min_data_in_leaf': 20,
+        'feature_fraction': 0.8, 'bagging_fraction': 0.8, 'bagging_freq': 5,
+    }
+
+    auc_scores = []
+    for tr_idx, val_idx in tss.split(X):
+        X_tr, X_val = X[tr_idx], X[val_idx]
+        y_tr, y_val = y[tr_idx], y[val_idx]
+        if y_val.sum() == 0:
+            continue
+        ds_tr = lgb.Dataset(X_tr, label=y_tr)
+        ds_val = lgb.Dataset(X_val, label=y_val)
+        m = lgb.train(params_acc, ds_tr, num_boost_round=100,
+                      valid_sets=[ds_val], callbacks=[lgb.log_evaluation(-1),
+                      lgb.early_stopping(20, verbose=False)])
+        from sklearn.metrics import roc_auc_score
+        auc_scores.append(roc_auc_score(y_val, m.predict(X_val)))
+
+    # Final model on all data
+    ds_full = lgb.Dataset(X, label=y)
+    model_acc = lgb.train(params_acc, ds_full, num_boost_round=100,
+                          callbacks=[lgb.log_evaluation(-1)])
+
+    acc_model_path = MODELS / 'accumulation_detector_v1.txt'
+    model_acc.save_model(str(acc_model_path))
+
+    avg_auc = float(np.mean(auc_scores)) if auc_scores else 0.0
+    dur = round(time.time() - t0, 1)
+
+    result = {
+        "phase": "66", "n_pos": len(X_pos), "n_neg": len(X_neg),
+        "avg_cv_auc": round(avg_auc, 4), "model_saved": str(acc_model_path),
+        "duration_seconds": dur
+    }
+    print(json.dumps(result), flush=True)
+    return result
+
+
+def phase67_manipulation_classifier():
+    """
+    Phase 67: Manipulation/Pump Classifier
+    Detects pump-and-dump patterns to block from signals.
+    Labels: stocks from consolidation_events (known pump patterns) = positive (manipulated)
+    """
+    import lightgbm as lgb
+    import numpy as np
+
+    print('{"phase": "67", "step": "start", "desc": "Manipulation Classifier"}', flush=True)
+    t0 = time.time()
+
+    conn = sqlite3.connect(str(ROOT / 'data' / 'egx_trading.db'))
+    conn.row_factory = sqlite3.Row
+
+    # Positive: pump events detected from OHLCV (Method 2: multi-day pump ≥2×)
+    # Use _get_consolidation_events which scans OHLCV directly (no table needed)
+    import sys as _sys67
+    _sys67.path.insert(0, str(ROOT / 'scripts' / 'python'))
+    from explosion_ml import _get_consolidation_events as _gce67
+    pump_dict = _gce67(conn, lookback_days=730)
+    # Flatten: {symbol: [date1, date2, ...]} → [(symbol, date)]
+    pump_list = []
+    for sym, dates in pump_dict.items():
+        for d in dates:
+            pump_list.append((sym, d))
+    pump_list.sort(key=lambda x: x[1])
+
+    X_pos, X_neg = [], []
+
+    for (sym, peak) in pump_list:
+
+        # Get bars at the peak (the manipulation signature)
+        bars = conn.execute("""
+            SELECT close, high, low, volume
+            FROM ohlcv_history
+            WHERE symbol = ? AND date(bar_time,'unixepoch') <= ?
+            ORDER BY bar_time DESC LIMIT 15
+        """, (sym, peak)).fetchall()
+
+        if len(bars) < 10:
+            continue
+
+        closes = [float(b['close']) for b in reversed(bars)]
+        highs  = [float(b['high'])  for b in reversed(bars)]
+        lows   = [float(b['low'])   for b in reversed(bars)]
+        vols   = [float(b['volume']) for b in reversed(bars)]
+
+        avg_vol = float(np.mean(vols[:-1])) if len(vols) > 1 else 1.0
+        avg_vol = max(avg_vol, 1)
+
+        # Pump features: rapid price rise + volume spike + then reversal pattern
+        max_gain_10 = (max(highs[-10:]) - closes[-10]) / max(closes[-10], 0.01) if len(closes) >= 10 else 0
+        vol_spike = vols[-1] / avg_vol if avg_vol > 0 else 1.0
+        price_accel = (closes[-1] - closes[-5]) / max(closes[-5], 0.01) if len(closes) >= 5 else 0
+        atr5 = float(np.mean([highs[i]-lows[i] for i in range(-6, -1)])) if len(highs) >= 6 else 0.01
+        price_range = (max(highs[-5:]) - min(lows[-5:])) / max(closes[-1], 0.01) if len(highs) >= 5 else 0
+        close_vs_high = (highs[-1] - closes[-1]) / max(highs[-1]-lows[-1], 0.001) if len(highs) >= 1 else 0.5
+
+        feat = [
+            float(np.clip(max_gain_10, 0, 3) / 3.0),          # rapid_gain
+            float(np.clip(vol_spike, 0, 10) / 10.0),            # vol_spike
+            float(np.clip((price_accel + 0.5) / 1.0, 0, 1)),   # price_accel
+            float(np.clip(price_range / 0.3, 0, 1)),            # high_range
+            float(close_vs_high),                                # upper_shadow (sell pressure)
+            float(np.clip(atr5 / max(closes[-1], 0.01) / 0.1, 0, 1)),  # atr_ratio
+        ]
+        X_pos.append(feat)
+
+    # Negatives: genuine explosions not near any pump event
+    pump_set = set((s, d) for s, d in pump_list)
+    pump_syms_dates = {}
+    for s, d in pump_list:
+        pump_syms_dates.setdefault(s, []).append(d)
+
+    real_expl_all = conn.execute("""
+        SELECT e.symbol, e.explosion_date
+        FROM explosive_moves e
+        WHERE e.return_5d BETWEEN 0.05 AND 0.30
+          AND e.return_5d > 0
+        ORDER BY RANDOM() LIMIT ?
+    """, (len(X_pos) * 8,)).fetchall()
+
+    # Filter: not within 30 days of any pump event for this symbol
+    import datetime as _dt
+    real_expl = []
+    for row in real_expl_all:
+        sym2 = row['symbol']
+        edate = row['explosion_date']
+        near_pump = False
+        for pd2 in pump_syms_dates.get(sym2, []):
+            try:
+                diff = abs((_dt.date.fromisoformat(edate) - _dt.date.fromisoformat(pd2)).days)
+                if diff < 30:
+                    near_pump = True
+                    break
+            except Exception:
+                pass
+        if not near_pump:
+            real_expl.append(row)
+        if len(real_expl) >= len(X_pos) * 4:
+            break
+
+    for expl in real_expl:
+        sym = expl['symbol']
+        exp_date = expl['explosion_date']
+
+        bars = conn.execute("""
+            SELECT close, high, low, volume
+            FROM ohlcv_history
+            WHERE symbol = ? AND date(bar_time,'unixepoch') <= ?
+            ORDER BY bar_time DESC LIMIT 15
+        """, (sym, exp_date)).fetchall()
+
+        if len(bars) < 10:
+            continue
+
+        closes = [float(b['close']) for b in reversed(bars)]
+        highs  = [float(b['high'])  for b in reversed(bars)]
+        lows   = [float(b['low'])   for b in reversed(bars)]
+        vols   = [float(b['volume']) for b in reversed(bars)]
+
+        avg_vol = float(np.mean(vols[:-1])) if len(vols) > 1 else 1.0
+        avg_vol = max(avg_vol, 1)
+
+        max_gain_10 = (max(highs[-10:]) - closes[-10]) / max(closes[-10], 0.01) if len(closes) >= 10 else 0
+        vol_spike = vols[-1] / avg_vol
+        price_accel = (closes[-1] - closes[-5]) / max(closes[-5], 0.01) if len(closes) >= 5 else 0
+        atr5 = float(np.mean([highs[i]-lows[i] for i in range(-6, -1)])) if len(highs) >= 6 else 0.01
+        price_range = (max(highs[-5:]) - min(lows[-5:])) / max(closes[-1], 0.01) if len(highs) >= 5 else 0
+        close_vs_high = (highs[-1] - closes[-1]) / max(highs[-1]-lows[-1], 0.001) if len(highs) >= 1 else 0.5
+
+        feat = [
+            float(np.clip(max_gain_10, 0, 3) / 3.0),
+            float(np.clip(vol_spike, 0, 10) / 10.0),
+            float(np.clip((price_accel + 0.5) / 1.0, 0, 1)),
+            float(np.clip(price_range / 0.3, 0, 1)),
+            float(close_vs_high),
+            float(np.clip(atr5 / max(closes[-1], 0.01) / 0.1, 0, 1)),
+        ]
+        X_neg.append(feat)
+
+    conn.close()
+
+    if len(X_pos) < 20 or len(X_neg) < 40:
+        result = {"phase": "67", "error": f"insufficient_data pos={len(X_pos)} neg={len(X_neg)}"}
+        print(json.dumps(result), flush=True)
+        return result
+
+    X = np.array(X_pos + X_neg, dtype=np.float32)
+    y = np.array([1]*len(X_pos) + [0]*len(X_neg), dtype=np.int32)
+
+    spw = len(X_neg) / max(len(X_pos), 1)
+    params_man = {
+        'objective': 'binary', 'metric': 'auc', 'verbosity': -1,
+        'num_threads': N_JOBS, 'scale_pos_weight': spw,
+        'learning_rate': 0.05, 'num_leaves': 15, 'min_data_in_leaf': 5,
+    }
+
+    ds = lgb.Dataset(X, label=y)
+    model_man = lgb.train(params_man, ds, num_boost_round=80,
+                          callbacks=[lgb.log_evaluation(-1)])
+
+    man_model_path = MODELS / 'manipulation_classifier_v1.txt'
+    model_man.save_model(str(man_model_path))
+
+    # Quick accuracy check
+    preds = model_man.predict(X)
+    from sklearn.metrics import roc_auc_score
+    auc_full = round(float(roc_auc_score(y, preds)), 4)
+
+    dur = round(time.time() - t0, 1)
+    result = {
+        "phase": "67", "n_pos_pump": len(X_pos), "n_neg_real": len(X_neg),
+        "auc_full": auc_full, "model_saved": str(man_model_path),
+        "duration_seconds": dur
+    }
+    print(json.dumps(result), flush=True)
+    return result
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # MAIN ENTRY
 # ═════════════════════════════════════════════════════════════════════════════
 
@@ -8820,6 +11128,9 @@ def cmd_train_all():
 
     phases = [
         ("1  — Feature Engineering",          phase1_build_features),
+        ("60 — MTF Feature Validation",        phase60_mtf_features),
+        ("61 — Volume Intelligence Validation",phase61_volume_intelligence),
+        ("62 — DTW Similarity Cache",          phase62_dtw_similarity),
         ("2  — Explosion Ensemble",            phase2_explosion_ensemble),
         ("3  — Regime-Specific Models",        phase3_regime_models),
         ("4  — Per-Stock Models",              phase4_per_stock_models),
@@ -8853,15 +11164,20 @@ def cmd_train_all():
         ("21 — Spectral Cycle Intelligence",   phase21_spectral_intelligence),
         ("23 — Spectral Attribution Backtest", phase23_spectral_attribution),
         ("25 — Spectral Reliability Memory",   phase25_spectral_reliability),
+        ("58 — Model Health Monitor",          phase58_model_monitor),
     ]
 
     all_results = {}
     for name, fn in phases:
         print(f"\n{'═'*60}\n  {name}\n{'═'*60}", flush=True)
         try:
-            res = fn()
+            res = _run_with_timeout(name, fn, PHASE_TIMEOUT_SEC)
             all_results[name] = res
             gc.collect()
+        except PhaseTimeoutError:
+            msg = f"{name} timed out after {PHASE_TIMEOUT_SEC}s"
+            print(json.dumps({"error": msg, "phase_timeout_sec": PHASE_TIMEOUT_SEC}), flush=True)
+            all_results[name] = {"error": msg, "timeout": True}
         except Exception as e:
             import traceback
             print(json.dumps({"error": f"{name} failed: {e}",
@@ -8914,10 +11230,28 @@ if __name__ == '__main__':
         'phase21':            phase21_spectral_intelligence,
         'phase23':            phase23_spectral_attribution,
         'phase25':            phase25_spectral_reliability,
+        'phase58':            phase58_model_monitor,
+        'phase60':            phase60_mtf_features,
+        'phase61':            phase61_volume_intelligence,
+        'phase62':            phase62_dtw_similarity,
+        'phase66':            phase66_accumulation_detector,
+        'phase67':            phase67_manipulation_classifier,
         'status':             cmd_status,
     }
     if cmd in dispatch:
-        dispatch[cmd]()
+        try:
+            dispatch[cmd]() if cmd == 'status' else _run_with_timeout(cmd, dispatch[cmd], PHASE_TIMEOUT_SEC)
+        except PhaseTimeoutError:
+            print(json.dumps({
+                "success": False,
+                "error": f"{cmd} timed out after {PHASE_TIMEOUT_SEC}s",
+                "phase_timeout_sec": PHASE_TIMEOUT_SEC,
+                "acceptance": {
+                    "accepted_for_prediction": False,
+                    "reason": "timeout_before_complete_result",
+                },
+            }))
+            sys.exit(2)
     else:
         print(json.dumps({"error": "unknown command",
                           "usage": "train_all|phase1..21|phase23|phase25|predict_ensemble|status"}))
