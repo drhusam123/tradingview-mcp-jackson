@@ -12,6 +12,7 @@ import { nextTradingDay, cairoDateParts } from './lib/egx_calendar.mjs';
 import { auditClosedLoops } from './lib/loop_audit.mjs';
 import { countDirectiveStats } from './lib/directive_resolver.mjs';
 import { loadP6ResearchContext } from './lib/p6_research_context.mjs';
+import { writeMonitoringSnapshot } from './lib/monitoring_snapshot.mjs';
 
 loadEnv();
 
@@ -62,6 +63,7 @@ const report = {
 
 mkdirSync(join(PROJECT_ROOT, 'data'), { recursive: true });
 writeFileSync(join(PROJECT_ROOT, 'data/p6_status_last.json'), JSON.stringify(report, null, 2));
+writeMonitoringSnapshot();
 
 if (AS_JSON) {
   console.log(JSON.stringify(report, null, 2));
@@ -79,4 +81,4 @@ if (p6Ctx) {
   console.log(`  P6 context:      ${p6Ctx.ultra_losses?.length ?? 0} ULTRA losses | downrank ${(p6Ctx.evolution_hints?.downrank_behavioral || []).join(',') || '—'}`);
 }
 console.log(`  Next session:    ${report.next_session}\n`);
-console.log('  Saved: data/p6_status_last.json\n');
+console.log('  Saved: data/p6_status_last.json + monitoring_snapshot.json\n');

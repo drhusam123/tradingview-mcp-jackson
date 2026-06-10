@@ -313,6 +313,7 @@ const PROD_READY_LOG     = join(ROOT, 'logs', 'prod_ready.log');
 const QUALITY_W_SCRIPT   = join(ROOT, 'scripts', 'egx_quality_weekly.mjs');
 const QUALITY_W_LOG      = join(ROOT, 'logs', 'quality_weekly.log');
 const LEARNING_SCRIPT    = join(ROOT, 'scripts', 'egx_closed_loop.mjs');
+const P6_SYNC_SCRIPT     = join(ROOT, 'scripts', 'egx_p6_sync.mjs');
 const LEARNING_LOG       = join(ROOT, 'logs', 'closed_loop.log');
 const VERIFY_SCRIPT      = join(ROOT, 'scripts', 'egx_full_verify.mjs');
 const VERIFY_LOG         = join(ROOT, 'logs', 'full_verify.log');
@@ -332,8 +333,8 @@ const CRON_SESSION_READY = `10 5 * * 0-4 cd "${ROOT}" && ${CRON_ENV} ${NODE_BIN}
 const CRON_LOG_CHECK   = `15 5 * * 0-4 cd "${ROOT}" && ${NODE_BIN} "${CRON_LOG_SCRIPT}" --hours 48 >> "${CRON_LOG_LOG}" 2>&1 ${MARKER_CRON_LOG_CHK}`;
 // تدقيق جودة بيانات عميق: كل أحد 6:30 AM القاهرة (4:30 UTC) — build_full (بطيء)
 const CRON_QUALITY_W     = `30 4 * * 0 cd "${ROOT}" && ${CRON_ENV} ${locked('egx-quality-weekly', `${NODE_BIN} "${QUALITY_W_SCRIPT}"`)} >> "${QUALITY_W_LOG}" 2>&1 ${MARKER_QUALITY_W}`;
-// حلقة التعلم المغلقة: كل أحد 6:40 AM القاهرة (4:40 UTC) — forensic + counterfactual
-const CRON_LEARNING_W    = `40 4 * * 0 cd "${ROOT}" && ${CRON_ENV} ${NODE_BIN} "${LEARNING_SCRIPT}" >> "${LEARNING_LOG}" 2>&1 ${MARKER_LEARNING_W}`;
+// حلقة التعلم المغلقة: كل أحد 6:40 AM القاهرة (4:40 UTC) — closed loop + P6 sync
+const CRON_LEARNING_W    = `40 4 * * 0 cd "${ROOT}" && ${CRON_ENV} ${NODE_BIN} "${LEARNING_SCRIPT}" >> "${LEARNING_LOG}" 2>&1 && ${NODE_BIN} "${P6_SYNC_SCRIPT}" --light >> "${LEARNING_LOG}" 2>&1 ${MARKER_LEARNING_W}`;
 // فحص جاهزية إنتاج أسبوعي: كل أحد 6:45 AM القاهرة (4:45 UTC)
 const CRON_PROD_READY_W  = `45 4 * * 0 cd "${ROOT}" && ${CRON_ENV} ${NODE_BIN} "${PROD_READY_SCRIPT}" --skip-cdp >> "${PROD_READY_LOG}" 2>&1 ${MARKER_PROD_READY_W}`;
 // Full stack verify قبل السوق — هيكلي (بدون CDP/tests) 5:15 AM القاهرة = 3:15 UTC

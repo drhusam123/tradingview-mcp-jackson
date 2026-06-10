@@ -26,6 +26,15 @@ import {
   pythonEnsembleSignal, pythonRegimeDetection,
 } from '../src/egx/index.js';
 import { seedHolidayCalendar, formatFreshnessLine } from './lib/egx_calendar.mjs';
+import { getProofLoopMetrics, formatProofLoopLine } from './lib/proof_loop.mjs';
+import { countDirectiveStats } from './lib/directive_resolver.mjs';
+import { auditClosedLoops } from './lib/loop_audit.mjs';
+import { existsSync, readFileSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
+
+const __statusDir = dirname(fileURLToPath(import.meta.url));
+const DATA_DIR = join(__statusDir, '../data');
 
 // --ensemble フラグ: Ensemble + Regime をリアルタイムで表示
 const FULL = process.argv.includes('--full');
@@ -199,6 +208,27 @@ async function main() {
     }
   } catch (e) {
     wl(`  ${warn('Forward WR: ' + e.message)}`);
+  }
+
+  // ── 3d. P6 Closed Loops ─────────────────────────────────────────────
+  h2('P6 Closed Loops');
+  try {
+    const proof = getProofLoopMetrics();
+    const del = getProofLoopMetrics({ deliveredOnly: true });
+    const audit = auditClosedLoops({ maxAgeHours: 168 });
+    const dirs = countDirectiveStats();
+    wl(`  ${formatProofLoopLine(proof)}`);
+    wl(`  Delivered ULTRA: ${del.n_completed} @ ${del.win_rate ?? '—'}%`);
+    wl(`  Loop audit: ${audit.pass ? ok('PASS') : err('FAIL')} | directives ${dirs.pending}P/${dirs.completed}C`);
+    const ctxPath = join(DATA_DIR, 'p6_research_context.json');
+    if (existsSync(ctxPath)) {
+      const ctx = JSON.parse(readFileSync(ctxPath, 'utf8'));
+      wl(`  P6 context: ${ctx.ultra_losses?.length ?? 0} ULTRA losses | downrank ${(ctx.evolution_hints?.downrank_behavioral || []).join(',') || '—'}`);
+    } else {
+      wl(`  ${warn('لا p6_research_context — شغّل: npm run egx:closed:loop')}`);
+    }
+  } catch (e) {
+    wl(`  ${warn('P6 loops: ' + e.message)}`);
   }
 
   // ── 4. السياق الموسمي ───────────────────────────────────────────────

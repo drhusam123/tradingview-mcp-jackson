@@ -60,7 +60,12 @@ try {
   }
   if (!LIGHT && !EVO_ONLY) {
     console.log('\n▶  Cognition...');
-    run('scripts/egx_cognition.mjs', QUICK ? '--quick' : '');
+    try {
+      run('scripts/egx_cognition.mjs', QUICK ? '--quick' : '');
+    } catch (cogErr) {
+      console.log(`\n⚠️  Cognition skipped: ${cogErr.message?.slice(0, 120)}`);
+      console.log('   Fix: pip install numpy  |  Or use --evolution-only');
+    }
   }
 } catch (e) {
   console.error(`\n❌ P6 sync failed: ${e.message?.slice(0, 120)}`);

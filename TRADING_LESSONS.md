@@ -571,3 +571,5 @@ post_session: closed_loop → loop_audit → egx:p6:sync:light
 
 `egx:p6:sync` = full evolution+cognition | `--light` = P6 bridge فقط (~15s)
 `egx:p6:status` يعرض loop audit + directives + delivered P6
+`egx:monitoring` = نفس p6_status + `monitoring_snapshot.json`
+cognition يحتاج `numpy` — `load_env` يختار Python تلقائياً

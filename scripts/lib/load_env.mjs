@@ -2,6 +2,7 @@
  * Load .env into process.env (cron-safe — crontab has minimal env).
  */
 import { existsSync, readFileSync } from 'fs';
+import { execSync } from 'child_process';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -17,7 +18,29 @@ export function loadEnv() {
     const val = rest.join('=').trim().replace(/^["']|["']$/g, '');
     if (key && process.env[key] === undefined) process.env[key] = val;
   }
-  if (!process.env.PYTHON_BIN && !process.env.PYTHON3) {
+  const candidates = [
+    process.env.PYTHON_BIN,
+    process.env.PYTHON3,
+    join(ROOT, 'venv/bin/python3'),
+    join(ROOT, '.venv/bin/python3'),
+    '/usr/bin/python3',
+    'python3',
+  ].filter(Boolean);
+  const seen = new Set();
+  let resolved = null;
+  for (const bin of candidates) {
+    if (seen.has(bin)) continue;
+    seen.add(bin);
+    try {
+      execSync(`"${bin}" -c "import numpy"`, { stdio: 'pipe', timeout: 5000 });
+      resolved = bin;
+      break;
+    } catch { /* try next */ }
+  }
+  if (resolved) {
+    process.env.PYTHON_BIN = resolved;
+    process.env.PYTHON3 = resolved;
+  } else if (!process.env.PYTHON_BIN && !process.env.PYTHON3) {
     process.env.PYTHON_BIN = '/usr/bin/python3';
   }
   return true;

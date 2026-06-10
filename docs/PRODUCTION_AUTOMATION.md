@@ -90,6 +90,7 @@ Test: `npm run egx:alert:test` | `npm run egx:alert:test:success`
 | `egx:loop:audit` | Closed-loop artifact freshness + wiring audit |
 | `egx:p6:sync` | Full evolution + cognition consume P6 context |
 | `egx:p6:sync:light` | Lightweight P6 bridge (~15s, post-session) |
+| `egx:monitoring` | P6 + loop audit + `monitoring_snapshot.json` |
 | `egx:quality:gate` | Fast L2 `gate_daily` |
 | `egx:proof:forensic` | ULTRA WR breakdown |
 
