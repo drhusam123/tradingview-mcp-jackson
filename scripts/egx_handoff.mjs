@@ -43,8 +43,16 @@ const autopsy = learn?.loss_autopsy || readJson('data/loss_autopsy_last.json');
 const autopsyLine = autopsy?.n_residual_losses != null
   ? `  Loss autopsy: ${autopsy.n_residual_losses} residual | rules ${autopsy.proposed_rules?.length ?? 0}`
   : '';
+const p6Ctx = readJson('data/p6_research_context.json');
+const oppFollow = readJson('data/opportunity_followup_last.json');
 const closedLine = closedLoop?.discovery_feedback != null
-  ? `  Closed loop: ${closedLoop.directives_ingested ?? 0} directives | ${closedLoop.discovery_feedback} discovery items | opp Q ${closedLoop.opportunity_quality?.quality_score ?? '—'}%`
+  ? `  Closed loop: ${closedLoop.directives_ingested ?? 0} directives | ${closedLoop.discovery_feedback} discovery | opp Q ${closedLoop.opportunity_quality?.quality_score ?? '—'}%`
+  : '';
+const p6CtxLine = p6Ctx?.p6_gate
+  ? `  P6 context:  ${p6Ctx.ultra_losses?.length ?? 0} ULTRA losses | downrank ${(p6Ctx.evolution_hints?.downrank_behavioral || []).join(',') || '—'}`
+  : '';
+const oppTrendLine = oppFollow?.alerts?.length
+  ? `  Opp followup: ${oppFollow.alerts.length} alert(s) — ${oppFollow.alerts[0]?.code}`
   : '';
 
 let gitLine = 'git: unknown';
@@ -71,6 +79,8 @@ console.log(`
 ${learnLine}
 ${autopsyLine}
 ${closedLine}
+${p6CtxLine}
+${oppTrendLine}
   Git:          ${gitLine}
 
 ── ONE COMMANDS ──
@@ -83,6 +93,7 @@ ${closedLine}
   npm run egx:loss:autopsy        # residual ULTRA loss patterns
   npm run egx:p6:status           # P6 samples + counterfactual
   npm run egx:cache:backfill      # historical indicators_cache gaps
+  npm run egx:opportunity:followup # opp quality trend alerts
 
 ── DOCS ──
   docs/PRODUCTION_AUTOMATION.md

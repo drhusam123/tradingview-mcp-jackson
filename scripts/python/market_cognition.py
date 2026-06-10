@@ -26,6 +26,8 @@ from collections import defaultdict, Counter
 
 import numpy as np
 
+from p6_research_context import apply_p6_cognition_priorities, load_context
+
 ROOT    = Path(__file__).resolve().parent.parent.parent
 DB_PATH = ROOT / 'data' / 'egx_trading.db'
 RPT_DIR = ROOT / 'data' / 'research_reports'
@@ -1024,6 +1026,22 @@ def discover_explosion_anatomy(db, params=None):
         SELECT signature_name, scope, prevalence_pct, avg_return_uplift, feature_type
         FROM explosion_signatures ORDER BY prevalence_pct DESC""").fetchall()]
 
+    p6_ctx = (params or {}).get('p6_context') or load_context() or {}
+    p6_hints = p6_ctx.get('cognition_hints') or {}
+    p6_review = None
+    if p6_hints.get('prioritize_explosive_review'):
+        explosive_arch = [a for a in archetypes_out
+                          if 'EXPLOS' in (a.get('archetype_name') or '').upper()
+                          or (a.get('false_breakout_rate') or 0) > 0.35]
+        p6_review = {
+            'focus': 'EXPLOSIVE',
+            'loss_count': p6_hints.get('explosion_loss_count', 0),
+            'high_fbr_archetypes': len(explosive_arch),
+        }
+        findings.append(
+            f"P6 review: EXPLOSIVE downrank — {p6_hints.get('explosion_loss_count', 0)} ULTRA losses"
+        )
+
     print(f"  ✅ Explosion anatomy: {N_EXPLOSION_ARCHETYPES} archetypes | {n_sigs} signatures ({n_universal} universal)", flush=True)
     return {
         'total_explosions': n_total,
@@ -1031,6 +1049,7 @@ def discover_explosion_anatomy(db, params=None):
         'n_signatures': n_sigs,
         'n_universal': n_universal,
         'signatures': sigs_out[:15],
+        'p6_explosive_review': p6_review,
         'elapsed_sec': round(dt, 1),
     }
 
@@ -1648,12 +1667,18 @@ def generate_report(db, params=None):
 # FULL COGNITION PIPELINE
 # ══════════════════════════════════════════════════════════════════════════════
 def full_cognition(db, params=None):
+    params = params or {}
     t0_total = time.time()
     print("\n  🧠 EGX Phase 16 — Full Cognition Pipeline", flush=True)
     print("  ─────────────────────────────────────────", flush=True)
 
     stage_results = {}
     key_findings = []
+    p6_prio = apply_p6_cognition_priorities(db, params)
+    stage_results['p6_priorities'] = p6_prio
+    key_findings.extend(p6_prio.get('key_findings') or [])
+    if p6_prio.get('priorities'):
+        print(f"  [P6] {len(p6_prio['priorities'])} cognition priorities loaded", flush=True)
 
     stages = [
         ('stock_dna',          build_stock_dna,            '1/7 Stock DNA'),

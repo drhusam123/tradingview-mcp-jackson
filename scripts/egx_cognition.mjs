@@ -12,6 +12,7 @@
 
 import { pythonCogFull, pythonCogStockDNA, pythonCogLaws,
          pythonCogEvolve, pythonCogReport, pythonCogStatus } from '../src/egx/index.js';
+import { loadP6ResearchContext } from './lib/p6_research_context.mjs';
 import { sendTelegram }                                       from '../src/egx/notify.js';
 import { writeFileSync, readFileSync }                        from 'fs';
 import { join, dirname }                                      from 'path';
@@ -54,9 +55,16 @@ if (REPORT) {
     total_elapsed:  ((Date.now() - t0) / 1000).toFixed(1),
   };
 } else {
+  const p6 = loadP6ResearchContext();
+  if (p6) {
+    wl(`  📎 P6 context: ${p6.cognition_hints?.explosion_loss_count ?? 0} EXPLOSIVE ULTRA losses`);
+    if (p6.cognition_hints?.prioritize_explosive_review) {
+      wl('     Priority: EXPLOSIVE archetype review');
+    }
+  }
   wl('  🧪 Full pipeline — 7-stage cognition cycle');
   wl('  (Estimated: 30–120 seconds)\n');
-  result = await pythonCogFull();
+  result = await pythonCogFull(p6 ? { p6_context: p6 } : {});
 }
 
 if (result.error) {

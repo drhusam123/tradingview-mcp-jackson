@@ -1287,7 +1287,7 @@ export async function pythonEvoFailures()   { return runEvo('failures',         
 export async function pythonEvoStocks()     { return runEvo('stocks',             {}); }
 export async function pythonEvoHypotheses() { return runEvo('hypotheses',         {}); }
 export async function pythonEvoRegimes()    { return runEvo('regime_calibration', {}); }
-export async function pythonEvoFull()       { return runEvo('full_evolution',     {}); }
+export async function pythonEvoFull(params = {}) { return runEvo('full_evolution', params); }
 
 // ── Phase 16 — Autonomous Market Cognition Engine ────────────────────────────
 const COG_SCRIPT = join(__dirname, '../../scripts/python/market_cognition.py');
@@ -1324,7 +1324,7 @@ export async function pythonCogLaws()        { return runCog('universal_laws',  
 export async function pythonCogMemory()      { return runCog('consolidate_memory', {}); }
 export async function pythonCogEvolve()      { return runCog('self_evolve',        {}); }
 export async function pythonCogReport()      { return runCog('generate_report',    {}); }
-export async function pythonCogFull()        { return runCog('full_cognition',     {}); }
+export async function pythonCogFull(params = {}) { return runCog('full_cognition', params); }
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Phase 17 — Graph Contagion Engine

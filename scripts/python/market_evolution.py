@@ -19,6 +19,12 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from collections import defaultdict
 
+from p6_research_context import (
+    ingest_p6_ultra_failures,
+    apply_p6_stock_adjustments,
+    load_context,
+)
+
 ROOT       = Path(__file__).resolve().parent.parent.parent
 DB_PATH    = ROOT / 'data' / 'egx_trading.db'
 REPORT_DIR = ROOT / 'data' / 'research_reports'
@@ -909,13 +915,20 @@ def calibrate_regime_models(db):
 # MASTER PIPELINE
 # ══════════════════════════════════════════════════════════════════════════════
 
-def full_evolution(db):
+def full_evolution(db, params=None):
     """
     7-stage self-learning evolution pipeline.
     Runs all stages in sequence, returns consolidated results.
+    P6 closed-loop context (params.p6_context or data/p6_research_context.json)
+    feeds failure ingestion and post-profile stock adjustments.
     """
+    params = params or {}
     t0 = time.time()
     results = {}
+    p6_ctx = params.get('p6_context') or load_context()
+    if p6_ctx:
+        print('  [P6] Research context loaded — wiring live outcomes', flush=True)
+        results['p6_context'] = {'loaded': True, 'at': p6_ctx.get('at')}
 
     print('  [1/7] Ingesting market experience …', flush=True)
     results['experience'] = ingest_market_experience(db)
@@ -928,9 +941,11 @@ def full_evolution(db):
 
     print('  [4/7] Failure reconstruction …', flush=True)
     results['failures'] = learn_from_failures(db)
+    results['p6_failures'] = ingest_p6_ultra_failures(db, params)
 
     print('  [5/7] Stock behavioral memory …', flush=True)
     results['stocks'] = evolve_stock_profiles(db)
+    results['p6_adjustments'] = apply_p6_stock_adjustments(db, params)
 
     print('  [6/7] Hypothesis evolution …', flush=True)
     results['hypotheses'] = evolve_hypotheses(db)
@@ -942,6 +957,9 @@ def full_evolution(db):
 
     # Log run
     key_findings = _extract_key_findings(results)
+    for block in ('p6_failures', 'p6_adjustments'):
+        for f in (results.get(block) or {}).get('key_findings') or []:
+            key_findings.append(f)
     db.execute("""
         INSERT INTO evolution_log
           (run_timestamp, run_type, laws_updated, new_hypotheses,
@@ -1225,7 +1243,7 @@ def dispatch(cmd, params):
     if cmd == 'stocks':               return evolve_stock_profiles(db)
     if cmd == 'hypotheses':           return evolve_hypotheses(db)
     if cmd == 'regime_calibration':   return calibrate_regime_models(db)
-    if cmd == 'full_evolution':       return full_evolution(db)
+    if cmd == 'full_evolution':       return full_evolution(db, params)
     return {'error': f'Unknown command: {cmd}'}
 
 if __name__ == '__main__':

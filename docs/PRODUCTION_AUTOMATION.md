@@ -44,7 +44,11 @@ Cron wrapper: `egx_telegram_cron.mjs` = prepare-send → live → reconcile → 
 
 **P6 proof loop:** `npm run egx:proof:forensic` → `data/proof_forensic_last.json`
 
-**Master closed loop (Sun 06:40 + post-session):** `egx:closed:loop` → delivered sync + learning + runtime rules + research directives + opportunity quality + discovery feedback
+**Master closed loop (Sun 06:40 + post-session):** `egx:closed:loop` → delivered sync + learning + runtime rules + research directives + opportunity quality + discovery feedback + `p6_research_context.json` + opportunity followup
+
+**P6 → evolution/cognition:** `egx_evolution.mjs` / `egx_cognition.mjs` read `data/p6_research_context.json` (ULTRA losses, downrank hints) and wire live outcomes into behavioral memory
+
+**Opportunity trend:** `egx:opportunity:followup` — alerts from `opportunity_quality_history.json`
 
 **Learning sub-loop:** `egx:learning:loop` → forensic + counterfactual + `delivery_laws_*.json`
 
@@ -81,7 +85,8 @@ Test: `npm run egx:alert:test` | `npm run egx:alert:test:success`
 | `egx:loss:autopsy` | ULTRA loss pattern autopsy |
 | `egx:cache:backfill` | Historical indicators_cache gaps |
 | `egx:p6:status` | P6 samples + counterfactual WR |
-| `egx:closed:loop` | Master 7-stage closed loop |
+| `egx:closed:loop` | Master closed loop (9 stages incl. P6 context) |
+| `egx:opportunity:followup` | Opportunity quality trend alerts |
 | `egx:quality:gate` | Fast L2 `gate_daily` |
 | `egx:proof:forensic` | ULTRA WR breakdown |
 

@@ -10,6 +10,8 @@
  *   5. P6 directives → research_directives
  *   6. opportunity quality (high-opp → actionable → delivered)
  *   7. discovery feedback queue
+ *   8. opportunity followup (trend alerts)
+ *   9. p6_research_context → evolution + cognition
  *
  * Usage: node scripts/egx_closed_loop.mjs [--json] [--date YYYY-MM-DD]
  */
@@ -24,6 +26,8 @@ import { mergeRuntimeRules } from './lib/runtime_rules_merge.mjs';
 import { ingestP6Directives } from './lib/p6_directives_ingest.mjs';
 import { runOpportunityQualityLoop } from './lib/opportunity_quality_loop.mjs';
 import { buildDiscoveryFeedback } from './lib/discovery_feedback.mjs';
+import { buildP6ResearchContext, writeP6ResearchContext } from './lib/p6_research_context.mjs';
+import { analyzeOpportunityTrend } from './lib/opportunity_followup.mjs';
 import { cairoDateParts } from './lib/egx_calendar.mjs';
 
 loadEnv();
@@ -99,6 +103,19 @@ const discovery = stage('discovery_feedback', () => buildDiscoveryFeedback({
   opportunity,
 }));
 
+const oppFollowup = stage('opportunity_followup', () => analyzeOpportunityTrend());
+const p6Context = stage('p6_research_context', () => {
+  const ctx = buildP6ResearchContext({
+    signalDate,
+    learning,
+    forensic,
+    discovery,
+    opportunity,
+    ingested,
+  });
+  return writeP6ResearchContext(ctx);
+});
+
 const report = {
   at: new Date().toISOString(),
   cairo_date: cairoDateParts().date,
@@ -120,6 +137,8 @@ const report = {
   directives_ingested: ingested?.ingested ?? 0,
   opportunity_quality: opportunity,
   discovery_feedback: discovery?.n_items ?? 0,
+  opportunity_followup: oppFollowup,
+  p6_research_context: p6Context,
   loops_closed: [
     'delivery_audit → recommendation_outcomes.client_delivered',
     'outcomes → proof → counterfactual → delivery_laws',
@@ -129,6 +148,8 @@ const report = {
     'forensic/autopsy → discovery_feedback → quant_discovery + score_all',
     'telegram_cron → syncDeliveredOutcomes after live send',
     'opportunity_quality → opportunity_quality_history.json',
+    'opportunity_history → opportunity_followup → directives',
+    'closed_loop → p6_research_context.json → evolution + cognition',
   ],
 };
 
@@ -150,7 +171,9 @@ console.log(`  P6 delivered:  ${proofDelivered?.n_completed ?? 0} @ ${proofDeliv
 console.log(`  Runtime laws:  ${runtime?.applied_laws?.length ?? 0} applied`);
 console.log(`  Directives:    ${ingested?.ingested ?? 0} ingested → research_directives`);
 console.log(`  Discovery Q:   ${discovery?.n_items ?? 0} feedback items`);
-console.log(`  Opportunity:   ${opportunity?.n_delivered ?? 0} delivered / ${opportunity?.n_top_opportunity ?? 0} high-opp\n`);
+console.log(`  Opportunity:   ${opportunity?.n_delivered ?? 0} delivered / ${opportunity?.n_top_opportunity ?? 0} high-opp`);
+console.log(`  Opp followup:  ${oppFollowup?.alerts?.length ?? 0} alerts`);
+console.log(`  P6 context:    ${p6Context?.path ?? '—'}\n`);
 console.log('  Saved: data/closed_loop_last.json\n');
 
 process.exit(fail ? 1 : 0);

@@ -537,3 +537,15 @@ P6 forensic/autopsy → discovery_feedback_last.json
 
 EXPLOSIVE ضعيف → عقوبة على vol_lt1_5, vol_gt3, upper_close, high20_break
 telegram_cron → syncDeliveredOutcomes بعد كل إرسال حي
+
+### القاعدة #20 — p6_research_context → evolution + cognition (يونيو 2026)
+
+```
+closed_loop → p6_research_context.json
+  → egx_evolution.mjs (P6 ULTRA losses → failure_reconstruction + stock_behavioral_memory)
+  → egx_cognition.mjs (EXPLOSIVE archetype review + pattern priorities)
+  → opportunity_followup (trend alerts من opportunity_quality_history)
+```
+
+بعد كل closed loop: شغّل evolution/cognition ليستهلكوا السياق الحي
+EXPLOSIVE downrank من forensic → false_signal_rate + mutation_flag في behavioral memory

@@ -11,6 +11,7 @@
 
 import { pythonEvoFull, pythonEvoConfidence,
          pythonEvoReinforce, pythonEvoStatus }      from '../src/egx/index.js';
+import { loadP6ResearchContext }                  from './lib/p6_research_context.mjs';
 import { sendTelegram }                             from '../src/egx/notify.js';
 import { writeFileSync, readFileSync }              from 'fs';
 import { join, dirname }                            from 'path';
@@ -41,9 +42,16 @@ if (QUICK) {
   result = { confidence: conf, reinforcement: rf,
              total_elapsed: ((Date.now() - t0) / 1000).toFixed(1) };
 } else {
+  const p6 = loadP6ResearchContext();
+  if (p6) {
+    wl(`  📎 P6 context: ${p6.p6_gate?.n_completed ?? 0} samples @ ${p6.p6_gate?.win_rate ?? '—'}% WR`);
+    if (p6.evolution_hints?.downrank_behavioral?.length) {
+      wl(`     Downrank: ${p6.evolution_hints.downrank_behavioral.join(', ')}`);
+    }
+  }
   wl('  🧪 Full pipeline — 7-stage self-learning evolution cycle');
   wl('  (Estimated: 10–30 seconds)\n');
-  result = await pythonEvoFull();
+  result = await pythonEvoFull(p6 ? { p6_context: p6 } : {});
 }
 
 if (result.error) {
@@ -67,6 +75,11 @@ wl(`  📈 Confidence:     ${conf.laws_updated ?? 0} laws | ▲${conf.gaining ??
 wl(`  ⚡ Reinforcement:  ${Object.entries(by_s).map(([k,v]) => `${REINFORCE_ICONS[k]??k}=${v}`).join(' ')}`);
 
 if (!QUICK) {
+  const p6f = result.p6_failures || {};
+  const p6a = result.p6_adjustments || {};
+  if (p6f.n_ingested || p6a.symbol_rows_bumped) {
+    wl(`  📎 P6 bridge:     ${p6f.n_ingested ?? 0} live losses ingested | ${p6a.symbol_rows_bumped ?? 0} symbols adjusted`);
+  }
   wl(`  ⚠️  Failures:      ${(fr.total_failures_analyzed??0).toLocaleString()} analyzed`);
   wl(`  🏭 Stocks:        ${st.stocks_profiled ?? 0} profiled | EXPLOSIVE=${(st.behavioral_distribution??{}).EXPLOSIVE??0}`);
   wl(`  🔬 Hypotheses:    ${hyp.new_candidates??0} new | ${hyp.promoted??0} validated`);
