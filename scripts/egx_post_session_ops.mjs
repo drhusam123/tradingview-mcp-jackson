@@ -1,0 +1,71 @@
+#!/usr/bin/env node
+/**
+ * Post-session ops — runs after Telegram cron as safety net.
+ * reconcile → verify → alert on gaps.
+ *
+ * Cron: 45 15 * * 0-4 (5:45 PM Cairo)
+ */
+import { execSync } from 'child_process';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
+import { loadEnv, PROJECT_ROOT } from './lib/load_env.mjs';
+import { isTradingDay, cairoDateParts } from './lib/egx_calendar.mjs';
+import { alertNotification, opsSuccessAlert } from './lib/notification_alert.mjs';
+import { latestOhlcvDate } from './lib/delivery_audit.mjs';
+import { buildDeliveryDigest } from './lib/ops_digest.mjs';
+
+loadEnv();
+
+const NODE = process.execPath;
+const FORCE = process.argv.includes('--force');
+const today = cairoDateParts().date;
+
+try {
+  const cal = isTradingDay(today);
+  if (!cal.is_trading_day && !FORCE) {
+    console.log(`⏭  Post-session skip: not trading day (${cal.holiday_name || 'weekend'})`);
+    process.exit(0);
+  }
+} catch (e) {
+  console.log(`⚠️  Calendar check failed: ${e.message} — continuing`);
+}
+
+console.log('\n═══ EGX Post-Session Ops ═══');
+console.log(`Date: ${latestOhlcvDate() || today}`);
+
+let reconcileExit = 0;
+try {
+  execSync(`"${NODE}" scripts/egx_notify_reconcile.mjs`, { cwd: PROJECT_ROOT, stdio: 'inherit' });
+} catch (e) {
+  reconcileExit = e.status || 2;
+}
+
+if (reconcileExit !== 0) {
+  alertNotification('POST_SESSION_RECONCILE_GAP', { date: today });
+  if (process.env.EGX_AUTO_BACKFILL === '1') {
+    console.log('\n▶  Auto-recovery (EGX_AUTO_BACKFILL=1)...');
+    try {
+      execSync(`"${NODE}" scripts/egx_notify_recovery.mjs --send`, { cwd: PROJECT_ROOT, stdio: 'inherit' });
+    } catch {
+      process.exit(2);
+    }
+  } else {
+    console.error('\n⛔ Pending deliveries — run: npm run egx:notify:recovery');
+    console.error('   Or set EGX_AUTO_BACKFILL=1 for automatic backfill\n');
+    process.exit(2);
+  }
+}
+
+try {
+  execSync(`"${NODE}" scripts/egx_full_verify.mjs --skip-tests --skip-cdp`, {
+    cwd: PROJECT_ROOT,
+    stdio: 'inherit',
+  });
+} catch {
+  alertNotification('POST_SESSION_VERIFY_FAIL', { date: today });
+  process.exit(1);
+}
+
+await opsSuccessAlert('POST_SESSION_OK', buildDeliveryDigest(latestOhlcvDate() || today));
+
+console.log('\n═══ Post-Session OK ═══\n');

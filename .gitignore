@@ -9,6 +9,17 @@ discovery-log.json
 .env
 .env.*
 !.env.example
+.env.local
 
-# Install-time symlink created by the one-shot setup
-AGENTS.md
+# data / logs / OS
+data/
+logs/
+mlruns/
+.DS_Store
+.claude/
+
+# sqlite (local)
+*.db
+*.db-shm
+*.db-wal
+egx*.db

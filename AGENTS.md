@@ -1,4 +1,4 @@
-# TradingView MCP — Claude Instructions
+# TradingView MCP — Codex Instructions
 
 68 tools for reading and controlling a live TradingView Desktop chart via CDP (port 9222).
 
@@ -156,18 +156,16 @@ These tools can return large payloads. Follow these rules to avoid context bloat
 
 **Runbook:** `npm run egx:runbook` | **Next session:** `npm run egx:session:next`
 
-**Ops alerts:** failures always (`EGX_ALERT_TELEGRAM=1`) | success digest after send (`EGX_OPS_SUCCESS_ALERT=1`)
+**Ops alerts:** `npm run egx:alert:test` (fail) | `npm run egx:alert:test:success` | `npm run egx:ops:digest`
 
 **Status:** `npm run egx:automation:status` | **Log scan:** `npm run egx:cron:log-check`
 
-**Full gate:** `npm run egx:prod:ready` (all automation checks in one command)
-
-**Docs:** `docs/PRODUCTION_AUTOMATION.md` — complete ops reference
+**Full gate:** `npm run egx:prod:ready` | `npm run egx:prod:ready:full` (with CDP + tests)
 
 ## Architecture
 
 ```
-Claude Code ←→ MCP Server (stdio) ←→ CDP (localhost:9222) ←→ TradingView Desktop (Electron)
+Codex ←→ MCP Server (stdio) ←→ CDP (localhost:9222) ←→ TradingView Desktop (Electron)
 ```
 
 Pine graphics path: `study._graphics._primitivesCollection.dwglines.get('lines').get(false)._primitivesDataById`

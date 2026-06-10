@@ -1,0 +1,21 @@
+{
+  "market": "EGX",
+  "description": "EGX lesson filters — from TRADING_LESSONS.md (Dr. Husam). Applied before client delivery.",
+  "min_rr": 2.0,
+  "max_signals_per_day": 3,
+  "max_open_positions": 6,
+  "lessons_filters": {
+    "near_ath_min_vol_ratio": 2.5,
+    "post_breakout_vol_decay_max_pct": 60,
+    "optimal_vol_ratio_min": 2.5,
+    "optimal_vol_ratio_max": 3.5,
+    "max_open_above_entry_pct": 0.5
+  },
+  "risk_rules": [
+    "Structural SL under retest/breakout low — not ATR-only",
+    "Near ATH requires volume >= 2.5x 20d average",
+    "Session volume must not drop >60% vs breakout day",
+    "Volume 2.5–3x is optimal band (warn above 3.5x)",
+    "Max 3 client signals per day; max 6 open positions"
+  ]
+}

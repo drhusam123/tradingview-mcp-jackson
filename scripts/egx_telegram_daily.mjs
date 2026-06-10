@@ -7,15 +7,24 @@
  * Usage:
  *   node scripts/egx_telegram_daily.mjs             # live delivery
  *   node scripts/egx_telegram_daily.mjs --dry-run   # format only, no send
- *   node scripts/egx_telegram_daily.mjs --force     # skip pipeline, format+send only
+ *   node scripts/egx_telegram_daily.mjs --force     # skip pipeline only; QA/freshness still enforced
  */
 
 import { pythonOsPipelineRun, pythonTgFormatDaily } from '../src/egx/index.js';
-import { sendTelegram } from '../src/egx/notify.js';
+import { sendTelegram, validateTelegramPayload } from '../src/egx/notify.js';
 import { writeFileSync, readFileSync, mkdirSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import Database from 'better-sqlite3';
+import { toTvSymbol, fromTvSymbol } from '../src/egx/tv_symbols.js';
+import {
+  logDeliveryAttempt, countActionable, ensureDeliveryAuditTable,
+  normalizeDeliverableSignals, wasAlreadySent,
+} from './lib/delivery_audit.mjs';
+import { runPreSendCheck } from './lib/pre_send_check.mjs';
+import { loadEnv } from './lib/load_env.mjs';
+
+loadEnv();
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DATA_DIR  = join(__dirname, '../data');
@@ -26,7 +35,7 @@ const DB_PATH   = join(DATA_DIR, 'egx_trading.db');
 // Checks if top signals are still in valid entry zone before sending.
 // Gracefully degrades — if TV is unavailable, validation is skipped.
 
-async function validateSignalPrices(topSymbols) {
+async function validateSignalPrices(topSymbols, reportDate = null) {
   /** Returns { symbol → { current_price, entry_price, entry_high, pct_from_entry, stale } } */
   const result = {};
   if (!topSymbols || topSymbols.length === 0) return result;
@@ -35,12 +44,17 @@ async function validateSignalPrices(topSymbols) {
   let db;
   try {
     db = new Database(DB_PATH, { readonly: true });
-    const today = new Date().toISOString().slice(0, 10);
+    const today = reportDate || getLatestOhlcvDate() || new Date().toISOString().slice(0, 10);
     for (const sym of topSymbols) {
       const row = db.prepare(
         `SELECT entry_price, entry_high, stop_loss
+         FROM final_signals
+         WHERE symbol=? AND trade_date<=? AND actionable=1 AND veto_reason IS NULL
+         ORDER BY trade_date DESC LIMIT 1`
+      ).get(sym, today) ?? db.prepare(
+        `SELECT entry_price, entry_high, stop_loss
          FROM unified_signals
-         WHERE symbol=? AND signal_date<=?
+         WHERE symbol=? AND signal_date<=? AND quality_gate_passed=1
          ORDER BY signal_date DESC LIMIT 1`
       ).get(sym, today);
       if (row) result[sym] = { entry_price: row.entry_price, entry_high: row.entry_high, stop_loss: row.stop_loss };
@@ -57,12 +71,13 @@ async function validateSignalPrices(topSymbols) {
 
   if (callTV && topSymbols.length > 0) {
     try {
-      const tvSyms = topSymbols.map(s => `EGX:${s}`);
+      const tvSyms = topSymbols.map(s => toTvSymbol(s));
       const batch  = await callTV('batch_run', { symbols: tvSyms, action: 'quote_get' });
       const quotes = batch?.results || [];
       for (const q of quotes) {
-        const sym   = (q.symbol || '').replace('EGX:', '');
-        const price = q.data?.last_price ?? q.data?.close ?? null;
+        const sym   = fromTvSymbol(q.symbol || q.request?.symbol || q.input?.symbol || '');
+        const quote = q.result || q.data || {};
+        const price = quote.last_price ?? quote.last ?? quote.close ?? null;
         if (!price || !result[sym]) continue;
         const entry      = result[sym].entry_price;
         const entryHigh  = result[sym].entry_high;
@@ -83,9 +98,26 @@ async function validateSignalPrices(topSymbols) {
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const FORCE   = process.argv.includes('--force');
+const requestedReportDate = getLatestOhlcvDate() || new Date().toISOString().slice(0, 10);
+
+ensureDeliveryAuditTable();
 
 const wl  = (s = '') => process.stdout.write(s + '\n');
 const sep = (c = '═', n = 65) => wl(c.repeat(n));
+
+function sanitizeTelegramHtml(text = '') {
+  return String(text)
+    // Keep Telegram-supported tags, escape everything else that looks like HTML.
+    .replace(/<(?!\/?(b|strong|i|em|u|ins|s|strike|del|code|pre|a)(\s+href="[^"]*")?\s*>)/gi, '&lt;');
+}
+
+function stripTelegramHtml(text = '') {
+  return String(text)
+    .replace(/<[^>]*>/g, '')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+}
 
 // ─── Delivery Log ────────────────────────────────────────────────────────────
 
@@ -98,23 +130,124 @@ function appendDeliveryLog(entry) {
   writeFileSync(LOG_FILE, JSON.stringify(log, null, 2));
 }
 
+function getLatestOhlcvDate() {
+  let db;
+  try {
+    db = new Database(DB_PATH, { readonly: true });
+    const row = db.prepare(
+      "SELECT MAX(date(bar_time, 'unixepoch')) AS latest FROM ohlcv_history"
+    ).get();
+    return row?.latest ?? null;
+  } catch {
+    return null;
+  } finally {
+    try { db?.close(); } catch {}
+  }
+}
+
+function getFinalActionableCount(reportDate) {
+  let db;
+  try {
+    db = new Database(DB_PATH, { readonly: true });
+    const row = db.prepare(
+      `SELECT COUNT(*) AS n
+       FROM final_signals
+       WHERE trade_date=? AND actionable=1 AND veto_reason IS NULL`
+    ).get(reportDate);
+    return Number(row?.n || 0);
+  } catch {
+    return 0;
+  } finally {
+    try { db?.close(); } catch {}
+  }
+}
+
+function scrubClientText(text) {
+  return String(text ?? '')
+    .replace(/\b(undefined|null|NaN)\b/gi, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{4,}/g, '\n\n\n')
+    .trim();
+}
+
+function validateClientMessages(messages, { reportDate, finalActionableCount }) {
+  const issues = [];
+  const body = messages.join('\n\n');
+  if (!body.trim()) issues.push('empty Telegram payload');
+  if (/\b(undefined|null|NaN)\b/i.test(body)) {
+    issues.push('payload contains undefined/null/NaN');
+  }
+  if (/0 stocks|No data|@ undefined|None @/i.test(body)) {
+    issues.push('payload contains debug/research placeholder text');
+  }
+  if (finalActionableCount <= 0) {
+    const forbiddenWhenNoFinal = [
+      /أفضل فرص التداول/,
+      /فرص مؤهلة/,
+      /منطقة الدخول/,
+      /(?:^|\n)\s*الدخول:/,
+      /رادار الانفجار/,
+      /توقعات الانفجار/,
+      /زخم ML/,
+      /مرشح داعم/,
+      /قائمة المراقبة/,
+    ];
+    for (const rx of forbiddenWhenNoFinal) {
+      if (rx.test(body)) issues.push(`no final_signals actionable=1, but payload matches ${rx}`);
+    }
+  }
+  const isoDates = [...body.matchAll(/\b20\d{2}-\d{2}-\d{2}\b/g)].map(m => m[0]);
+  const wrongDates = [...new Set(isoDates.filter(d => d !== reportDate))];
+  if (wrongDates.length > 0) {
+    issues.push(`payload contains non-report ISO date(s): ${wrongDates.slice(0, 5).join(', ')}`);
+  }
+  messages.forEach((msg, i) => {
+    const qa = validateTelegramPayload(msg, {
+      clientDelivery: true,
+      reportDate,
+      finalActionableCount,
+    });
+    if (!qa.ok) {
+      qa.issues.forEach(issue => issues.push(`msg${i + 1}: ${issue}`));
+    }
+  });
+  return issues;
+}
+
 // ── Same-day duplicate-send guard ────────────────────────────────────────────
 // Prevents accidental double-delivery if the script is run twice in one day.
 // Override with --force flag.
 if (!DRY_RUN && !FORCE) {
   try {
+    const _today = requestedReportDate;
+    const _dup = wasAlreadySent(_today);
     const _log = JSON.parse(readFileSync(LOG_FILE, 'utf8'));
-    const _today = new Date().toISOString().slice(0, 10);
     const _lastSent = (_log.deliveries || []).slice().reverse()
-      .find(d => d.messages_sent > 0);
-    if (_lastSent && _lastSent.date === _today) {
+      .find(d => d.messages_sent > 0 && d.date === _today);
+    if (_dup.duplicate || _lastSent) {
+      const act = countActionable(_today);
+      logDeliveryAttempt({
+        signal_date: _today,
+        actionable: act.db > 0,
+        deliverable: act.deliverable > 0,
+        message_generated: 0,
+        send_attempted: 0,
+        send_success: 0,
+        skip_reason: `duplicate_same_day:${_dup.reason || 'legacy_log'}:last_sent=${_lastSent?.time || '?'}`,
+        pipeline_stage: 'duplicate_guard',
+        dedup_key: `live:${_today}`,
+        meta_json: { last_sent: _lastSent, dup: _dup, actionable: act },
+      });
       sep();
       wl(`  ⛔ Already delivered today (${_today} — ${_lastSent.time || '?'})`);
       wl(`  ℹ️  Use --force to override or --dry-run to preview`);
+      wl(`  📋 Skip logged to notification_delivery_audit`);
       sep();
       process.exit(0);
     }
-  } catch { /* log missing or malformed — first run, proceed */ }
+  } catch (e) {
+    wl(`  ⚠️  Duplicate guard read failed: ${e.message} — proceeding`);
+  }
 }
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
@@ -154,7 +287,7 @@ if (!FORCE) {
 wl('\n  📝 Step 2: Formatting Telegram report...');
 let formatResult;
 try {
-  formatResult = await pythonTgFormatDaily();
+  formatResult = await pythonTgFormatDaily({ report_date: requestedReportDate });
 } catch (e) {
   wl(`  ❌ Format error: ${e.message}`);
   process.exit(1);
@@ -167,17 +300,143 @@ if (formatResult.error) {
 }
 
 let messages = formatResult.messages || [];
+const finalActionableCount = Number(
+  formatResult.final_actionable_count ?? getFinalActionableCount(formatResult.date || requestedReportDate)
+);
+messages = messages.map(scrubClientText).filter(Boolean);
 wl(`  ✅ Formatted: ${messages.length} messages | ${formatResult.total_chars} chars total`);
 messages.forEach((msg, i) => wl(`     Msg ${i+1}: ${msg.length} chars`));
+if (formatResult.formatter_diagnostics) {
+  const fd = formatResult.formatter_diagnostics;
+  wl(`  📊 Formatter: db_actionable=${fd.db_actionable} deliverable=${fd.deliverable_after_qg} top=${fd.formatter_top_n}`);
+  if (fd.filtered?.length) {
+    fd.filtered.slice(0, 5).forEach(f => wl(`     ⚠️  filtered ${f.symbol}: ${f.reason}`));
+  }
+  if (fd.warning) wl(`  ⚠️  ${fd.warning}`);
+}
+
+// ── Step 2a: Product freshness gate ─────────────────────────────────────────
+// Live delivery must not outrun the trusted OHLCV layer. --force only skips
+// the pipeline and duplicate-send guard; it never bypasses freshness.
+const latestOhlcvDate = getLatestOhlcvDate();
+const reportDate = formatResult.date || requestedReportDate;
+normalizeDeliverableSignals(reportDate);
+
+let preSend = null;
+if (!DRY_RUN) {
+  preSend = runPreSendCheck(reportDate, { dryRun: false, allowDuplicate: FORCE, logBlock: false });
+  if (!preSend.ok) {
+    wl('  ⛔ Pre-send gate blocked live delivery:');
+    preSend.blockers.forEach(issue => wl(`     - ${issue}`));
+    logDeliveryAttempt({
+      signal_date: reportDate,
+      actionable: preSend.actionable.db > 0,
+      deliverable: preSend.actionable.deliverable > 0,
+      message_generated: messages.length > 0 ? 1 : 0,
+      send_attempted: 0,
+      send_success: 0,
+      skip_reason: preSend.blockers.some(b => b.includes('ML') || b.includes('ml_prediction'))
+        ? `ML_STALE: ${preSend.blockers.join(' | ')}`
+        : `PRE_SEND_BLOCK: ${preSend.blockers.join(' | ')}`,
+      pipeline_stage: 'pre_send_block',
+      ml_latest_date: preSend.ml_latest_date,
+      required_ml_date: reportDate,
+      dedup_key: `live:${reportDate}:pre_send`,
+      meta_json: { checks: preSend.checks, blockers: preSend.blockers },
+    });
+    appendDeliveryLog({
+      date: reportDate,
+      time: formatResult.time,
+      timestamp: new Date().toISOString(),
+      messages_sent: 0,
+      messages_failed: messages.length,
+      total_chars: messages.reduce((n, m) => n + m.length, 0),
+      pipeline_ran: !FORCE,
+      pipeline_ok: pipelineOk,
+      duration_sec: parseFloat(((Date.now() - t0) / 1000).toFixed(1)),
+      errors: preSend.blockers.map((error, index) => ({ index: `pre_send_${index + 1}`, error })),
+      stale_signals: null,
+      validated_symbols: 0,
+    });
+    process.exit(5);
+  }
+  wl(`  ✅ Pre-send gate OK — deliverable=${preSend.actionable.deliverable} ML=${preSend.ml_latest_date}`);
+}
+
+const qaIssues = validateClientMessages(messages, { reportDate, finalActionableCount });
+if (qaIssues.length > 0) {
+  wl(`  ⛔ Client QA blocked delivery:`);
+  qaIssues.forEach(issue => wl(`     - ${issue}`));
+  if (!DRY_RUN) {
+    logDeliveryAttempt({
+      signal_date: reportDate,
+      actionable: finalActionableCount > 0,
+      message_generated: messages.length > 0 ? 1 : 0,
+      send_attempted: 0,
+      send_success: 0,
+      skip_reason: `client_qa:${qaIssues.join(' | ')}`,
+      pipeline_stage: 'client_qa_block',
+      dedup_key: `live:${reportDate}`,
+      meta_json: { qaIssues, finalActionableCount },
+    });
+    appendDeliveryLog({
+      date:            reportDate,
+      time:            formatResult.time,
+      timestamp:       new Date().toISOString(),
+      messages_sent:   0,
+      messages_failed: messages.length,
+      total_chars:     messages.reduce((n, m) => n + m.length, 0),
+      pipeline_ran:    !FORCE,
+      pipeline_ok:     pipelineOk,
+      duration_sec:    parseFloat(((Date.now()-t0)/1000).toFixed(1)),
+      errors:          qaIssues.map((error, index) => ({ index: `client_qa_${index + 1}`, error })),
+      stale_signals:   null,
+      validated_symbols: 0,
+    });
+    process.exit(3);
+  }
+}
+if (latestOhlcvDate && reportDate && latestOhlcvDate < reportDate) {
+  const freshnessMsg = `OHLCV أحدث تاريخ موثوق ${latestOhlcvDate} بينما التقرير ${reportDate}`;
+  if (!DRY_RUN) {
+    wl(`  ⛔ Freshness gate blocked live delivery: ${freshnessMsg}`);
+    logDeliveryAttempt({
+      signal_date: reportDate,
+      actionable: finalActionableCount > 0,
+      message_generated: messages.length > 0 ? 1 : 0,
+      send_attempted: 0,
+      send_success: 0,
+      skip_reason: `freshness_gate:${freshnessMsg}`,
+      pipeline_stage: 'freshness_block',
+      dedup_key: `live:${reportDate}`,
+    });
+    appendDeliveryLog({
+      date:            reportDate,
+      time:            formatResult.time,
+      timestamp:       new Date().toISOString(),
+      messages_sent:   0,
+      messages_failed: messages.length,
+      total_chars:     formatResult.total_chars,
+      pipeline_ran:    !FORCE,
+      pipeline_ok:     pipelineOk,
+      duration_sec:    parseFloat(((Date.now()-t0)/1000).toFixed(1)),
+      errors:          [{ index: 'freshness_gate', error: freshnessMsg }],
+      stale_signals:   null,
+      validated_symbols: 0,
+    });
+    process.exit(2);
+  }
+  wl(`  ⚠️  Freshness warning: ${freshnessMsg}`);
+}
 
 // ── Step 2b: Ph30 — TV MCP Live Price Validation ─────────────────────────────
 wl('\n  🔍 Step 2b: Validating signal prices via TradingView...');
 const topSymbols = formatResult.top_symbols || [];
 let priceValidation = {};
 let staleCount = 0;
-if (topSymbols.length > 0) {
+if (topSymbols.length > 0 && finalActionableCount > 0) {
   try {
-    priceValidation = await validateSignalPrices(topSymbols);
+    priceValidation = await validateSignalPrices(topSymbols, reportDate);
     const staleSyms = Object.entries(priceValidation)
       .filter(([, v]) => v.stale)
       .map(([s]) => s);
@@ -240,6 +499,35 @@ try {
   wl(`  ℹ️  Drift check skipped: ${e.message}`);
 }
 
+// ── Step 2c2: Ph46 — Bayesian WR warning (opt-in, does NOT block signals) ───
+// Enable with EGX_BAYESIAN_WARN=1 — prepends caution text only, never sets actionable=0
+if (process.env.EGX_BAYESIAN_WARN === '1') {
+wl('\n  📊 Step 2c2: Checking Bayesian WR (Ph46)...');
+try {
+  const db = new Database(DB_PATH, { readonly: true });
+  const bayes = db.prepare(`
+    SELECT mean_wr, ci_lower, run_date, n_obs
+    FROM bayesian_wr
+    WHERE category='overall'
+    ORDER BY run_date DESC, id DESC LIMIT 1
+  `).get();
+  if (bayes && bayes.ci_lower != null && bayes.ci_lower < 0.45 && (bayes.n_obs ?? 0) >= 20) {
+    const wrPct = ((bayes.mean_wr ?? 0) * 100).toFixed(1);
+    const ciPct = (bayes.ci_lower * 100).toFixed(1);
+    wl(`  ⚠️  Bayesian CI low: ${ciPct}% (mean ${wrPct}%, n=${bayes.n_obs})`);
+    const bayesAlert = `⚠️ <b>تحذير: ثقة Win Rate منخفضة</b>\n<i>Bayesian CI السفلي ${ciPct}% (متوسط ${wrPct}%) — راجع حجم المراكز</i>\n\n`;
+    if (messages.length > 0) messages[0] = bayesAlert + messages[0];
+  } else if (bayes) {
+    wl(`  ✅ Bayesian WR: mean=${((bayes.mean_wr ?? 0) * 100).toFixed(1)}% CI↓=${bayes.ci_lower != null ? (bayes.ci_lower * 100).toFixed(1) : '—'}%`);
+  }
+  db.close();
+} catch (e) {
+  wl(`  ℹ️  Bayesian check skipped: ${e.message}`);
+}
+} else {
+  wl('\n  📊 Step 2c2: Bayesian WR warning off (set EGX_BAYESIAN_WARN=1 to enable)');
+}
+
 // ── Step 2d: Ph39 — ML Score Delta (أسهم قفزت/هبطت >15pt) ─────────────────
 wl('\n  📊 Step 2d: Checking ML score delta (Ph39)...');
 try {
@@ -256,14 +544,21 @@ try {
     { cwd: join(__dirname, '..'), timeout: 15_000 }
   ).toString();
   const _delta = JSON.parse(_deltaRaw.trim());
-  if (_delta.success && _delta.n_surging > 0) {
+  if (_delta.success && _delta.n_surging > 0 && finalActionableCount > 0 && topSymbols.length > 0) {
     wl(`  ⚡ ${_delta.n_surging} أسهم قفز ML بـ ≥15pt اليوم`);
     // Append ML momentum note to last message
-    const _topSurge = _delta.surging.slice(0, 3)
+    const _topSet = new Set(topSymbols);
+    const _topSurge = _delta.surging
+      .filter(s => _topSet.has(s.symbol))
+      .slice(0, 3)
       .map(s => `${s.symbol} +${s.delta}pt (${s.ml_yesterday}%→${s.ml_today}%)`)
       .join(' | ');
-    const _surgeNote = `\n🔥 <b>زخم ML اليوم:</b> <i>${_topSurge}</i>`;
-    if (messages.length > 0) messages[messages.length - 1] += _surgeNote;
+    if (_topSurge) {
+      const _surgeNote = `\n🔥 <b>زخم ML اليوم:</b> <i>${_topSurge}</i>`;
+      if (messages.length > 0) messages[messages.length - 1] += _surgeNote;
+    } else {
+      wl('  ℹ️  ML delta kept internal; no surging symbol is in final client signals');
+    }
   } else {
     wl(`  ℹ️  ML delta: ${_delta.n_surging} surging | ${_delta.n_dropping} dropping`);
   }
@@ -287,7 +582,7 @@ try {
     { cwd: join(__dirname, '..'), timeout: 20_000 }
   ).toString();
   const _sl = JSON.parse(_slRaw.trim());
-  if (_sl.success) {
+  if (_sl.success && finalActionableCount > 0 && topSymbols.length > 0) {
     if (_sl.n_hit_stop > 0) {
       wl(`  🛑 ${_sl.n_hit_stop} إشارة وصل وقفها: ${_sl.hit_stop.slice(0,3).map(s=>s.symbol).join(', ')}`);
       const _stopNote = `\n🛑 <b>تحذير وقف خسارة:</b> <i>${_sl.hit_stop.slice(0,3).map(s => `${s.symbol} (${s.pct_from_stop}% من الوقف)`).join(' | ')}</i>`;
@@ -299,6 +594,8 @@ try {
     } else {
       wl(`  ✅ ${_sl.n_tracked} إشارة مُتتبَّعة — لا وقوف مُكسَّرة`);
     }
+  } else if (_sl.success) {
+    wl('  ℹ️  Stop-loss client note suppressed (no final actionable signals today)');
   }
 } catch (e) {
   wl(`  ℹ️  Stop-loss check skipped: ${e.message.slice(0, 80)}`);
@@ -306,6 +603,21 @@ try {
 
 // ── Step 3: Dry Run — show preview ──────────────────────────────────────────
 if (DRY_RUN) {
+  logDeliveryAttempt({
+    signal_date: reportDate,
+    actionable: finalActionableCount > 0,
+    message_generated: messages.length > 0 ? 1 : 0,
+    send_attempted: 0,
+    send_success: 0,
+    skip_reason: 'dry_run_mode',
+    pipeline_stage: 'dry_run',
+    dedup_key: `dry_run:${reportDate}`,
+    meta_json: {
+      top_symbols: topSymbols,
+      final_actionable_count: finalActionableCount,
+      formatter_diagnostics: formatResult.formatter_diagnostics,
+    },
+  });
   wl('\n  🔍 DRY RUN — Message Preview:');
   messages.forEach((msg, i) => {
     wl(`\n  ──── Message ${i+1} ─────────────────────────────────────────────`);
@@ -322,35 +634,66 @@ const sent   = [];
 const failed = [];
 
 for (let i = 0; i < messages.length; i++) {
-  const msg = messages[i];
+  const msg = sanitizeTelegramHtml(messages[i]);
   try {
-    await sendTelegram(msg, { parseMode: 'HTML' });
+    const result = await sendTelegram(msg, {
+      parseMode: 'HTML',
+      clientDelivery: true,
+      reportDate,
+      finalActionableCount,
+    });
+    if (!result?.ok) throw new Error(result?.error || 'Telegram send failed');
     sent.push(i + 1);
+    logDeliveryAttempt({
+      signal_date: reportDate,
+      symbol: topSymbols[i] ?? null,
+      actionable: finalActionableCount > 0,
+      message_generated: 1,
+      send_attempted: 1,
+      send_success: 1,
+      provider_response: { messageId: result.messageId },
+      pipeline_stage: 'telegram_send',
+      dedup_key: `live:${reportDate}:msg${i + 1}`,
+      meta_json: { msg_index: i + 1, chars: msg.length },
+    });
     wl(`  ✅ Message ${i+1} sent (${msg.length} chars)`);
     if (i < messages.length - 1) {
       await new Promise(r => setTimeout(r, 1500));
     }
   } catch (e) {
-    failed.push({ index: i + 1, error: e.message });
-    wl(`  ❌ Message ${i+1} failed: ${e.message}`);
+    wl(`  ⚠️  Message ${i+1} HTML failed, retrying plain text: ${e.message}`);
+    try {
+      const plain = stripTelegramHtml(msg);
+      const retry = await sendTelegram(plain, {
+        clientDelivery: true,
+        reportDate,
+        finalActionableCount,
+      });
+      if (!retry?.ok) throw new Error(retry?.error || 'Telegram plain-text retry failed');
+      sent.push(i + 1);
+      wl(`  ✅ Message ${i+1} sent as plain text (${plain.length} chars)`);
+    } catch (retryError) {
+      failed.push({ index: i + 1, error: retryError.message });
+      logDeliveryAttempt({
+        signal_date: reportDate,
+        symbol: topSymbols[i] ?? null,
+        actionable: finalActionableCount > 0,
+        message_generated: 1,
+        send_attempted: 1,
+        send_success: 0,
+        send_error: retryError.message,
+        pipeline_stage: 'telegram_send_failed',
+        dedup_key: `live:${reportDate}:msg${i + 1}:fail`,
+      });
+      wl(`  ❌ Message ${i+1} failed: ${retryError.message}`);
+    }
   }
 }
 
-// ── Step 4b: Send Visual Cards (Pillow-based image cards) ────────────────────
-wl('\n  🎨 Step 4b: Sending visual cards...');
-try {
-  const { execFileSync } = await import('child_process');
-  const cardScript = join(__dirname, '../scripts/python/telegram_send_cards.py');
-  const reportDate = formatResult.date || new Date().toISOString().slice(0, 10);
-  const cardResult = execFileSync('python3', [cardScript, reportDate], {
-    timeout: 60_000,
-    env: { ...process.env },
-    cwd: join(__dirname, '..'),
-  });
-  wl(`  ✅ Visual cards: ${cardResult.toString().trim().split('\n').pop()}`);
-} catch (cardErr) {
-  wl(`  ⚠️  Visual cards skipped: ${cardErr.message?.slice(0, 100) || cardErr}`);
-}
+// ── Step 4b: Visual Cards Policy ─────────────────────────────────────────────
+// Client delivery must use the single notify.js QA/freshness gate. The card
+// sender uses a separate transport, so the daily client route leaves it off.
+wl('\n  🎨 Step 4b: Visual cards blocked by unified QA delivery policy');
 
 // ── Step 5: Log Delivery ─────────────────────────────────────────────────────
 const elapsed = ((Date.now()-t0)/1000).toFixed(1);
