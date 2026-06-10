@@ -17,6 +17,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { execFileSync } from 'child_process';
 import { loadDiscoveryFeedback, readPendingResearchDirectives } from './lib/load_discovery_feedback.mjs';
+import { resolveDiscoveryDirectives } from './lib/directive_resolver.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DATA_DIR  = join(__dirname, '../data');
@@ -54,6 +55,11 @@ if (result.error) {
 
 const feedback = loadDiscoveryFeedback();
 const p6Directives = readPendingResearchDirectives(8);
+let oppFollowup = null;
+try {
+  const oppPath = join(DATA_DIR, 'opportunity_followup_last.json');
+  if (existsSync(oppPath)) oppFollowup = JSON.parse(readFileSync(oppPath, 'utf8'));
+} catch { /* optional */ }
 if (feedback.n_items) {
   wl(`  🔁 P6 feedback: ${feedback.n_items} items (closed loop → discovery)`);
   feedback.queue.slice(0, 4).forEach(item => {
@@ -65,6 +71,9 @@ if (p6Directives.length) {
   p6Directives.slice(0, 3).forEach(d => {
     wl(`     • ${d.target} (p=${d.priority})`);
   });
+}
+if (oppFollowup?.alerts?.length) {
+  wl(`  📈 Opp followup: ${oppFollowup.alerts.length} alert(s) — ${oppFollowup.alerts[0].code}`);
 }
 
 let quant = null;
@@ -128,6 +137,14 @@ if (!QUICK) {
   wl(`  🧬 Patterns: ${pd.patterns_found || '?'} | Laws: ${ku.laws_generated || '?'}`);
 }
 wl(`  📄 Report: ${rr.report_file || '?'}`);
+
+const resolved = resolveDiscoveryDirectives({
+  quantOk: !!quant?.success,
+  oppOk: !!opportunity?.success,
+});
+if (resolved.completed) {
+  wl(`  📋 Directives:  ${resolved.completed} marked COMPLETED`);
+}
 
 // Send Telegram digest if --notify
 if (NOTIFY) {

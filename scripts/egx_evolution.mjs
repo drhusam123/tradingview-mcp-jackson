@@ -12,6 +12,7 @@
 import { pythonEvoFull, pythonEvoConfidence,
          pythonEvoReinforce, pythonEvoStatus }      from '../src/egx/index.js';
 import { loadP6ResearchContext }                  from './lib/p6_research_context.mjs';
+import { resolveEvolutionDirectives }             from './lib/directive_resolver.mjs';
 import { sendTelegram }                             from '../src/egx/notify.js';
 import { writeFileSync, readFileSync }              from 'fs';
 import { join, dirname }                            from 'path';
@@ -92,6 +93,13 @@ if (result.key_findings?.length) {
   wl('');
   wl('  🧪 KEY LEARNINGS:');
   for (const f of result.key_findings) wl(`    • ${f}`);
+}
+
+if (!QUICK) {
+  const resolved = resolveEvolutionDirectives(result);
+  if (resolved.completed || resolved.autopsy_completed) {
+    wl(`  📋 Directives:  ${resolved.completed} completed (+${resolved.autopsy_completed ?? 0} autopsy)`);
+  }
 }
 
 // Print confidence evolution detail

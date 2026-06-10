@@ -94,6 +94,7 @@ ${oppTrendLine}
   npm run egx:p6:status           # P6 samples + counterfactual
   npm run egx:cache:backfill      # historical indicators_cache gaps
   npm run egx:opportunity:followup # opp quality trend alerts
+  npm run egx:loop:audit          # closed-loop health check
 
 ── DOCS ──
   docs/PRODUCTION_AUTOMATION.md

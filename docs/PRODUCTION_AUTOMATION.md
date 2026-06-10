@@ -87,6 +87,7 @@ Test: `npm run egx:alert:test` | `npm run egx:alert:test:success`
 | `egx:p6:status` | P6 samples + counterfactual WR |
 | `egx:closed:loop` | Master closed loop (9 stages incl. P6 context) |
 | `egx:opportunity:followup` | Opportunity quality trend alerts |
+| `egx:loop:audit` | Closed-loop artifact freshness + wiring audit |
 | `egx:quality:gate` | Fast L2 `gate_daily` |
 | `egx:proof:forensic` | ULTRA WR breakdown |
 

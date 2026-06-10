@@ -28,6 +28,7 @@ import { runOpportunityQualityLoop } from './lib/opportunity_quality_loop.mjs';
 import { buildDiscoveryFeedback } from './lib/discovery_feedback.mjs';
 import { buildP6ResearchContext, writeP6ResearchContext } from './lib/p6_research_context.mjs';
 import { analyzeOpportunityTrend } from './lib/opportunity_followup.mjs';
+import { resolveClosedLoopDirectives } from './lib/directive_resolver.mjs';
 import { cairoDateParts } from './lib/egx_calendar.mjs';
 
 loadEnv();
@@ -92,9 +93,11 @@ stage('learning_loop', () => {
 const runtime = stage('runtime_rules_merge', () => mergeRuntimeRules({ learningReport: learning }));
 
 const opportunity = stage('opportunity_quality', () => runOpportunityQualityLoop(signalDate));
+const oppFollowup = stage('opportunity_followup', () => analyzeOpportunityTrend());
 const allDirectives = [
   ...(learning?.directives || []),
   ...(opportunity?.directives || []),
+  ...(oppFollowup?.directives || []),
 ];
 const ingested = stage('p6_directives_ingest', () => ingestP6Directives(allDirectives));
 const discovery = stage('discovery_feedback', () => buildDiscoveryFeedback({
@@ -102,8 +105,11 @@ const discovery = stage('discovery_feedback', () => buildDiscoveryFeedback({
   autopsy: learning?.loss_autopsy,
   opportunity,
 }));
-
-const oppFollowup = stage('opportunity_followup', () => analyzeOpportunityTrend());
+const resolved = stage('directive_resolve', () => resolveClosedLoopDirectives({
+  learning,
+  runtime,
+  oppFollowup,
+}));
 const p6Context = stage('p6_research_context', () => {
   const ctx = buildP6ResearchContext({
     signalDate,
@@ -111,6 +117,7 @@ const p6Context = stage('p6_research_context', () => {
     forensic,
     discovery,
     opportunity,
+    oppFollowup,
     ingested,
   });
   return writeP6ResearchContext(ctx);
@@ -139,6 +146,7 @@ const report = {
   discovery_feedback: discovery?.n_items ?? 0,
   opportunity_followup: oppFollowup,
   p6_research_context: p6Context,
+  directives_resolved: resolved?.completed ?? 0,
   loops_closed: [
     'delivery_audit → recommendation_outcomes.client_delivered',
     'outcomes → proof → counterfactual → delivery_laws',
@@ -150,6 +158,7 @@ const report = {
     'opportunity_quality → opportunity_quality_history.json',
     'opportunity_history → opportunity_followup → directives',
     'closed_loop → p6_research_context.json → evolution + cognition',
+    'directives PENDING → engines → COMPLETED (directive_resolver)',
   ],
 };
 

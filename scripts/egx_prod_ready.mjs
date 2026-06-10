@@ -40,6 +40,7 @@ if (!run('Automation verify', `"${NODE}" scripts/egx_automation_verify.mjs`)) pr
 if (!run('Session ready (today)', `"${NODE}" scripts/egx_session_ready.mjs --skip-verify-check`)) process.exit(1);
 run('Session ready (next)', `"${NODE}" scripts/egx_session_ready.mjs --next --skip-verify-check`, { optional: true });
 run('Cron log check', `"${NODE}" scripts/egx_cron_log_check.mjs --hours 48`, { optional: true });
+run('Closed-loop audit', `"${NODE}" scripts/egx_loop_audit.mjs`, { optional: true });
 if (!run('Delivery reconcile', `"${NODE}" scripts/egx_notify_reconcile.mjs`, { optional: true })) {
   console.log('⚠️  Pending deliveries — run: npm run egx:notify:recovery');
 }

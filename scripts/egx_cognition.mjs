@@ -13,6 +13,7 @@
 import { pythonCogFull, pythonCogStockDNA, pythonCogLaws,
          pythonCogEvolve, pythonCogReport, pythonCogStatus } from '../src/egx/index.js';
 import { loadP6ResearchContext } from './lib/p6_research_context.mjs';
+import { resolveCognitionDirectives } from './lib/directive_resolver.mjs';
 import { sendTelegram }                                       from '../src/egx/notify.js';
 import { writeFileSync, readFileSync }                        from 'fs';
 import { join, dirname }                                      from 'path';
@@ -117,6 +118,11 @@ if (REPORT) {
     wl('  📊 THRESHOLD IMPROVEMENTS:');
     for (const v of bestVariants.slice(0, 5))
       wl(`    ▲ ${v.pattern_name} (${v.direction})  thresh=${v.variant_threshold?.toFixed(5)}  +${v.improvement_pp?.toFixed(1)}pp`);
+  }
+
+  const resolved = resolveCognitionDirectives(result);
+  if (resolved.completed) {
+    wl(`  📋 Directives:  ${resolved.completed} marked COMPLETED`);
   }
 }
 

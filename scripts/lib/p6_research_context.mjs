@@ -61,6 +61,7 @@ export function buildP6ResearchContext({
   forensic = null,
   discovery = null,
   opportunity = null,
+  oppFollowup = null,
   ingested = null,
 } = {}) {
   const proofAll = getProofLoopMetrics();
@@ -111,6 +112,11 @@ export function buildP6ResearchContext({
       n_delivered: opportunity.n_delivered,
       n_top_opportunity: opportunity.n_top_opportunity,
       missed_high_opportunity: opportunity.missed_high_opportunity?.length ?? 0,
+    } : null,
+    opportunity_trend: oppFollowup ? {
+      alerts: oppFollowup.alerts?.length ?? 0,
+      trends: oppFollowup.trends,
+      top_alert: oppFollowup.alerts?.[0]?.code ?? null,
     } : null,
     ultra_losses: ultraLosses,
     ultra_wins: ultraWins,

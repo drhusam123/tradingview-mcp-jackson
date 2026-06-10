@@ -549,3 +549,13 @@ closed_loop → p6_research_context.json
 
 بعد كل closed loop: شغّل evolution/cognition ليستهلكوا السياق الحي
 EXPLOSIVE downrank من forensic → false_signal_rate + mutation_flag في behavioral memory
+
+### القاعدة #21 — directive_resolver + loop audit (يونيو 2026)
+
+```
+research_directives PENDING
+  → closed_loop / evolution / cognition / discover يُكملون targets المناسبة
+  → egx:loop:audit يتحقق من freshness + wiring
+```
+
+لا تُكمل `p6_sample_gap` حتى يتحقق gate — تُكمل `autopsy_*` بعد evolution
