@@ -19,6 +19,7 @@ import { isTradingDay, cairoDateParts } from './lib/egx_calendar.mjs';
 import { alertNotification } from './lib/notification_alert.mjs';
 import { enforceDailyQualityGate } from './lib/data_quality_gate.mjs';
 import { writeProofLoopSnapshot } from './lib/proof_loop.mjs';
+import { checkIndicatorCacheCoverage } from './lib/indicator_cache_gate.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -325,6 +326,17 @@ async function main() {
   }
 
   run('node scripts/rebuild_indicators.mjs', 'Rebuild local indicators', { critical: true });
+  if (!DRY_RUN) {
+    const cacheGate = checkIndicatorCacheCoverage(signalDate);
+    log(`indicator cache: ${cacheGate.symbols_on_date}/${cacheGate.min_required} on ${signalDate}`);
+    if (!cacheGate.ok) {
+      alertNotification('INDICATOR_CACHE_LOW', {
+        date: signalDate,
+        symbols: cacheGate.symbols_on_date,
+        required: cacheGate.min_required,
+      });
+    }
+  }
   if (tvReady) {
     run('node scripts/tv_pine_rotation.mjs', 'Pine analytics rotation (80 sym)');
   } else {

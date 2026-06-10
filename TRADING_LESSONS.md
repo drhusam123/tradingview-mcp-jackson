@@ -486,3 +486,14 @@ indicators_cache مفقود لتاريخ الإشارة → BLOCK
 ```
 
 `npm run egx:loss:autopsy` — تشريح setup + flags لكل خسارة متبقية
+
+### القاعدة #16 — ضبط collateral damage (يونيو 2026)
+
+```
+explosive_min_vol < 2.5x → WARN فقط (ليس BLOCK) — MILS/FIRE فازوا بـ vol منخفض
+explosive vol < 1.0x + خسارة ULTRA سابقة → BLOCK (explosive_ultra_thin_repeat)
+indicator_cache → BLOCK للتسليم الحي فقط (ليس counterfactual التاريخي)
+بوابة الكاش: verifyActionableIndicatorCache قبل prepare-send
+```
+
+`npm run egx:p6:status` — 4 عينات متبقية + projected WR

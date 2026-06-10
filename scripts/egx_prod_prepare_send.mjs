@@ -13,6 +13,7 @@ import {
 import { ensureUpstreamFresh } from './lib/ensure_upstream_fresh.mjs';
 import { runPreSendCheck } from './lib/pre_send_check.mjs';
 import { runEgxSafetyCheck, appendSafetyLog } from './lib/egx_safety_check.mjs';
+import { verifyActionableIndicatorCache } from './lib/indicator_cache_gate.mjs';
 import { loadEnv } from './lib/load_env.mjs';
 
 loadEnv();
@@ -48,6 +49,12 @@ if (!SKIP_SCORE) {
 normalizeDeliverableSignals(signalDate);
 const upstream = ensureUpstreamFresh(signalDate, { autoRemediate: true, logAudit: true });
 const act = countActionable(signalDate);
+
+const cacheCheck = verifyActionableIndicatorCache(signalDate);
+if (!cacheCheck.ok && cacheCheck.missing?.length) {
+  console.log(`\n⚠️  Indicator cache missing for actionable: ${cacheCheck.missing.join(', ')}`);
+  console.log('   Run: node scripts/rebuild_indicators.mjs');
+}
 
 const safety = runEgxSafetyCheck(signalDate);
 appendSafetyLog(safety);

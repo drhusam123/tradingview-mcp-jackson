@@ -16,6 +16,7 @@
     "block_dormant_client": true,
     "explosive_max_rsi": 70,
     "explosive_min_vol_ratio": 2.5,
+    "explosive_ultra_thin_vol": 1.0,
     "volatile_max_rsi": 65,
     "volatile_min_vol_ratio": 2.5,
     "high_false_signal_rate_max": 0.65,

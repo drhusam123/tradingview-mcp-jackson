@@ -75,6 +75,7 @@ ${autopsyLine}
   npm run egx:proof:forensic      # ULTRA WR breakdown (P6)
   npm run egx:learning:loop       # forensic + counterfactual + laws
   npm run egx:loss:autopsy        # residual ULTRA loss patterns
+  npm run egx:p6:status           # P6 samples + counterfactual
 
 ── DOCS ──
   docs/PRODUCTION_AUTOMATION.md

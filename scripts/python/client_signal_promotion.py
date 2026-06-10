@@ -33,6 +33,7 @@ _DEFAULT_RULES = {
         "block_dormant_client": True,
         "explosive_max_rsi": 70,
         "explosive_min_vol_ratio": 2.5,
+        "explosive_ultra_thin_vol": 1.0,
         "volatile_max_rsi": 65,
         "volatile_min_vol_ratio": 2.5,
         "high_false_signal_rate_max": 0.65,
@@ -169,9 +170,23 @@ def _delivery_safety_block(
     if bclass == "EXPLOSIVE" and rsi is not None and rsi > explosive_max_rsi:
         return "explosive_rsi"
 
-    explosive_min_vol = float(bf.get("explosive_min_vol_ratio", 2.5))
-    if bclass == "EXPLOSIVE" and vol is not None and vol < explosive_min_vol:
-        return "explosive_min_vol"
+    ultra_thin = float(bf.get("explosive_ultra_thin_vol", 1.0))
+    if bclass == "EXPLOSIVE" and vol is not None and vol < ultra_thin:
+        max_losses = bf.get("max_ultra_losses_per_symbol")
+        if max_losses is not None and table_exists(conn, "recommendation_outcomes"):
+            lookback = int(bf.get("repeat_ultra_loss_lookback_days", 120))
+            cutoff = (date.today() - timedelta(days=lookback)).isoformat()
+            prior = conn.execute(
+                """
+                SELECT COUNT(*) FROM recommendation_outcomes
+                WHERE symbol=? AND conviction_tier='ULTRA_CONVICTION'
+                  AND outcome_filled>=5 AND hit_t5=0
+                  AND signal_date>=? AND signal_date<?
+                """,
+                (symbol, cutoff, trade_date),
+            ).fetchone()[0]
+            if prior >= int(max_losses):
+                return "explosive_ultra_thin_repeat"
 
     max_cp = float(bf.get("max_close_position", 0.66))
     if bf.get("block_upper_third_close", True) and cp is not None and cp > max_cp:

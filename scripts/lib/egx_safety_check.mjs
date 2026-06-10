@@ -28,6 +28,7 @@ const DEFAULT_RULES = {
     block_dormant_client: true,
     explosive_max_rsi: 70,
     explosive_min_vol_ratio: 2.5,
+    explosive_ultra_thin_vol: 1.0,
     volatile_max_rsi: 65,
     volatile_min_vol_ratio: 2.5,
     high_false_signal_rate_max: 0.65,
@@ -295,15 +296,47 @@ function evaluateOne(symbol, signalDate, rules, filters, behavioralFilters = {},
   }
 
   const explosiveMinVol = bf.explosive_min_vol_ratio ?? 2.5;
+  const ultraThinVol = bf.explosive_ultra_thin_vol ?? 1.0;
   if (bclass === 'EXPLOSIVE' && vol != null && vol < explosiveMinVol) {
+    const thinWarn = vol >= ultraThinVol;
     conditions.explosive_min_vol = cond(
       'explosive_min_vol',
-      true,
-      vol,
-      `min ${explosiveMinVol}x`,
       false,
+      vol,
+      thinWarn ? `warn < ${explosiveMinVol}x` : `ultra-thin < ${ultraThinVol}x`,
+      thinWarn,
     );
-    failed.push('explosive_min_vol');
+    if (thinWarn) {
+      warnings.push(`explosive vol ${vol}x below lesson band ${explosiveMinVol}x`);
+    }
+  }
+  if (bclass === 'EXPLOSIVE' && vol != null && vol < ultraThinVol) {
+    let priorLosses = 0;
+    if (bf.max_ultra_losses_per_symbol != null) {
+      const d3 = dbReadonly();
+      if (d3) {
+        const lookback = bf.repeat_ultra_loss_lookback_days ?? 120;
+        const cutoff = new Date();
+        cutoff.setDate(cutoff.getDate() - lookback);
+        priorLosses = d3.prepare(`
+          SELECT COUNT(*) AS n FROM recommendation_outcomes
+          WHERE symbol=? AND conviction_tier='ULTRA_CONVICTION'
+            AND outcome_filled>=5 AND hit_t5=0
+            AND signal_date>=? AND signal_date<?
+        `).get(symbol, cutoff.toISOString().slice(0, 10), signalDate)?.n ?? 0;
+        d3.close();
+      }
+    }
+    if (priorLosses >= (bf.max_ultra_losses_per_symbol ?? 1)) {
+      conditions.explosive_ultra_thin_repeat = cond(
+        'explosive_ultra_thin_repeat',
+        true,
+        vol,
+        `<${ultraThinVol}x + prior ULTRA loss`,
+        false,
+      );
+      failed.push('explosive_ultra_thin_repeat');
+    }
   }
 
   const chaseMax = bf.max_vol_ratio_chase ?? 3.5;
@@ -318,9 +351,13 @@ function evaluateOne(symbol, signalDate, rules, filters, behavioralFilters = {},
     failed.push('volume_chase');
   }
 
-  if (bf.require_indicator_cache !== false && !ctx.ind) {
+  const liveDelivery = !counterfactual && !opts.historical;
+  if (bf.require_indicator_cache !== false && !ctx.ind && liveDelivery) {
     conditions.indicator_cache = cond('indicator_cache', true, 'missing', 'present', false);
     failed.push('indicator_cache');
+  } else if (bf.require_indicator_cache !== false && !ctx.ind && !liveDelivery) {
+    conditions.indicator_cache = cond('indicator_cache', false, 'missing', 'historical skip', true);
+    warnings.push('indicators_cache missing for historical replay — live delivery still requires cache');
   }
 
   if (bf.max_ultra_losses_per_symbol != null) {
