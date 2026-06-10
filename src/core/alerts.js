@@ -4,6 +4,7 @@
 import { evaluate, evaluateAsync, getClient } from '../connection.js';
 
 export async function create({ condition, price, message }) {
+  const priceJson = JSON.stringify(price);
   const opened = await evaluate(`
     (function() {
       var btn = document.querySelector('[aria-label="Create Alert"]')
@@ -28,7 +29,7 @@ export async function create({ condition, price, message }) {
         var label = inputs[i].closest('[class*="row"]')?.querySelector('[class*="label"]');
         if (label && /value|price/i.test(label.textContent)) {
           var nativeSet = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-          nativeSet.call(inputs[i], '${price}');
+          nativeSet.call(inputs[i], ${priceJson});
           inputs[i].dispatchEvent(new Event('input', { bubbles: true }));
           inputs[i].dispatchEvent(new Event('change', { bubbles: true }));
           return true;
@@ -36,7 +37,7 @@ export async function create({ condition, price, message }) {
       }
       if (inputs.length > 0) {
         var nativeSet = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-        nativeSet.call(inputs[0], '${price}');
+        nativeSet.call(inputs[0], ${priceJson});
         inputs[0].dispatchEvent(new Event('input', { bubbles: true }));
         return true;
       }

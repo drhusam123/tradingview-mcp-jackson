@@ -113,11 +113,13 @@ async function main() {
         if (bars.length >= 21) ind.momentum20d = +((lastAdj / adjCloses[adjCloses.length-21] - 1) * 100).toFixed(2);
       }
 
-      // vol_ratio_20
+      // vol_ratio_20 — median بدل mean (مقاوم لتضخيم أيام الضخّ السابقة)
       const volArr = bars.slice(-21, -1).map(b => b.volume).filter(v => v > 0);
       if (volArr.length > 0) {
-        const avgVol20 = volArr.reduce((a,b) => a+b, 0) / volArr.length;
-        ind.volumeRatio20 = avgVol20 > 0 ? +(lastBar.volume / avgVol20).toFixed(2) : null;
+        const sorted = [...volArr].sort((a, b) => a - b);
+        const mid = Math.floor(sorted.length / 2);
+        const medVol20 = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+        ind.volumeRatio20 = medVol20 > 0 ? +(lastBar.volume / medVol20).toFixed(2) : null;
       }
 
       // ATH proximity (last BARS_LIMIT bars)

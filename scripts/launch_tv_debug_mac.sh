@@ -1,68 +1,52 @@
 #!/bin/bash
-# Launch TradingView Desktop on macOS with Chrome DevTools Protocol enabled
+# Launch TradingView with CDP on macOS
 # Usage: ./scripts/launch_tv_debug_mac.sh [port]
+#
+# NOTE: Newer TradingView Desktop rejects --remote-debugging-port on the binary
+# directly ("bad option"). Use open -a --args, or Chrome fallback via TV_CDP_BROWSER=chrome.
 
 PORT="${1:-9222}"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-# Auto-detect TradingView install location
-APP=""
-LOCATIONS=(
-  "/Applications/TradingView.app/Contents/MacOS/TradingView"
-  "$HOME/Applications/TradingView.app/Contents/MacOS/TradingView"
-)
+echo "═══ TradingView CDP Launch (macOS) ═══"
 
-for loc in "${LOCATIONS[@]}"; do
-  if [ -f "$loc" ]; then
-    APP="$loc"
-    break
-  fi
-done
-
-# Fallback: search with mdfind (Spotlight)
-if [ -z "$APP" ]; then
-  APP=$(mdfind "kMDItemCFBundleIdentifier == 'com.niceincontact.TradingView'" 2>/dev/null | head -1)
-  if [ -n "$APP" ]; then
-    APP="$APP/Contents/MacOS/TradingView"
-  fi
-fi
-
-# Fallback: find any TradingView.app
-if [ -z "$APP" ] || [ ! -f "$APP" ]; then
-  APP=$(find /Applications "$HOME/Applications" -name "TradingView.app" -maxdepth 2 2>/dev/null | head -1)
-  if [ -n "$APP" ]; then
-    APP="$APP/Contents/MacOS/TradingView"
-  fi
-fi
-
-if [ -z "$APP" ] || [ ! -f "$APP" ]; then
-  echo "Error: TradingView not found."
-  echo "Checked: /Applications/TradingView.app, ~/Applications/TradingView.app"
-  echo ""
-  echo "If installed elsewhere, run manually:"
-  echo "  /path/to/TradingView.app/Contents/MacOS/TradingView --remote-debugging-port=$PORT"
-  exit 1
-fi
-
-# Kill any existing TradingView
-pkill -f "TradingView" 2>/dev/null
-sleep 1
-
-echo "Found TradingView at: $APP"
-echo "Launching with --remote-debugging-port=$PORT ..."
-"$APP" --remote-debugging-port=$PORT &
-TV_PID=$!
-echo "PID: $TV_PID"
-
-# Wait for CDP to be ready
-echo "Waiting for CDP..."
-for i in $(seq 1 15); do
-  if curl -s "http://localhost:$PORT/json/version" > /dev/null 2>&1; then
-    echo "CDP ready at http://localhost:$PORT"
-    curl -s "http://localhost:$PORT/json/version" | python3 -m json.tool 2>/dev/null || curl -s "http://localhost:$PORT/json/version"
-    exit 0
-  fi
+# Method 1: open -a --args (recommended for Desktop on macOS)
+if [ -d "/Applications/TradingView.app" ]; then
+  echo "Trying Desktop via open -a --args (port $PORT)..."
+  pkill -f "TradingView.app/Contents/MacOS/TradingView$" 2>/dev/null
   sleep 1
-done
+  open -a "/Applications/TradingView.app" --args "--remote-debugging-port=$PORT"
+  for i in $(seq 1 20); do
+    if curl -sf "http://localhost:$PORT/json/version" > /dev/null 2>&1; then
+      echo "✅ Desktop CDP ready at http://localhost:$PORT"
+      curl -s "http://localhost:$PORT/json/version" | python3 -m json.tool 2>/dev/null
+      exit 0
+    fi
+    sleep 1
+  done
+  echo "⚠️  Desktop CDP not responding (TV may reject debug port on this version)"
+fi
 
-echo "Warning: CDP not responding after 15s. TradingView may still be loading."
-echo "Check manually: curl http://localhost:$PORT/json/version"
+# Method 2: Chrome fallback (works on all macOS versions)
+echo ""
+echo "Falling back to Chrome CDP (TV_CDP_BROWSER=chrome)..."
+export TV_CDP_BROWSER=chrome
+export TV_CDP_PORT="$PORT"
+node -e "
+import { launch, healthCheck } from './src/core/health.js';
+const r = await launch({ port: $PORT, browser: 'chrome', kill_existing: false });
+console.log(JSON.stringify(r, null, 2));
+if (r.cdp_ready !== false) {
+  const h = await healthCheck();
+  console.log('Chart:', h.chart_symbol, '@', h.chart_resolution);
+}
+" 2>&1
+
+if curl -sf "http://localhost:$PORT/json/version" > /dev/null 2>&1; then
+  echo "✅ Chrome CDP ready at http://localhost:$PORT"
+  exit 0
+fi
+
+echo "❌ CDP failed. Install Google Chrome or launch TradingView manually."
+echo "   npm run tv:launch"
+exit 1

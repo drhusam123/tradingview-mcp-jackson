@@ -3,6 +3,7 @@
  */
 import { evaluate, evaluateAsync, getClient, getChartApi, getChartCollection } from '../connection.js';
 import { waitForChartReady } from '../wait.js';
+import { getQuote } from './data.js';
 import { writeFileSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -23,12 +24,14 @@ export async function batchRun({ symbols, timeframes, action, delay_ms, ohlcv_co
     for (const tf of tfs) {
       const combo = { symbol, timeframe: tf };
       try {
-        if (colPath) await evaluate(`${colPath}.setSymbol('${symbol}')`);
-        else if (apiPath) await evaluate(`${apiPath}.setSymbol('${symbol}')`);
+        const symbolJson = JSON.stringify(symbol);
+        if (colPath) await evaluate(`${colPath}.setSymbol(${symbolJson})`);
+        else if (apiPath) await evaluate(`${apiPath}.setSymbol(${symbolJson})`);
 
         if (tf) {
-          if (colPath) await evaluate(`${colPath}.setResolution('${tf}')`);
-          else if (apiPath) await evaluate(`${apiPath}.setResolution('${tf}')`);
+          const timeframeJson = JSON.stringify(tf);
+          if (colPath) await evaluate(`${colPath}.setResolution(${timeframeJson})`);
+          else if (apiPath) await evaluate(`${apiPath}.setResolution(${timeframeJson})`);
         }
 
         await waitForChartReady(symbol);
@@ -44,6 +47,8 @@ export async function batchRun({ symbols, timeframes, action, delay_ms, ohlcv_co
           const filePath = join(SCREENSHOT_DIR, fname);
           writeFileSync(filePath, Buffer.from(data, 'base64'));
           actionResult = { file_path: filePath };
+        } else if (action === 'quote_get') {
+          actionResult = await getQuote({});
         } else if (action === 'get_ohlcv' && apiPath) {
           const limit = Math.min(ohlcv_count || 100, 500);
           actionResult = await evaluateAsync(`

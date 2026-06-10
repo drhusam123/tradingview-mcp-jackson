@@ -5,6 +5,9 @@ import { evaluate, evaluateAsync } from '../connection.js';
 import { waitForChartReady } from '../wait.js';
 
 const CHART_API = 'window.TradingViewApi._activeChartWidgetWV.value()';
+const READY_TIMEOUT_MS = process.env.TV_CHART_READY_TIMEOUT_MS
+  ? Number(process.env.TV_CHART_READY_TIMEOUT_MS)
+  : undefined;
 
 export async function getState() {
   const state = await evaluate(`
@@ -29,27 +32,29 @@ export async function getState() {
 }
 
 export async function setSymbol({ symbol }) {
+  const symbolJson = JSON.stringify(symbol);
   await evaluateAsync(`
     (function() {
       var chart = ${CHART_API};
       return new Promise(function(resolve) {
-        chart.setSymbol('${symbol.replace(/'/g, "\\'")}', {});
+        chart.setSymbol(${symbolJson}, {});
         setTimeout(resolve, 500);
       });
     })()
   `);
-  const ready = await waitForChartReady(symbol);
+  const ready = await waitForChartReady(symbol, null, READY_TIMEOUT_MS);
   return { success: true, symbol, chart_ready: ready };
 }
 
 export async function setTimeframe({ timeframe }) {
+  const timeframeJson = JSON.stringify(timeframe);
   await evaluate(`
     (function() {
       var chart = ${CHART_API};
-      chart.setResolution('${timeframe.replace(/'/g, "\\'")}', {});
+      chart.setResolution(${timeframeJson}, {});
     })()
   `);
-  const ready = await waitForChartReady(null, timeframe);
+  const ready = await waitForChartReady(null, timeframe, READY_TIMEOUT_MS);
   return { success: true, timeframe, chart_ready: ready };
 }
 
@@ -77,11 +82,12 @@ export async function manageIndicator({ action, indicator, entity_id, inputs: in
 
   if (action === 'add') {
     const inputArr = inputs ? Object.entries(inputs).map(([k, v]) => ({ id: k, value: v })) : [];
+    const indicatorJson = JSON.stringify(indicator);
     const before = await evaluate(`${CHART_API}.getAllStudies().map(function(s) { return s.id; })`);
     await evaluate(`
       (function() {
         var chart = ${CHART_API};
-        chart.createStudy('${indicator.replace(/'/g, "\\'")}', false, false, ${JSON.stringify(inputArr)});
+        chart.createStudy(${indicatorJson}, false, false, ${JSON.stringify(inputArr)});
       })()
     `);
     await new Promise(r => setTimeout(r, 1500));
@@ -90,10 +96,11 @@ export async function manageIndicator({ action, indicator, entity_id, inputs: in
     return { success: newIds.length > 0, action: 'add', indicator, entity_id: newIds[0] || null, new_study_count: newIds.length };
   } else if (action === 'remove') {
     if (!entity_id) throw new Error('entity_id required for remove action. Use chart_get_state to find study IDs.');
+    const entityIdJson = JSON.stringify(entity_id);
     await evaluate(`
       (function() {
         var chart = ${CHART_API};
-        chart.removeEntity('${entity_id.replace(/'/g, "\\'")}');
+        chart.removeEntity(${entityIdJson});
       })()
     `);
     return { success: true, action: 'remove', entity_id };

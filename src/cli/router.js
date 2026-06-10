@@ -130,7 +130,13 @@ export async function run(argv) {
 
 async function execute(handler, values, positionals) {
   try {
-    const result = await handler(values, positionals);
+    const timeoutMs = Number(process.env.TV_CLI_TIMEOUT_MS || 20000);
+    const result = await Promise.race([
+      handler(values, positionals),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error(`CLI command timeout after ${timeoutMs}ms`)), timeoutMs),
+      ),
+    ]);
     console.log(JSON.stringify(result, null, 2));
     process.exit(0);
   } catch (err) {

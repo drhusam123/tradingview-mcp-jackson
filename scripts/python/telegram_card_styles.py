@@ -11,10 +11,11 @@ Color = Tuple[int, int, int]
 RGBA  = Tuple[int, int, int, int]
 
 # ─── Card dimensions ───────────────────────────────────────────────────────────
-CARD_W  = 900   # px
-CARD_H  = 560   # px  (stock card)
+CARD_W        = 900  # px
+CARD_H        = 560  # px  (stock card)
 MARKET_CARD_H = 420  # px  (market status card)
 WATCH_CARD_H  = 520  # px  (watchlist card)
+RADAR_CARD_H  = 500  # px  (explosion radar card — top ML picks by ensemble_prob)
 
 # ─── Corner radius ─────────────────────────────────────────────────────────────
 RADIUS = 22

@@ -159,10 +159,54 @@ export async function uiState() {
   return { success: true, ...state };
 }
 
-export async function launch({ port, kill_existing } = {}) {
+export async function launch({ port, kill_existing, browser, url } = {}) {
   const cdpPort = port || 9222;
   const killFirst = kill_existing !== false;
+  const browserPref = String(browser || process.env.TV_CDP_BROWSER || 'auto').toLowerCase();
+  const openUrl = url || process.env.TV_CDP_URL || 'https://www.tradingview.com/chart/?symbol=EGX_DLY:COMI';
   const platform = process.platform;
+
+  if (browserPref === 'chrome' || browserPref === 'web') {
+    return launchChrome({ cdpPort, killFirst, openUrl, platform });
+  }
+
+  // macOS: TradingView Desktop rejects direct binary --remote-debugging-port; use open -a --args
+  if (platform === 'darwin') {
+    const { ensureTradingView } = await import('../../scripts/lib/ensure_tv.mjs');
+    if (killFirst) {
+      try {
+        execSync('pkill -f "TradingView.app/Contents/MacOS/TradingView$"', { timeout: 5000, stdio: 'ignore' });
+        await new Promise(r => setTimeout(r, 2000));
+      } catch { /* not running */ }
+    }
+    const tvBinary = '/Applications/TradingView.app/Contents/MacOS/TradingView';
+    await ensureTradingView({ log: () => {}, port: cdpPort, restart: false, browser: browserPref === 'desktop' ? 'desktop' : 'auto' });
+    for (let i = 0; i < 15; i++) {
+      await new Promise(r => setTimeout(r, 1000));
+      try {
+        const http = await import('http');
+        const ready = await new Promise((resolve) => {
+          http.get(`http://localhost:${cdpPort}/json/version`, (res) => {
+            let data = '';
+            res.on('data', (chunk) => data += chunk);
+            res.on('end', () => resolve(data));
+          }).on('error', () => resolve(null));
+        });
+        if (ready) {
+          const info = JSON.parse(ready);
+          return {
+            success: true, platform, binary: tvBinary, method: 'open -a --args',
+            cdp_port: cdpPort, cdp_url: `http://localhost:${cdpPort}`,
+            browser: info.Browser, user_agent: info['User-Agent'],
+          };
+        }
+      } catch { /* retry */ }
+    }
+    return {
+      success: true, platform, binary: tvBinary, method: 'open -a --args', cdp_port: cdpPort, cdp_ready: false,
+      warning: 'TradingView launched but CDP not responding yet. It may still be loading. Try tv_health_check in a few seconds.',
+    };
+  }
 
   const pathMap = {
     darwin: [
@@ -247,5 +291,96 @@ export async function launch({ port, kill_existing } = {}) {
   return {
     success: true, platform, binary: tvPath, pid: child.pid, cdp_port: cdpPort, cdp_ready: false,
     warning: 'TradingView launched but CDP not responding yet. It may still be loading. Try tv_health_check in a few seconds.',
+  };
+}
+
+async function launchChrome({ cdpPort, killFirst, openUrl, platform }) {
+  const profileDir = `${process.env.HOME}/.tv-cdp-profile`;
+  const pathMap = {
+    darwin: [
+      '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+      `${process.env.HOME}/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`,
+      '/Applications/Google Chrome Canary.app/Contents/MacOS/Google Chrome Canary',
+    ],
+    win32: [
+      `${process.env.PROGRAMFILES}\\Google\\Chrome\\Application\\chrome.exe`,
+      `${process.env['PROGRAMFILES(X86)']}\\Google\\Chrome\\Application\\chrome.exe`,
+      `${process.env.LOCALAPPDATA}\\Google\\Chrome\\Application\\chrome.exe`,
+    ],
+    linux: ['/usr/bin/google-chrome', '/usr/bin/chromium-browser', '/usr/bin/chromium'],
+  };
+
+  let chromePath = null;
+  const candidates = pathMap[platform] || pathMap.linux;
+  for (const p of candidates) {
+    if (p && existsSync(p)) { chromePath = p; break; }
+  }
+  if (!chromePath) {
+    try {
+      const cmd = platform === 'win32' ? 'where chrome' : 'which google-chrome || which chromium || which chromium-browser';
+      chromePath = execSync(cmd, { timeout: 3000 }).toString().trim().split('\n')[0];
+      if (chromePath && !existsSync(chromePath)) chromePath = null;
+    } catch {}
+  }
+  if (!chromePath) {
+    throw new Error('Google Chrome/Chromium not found. Install Chrome or set TV_CDP_BROWSER=desktop.');
+  }
+
+  if (killFirst) {
+    try {
+      if (platform === 'win32') execSync('taskkill /F /IM chrome.exe', { timeout: 5000 });
+      else execSync('pkill -f \"Google Chrome.*remote-debugging-port\"', { timeout: 5000 });
+      await new Promise(r => setTimeout(r, 1200));
+    } catch {}
+  }
+
+  const args = [
+    `--remote-debugging-port=${cdpPort}`,
+    `--user-data-dir=${profileDir}`,
+    '--no-first-run',
+    '--no-default-browser-check',
+    openUrl,
+  ];
+  const child = spawn(chromePath, args, { detached: true, stdio: 'ignore' });
+  child.unref();
+
+  for (let i = 0; i < 20; i++) {
+    await new Promise(r => setTimeout(r, 1000));
+    try {
+      const http = await import('http');
+      const ready = await new Promise((resolve) => {
+        http.get(`http://localhost:${cdpPort}/json/version`, (res) => {
+          let data = '';
+          res.on('data', (chunk) => data += chunk);
+          res.on('end', () => resolve(data));
+        }).on('error', () => resolve(null));
+      });
+      if (ready) {
+        const info = JSON.parse(ready);
+        return {
+          success: true,
+          platform,
+          binary: chromePath,
+          pid: child.pid,
+          cdp_port: cdpPort,
+          cdp_url: `http://localhost:${cdpPort}`,
+          browser: info.Browser,
+          user_agent: info['User-Agent'],
+          target_url: openUrl,
+          mode: 'chrome_web',
+        };
+      }
+    } catch {}
+  }
+
+  return {
+    success: true,
+    platform,
+    binary: chromePath,
+    pid: child.pid,
+    cdp_port: cdpPort,
+    cdp_ready: false,
+    mode: 'chrome_web',
+    warning: 'Chrome launched but CDP not responding yet.',
   };
 }

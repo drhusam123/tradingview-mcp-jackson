@@ -6,6 +6,7 @@ UES = 0.25×ExplosionML + 0.20×Breadth + 0.20×Technical + 0.15×CrossMarket + 
 Conviction tiers: HIGH(≥70+bull) / MEDIUM(55-69) / LOW(40-54) / REJECT(<40)
 """
 import os, sys, json, sqlite3, datetime, math
+from statistics import median
 
 DB_PATH = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'egx_trading.db')
 
@@ -13,6 +14,18 @@ def get_db():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
+
+def latest_ohlcv_date(conn):
+    """Use market data date as the default signal date, not wall-clock date."""
+    try:
+        row = conn.execute(
+            "SELECT MAX(date(bar_time,'unixepoch')) AS d FROM ohlcv_history_execution"
+        ).fetchone()
+        if row and row['d']:
+            return row['d']
+    except Exception:
+        pass
+    return datetime.date.today().strftime('%Y-%m-%d')
 
 def ensure_tables(conn):
     conn.executescript("""
@@ -98,7 +111,168 @@ def ensure_tables(conn):
         created_at TEXT DEFAULT (datetime('now')),
         UNIQUE(signal_date, symbol)
     );
+    CREATE TABLE IF NOT EXISTS final_signals (
+        id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+        trade_date           TEXT NOT NULL,
+        symbol               TEXT NOT NULL,
+        setup_type           TEXT,
+        score                REAL,
+        entry_price          REAL,
+        entry_high           REAL,
+        stop_loss            REAL,
+        t1_target            REAL,
+        t2_target            REAL,
+        r_ratio              REAL,
+        source_rules         REAL,
+        source_ues           REAL,
+        source_pine          REAL,
+        source_ml            REAL,
+        regime               TEXT,
+        confidence           REAL,
+        actionable           INTEGER DEFAULT 0,
+        veto_reason          TEXT,
+        source_breakdown     TEXT,
+        created_at           TEXT DEFAULT (datetime('now')),
+        updated_at           TEXT DEFAULT (datetime('now')),
+        UNIQUE(trade_date, symbol)
+    );
+    CREATE INDEX IF NOT EXISTS idx_final_date_actionable
+        ON final_signals(trade_date, actionable, score DESC);
+    CREATE INDEX IF NOT EXISTS idx_final_symbol_date
+        ON final_signals(symbol, trade_date DESC);
+    CREATE TABLE IF NOT EXISTS gate_audit_snapshots (
+        signal_date           TEXT NOT NULL,
+        symbol                TEXT NOT NULL,
+        ues                   REAL,
+        ml_score              REAL,
+        meta_prob             REAL,
+        survival_p_tp         REAL,
+        survival_p_sl         REAL,
+        scan_score            REAL,
+        quant_matches         INTEGER,
+        ad_ratio              REAL,
+        vol_ratio             REAL,
+        rsi14                 REAL,
+        close_position        REAL,
+        spectral_regime       TEXT,
+        behavioral_class      TEXT,
+        breadth_signal        TEXT,
+        regime                TEXT,
+        conviction            TEXT,
+        anti_law              INTEGER DEFAULT 0,
+        quality_gate_passed   INTEGER DEFAULT 0,
+        quality_gate_failures TEXT,
+        final_edge_passed     INTEGER,
+        final_edge_failure    TEXT,
+        hard_gate_failure     TEXT,
+        forecast_veto         TEXT,
+        actionable            INTEGER DEFAULT 0,
+        veto_reason           TEXT,
+        first_blocking_gate   TEXT,
+        exclusive_blockers    TEXT,
+        all_blocking_gates    TEXT,
+        entry_price           REAL,
+        stop_loss             REAL,
+        t1_target             REAL,
+        ret_1d                REAL,
+        ret_3d                REAL,
+        ret_5d                REAL,
+        ret_10d               REAL,
+        ret_20d               REAL,
+        mfe_5d                REAL,
+        mae_5d                REAL,
+        mfe_10d               REAL,
+        mae_10d               REAL,
+        tp_before_sl          INTEGER,
+        winner_5d             INTEGER,
+        loser_5d              INTEGER,
+        outcomes_filled       INTEGER DEFAULT 0,
+        shadow_risk_bucket              TEXT,
+        shadow_risk_actionability       TEXT,
+        shadow_risk_valid_for_rr        INTEGER,
+        shadow_effective_entry          REAL,
+        shadow_effective_entry_model    TEXT,
+        shadow_computed_rr              REAL,
+        shadow_risk_warning             TEXT,
+        shadow_final_edge_reason        TEXT,
+        risk_level_source               TEXT,
+        risk_level_scan_date            TEXT,
+        risk_level_age_days             INTEGER,
+        risk_entry                      REAL,
+        risk_target                     REAL,
+        risk_stop                       REAL,
+        risk_close                      REAL,
+        old_final_edge_reason           TEXT,
+        old_all_blocking_gates          TEXT,
+        old_actionable                  INTEGER,
+        created_at            TEXT DEFAULT (datetime('now')),
+        PRIMARY KEY (signal_date, symbol)
+    );
+    CREATE INDEX IF NOT EXISTS idx_gate_audit_date
+        ON gate_audit_snapshots(signal_date, actionable);
     """)
+    for col, defn in [
+        ('shadow_risk_bucket', 'TEXT'),
+        ('shadow_risk_actionability', 'TEXT'),
+        ('shadow_risk_valid_for_rr', 'INTEGER'),
+        ('shadow_effective_entry', 'REAL'),
+        ('shadow_effective_entry_model', 'TEXT'),
+        ('shadow_computed_rr', 'REAL'),
+        ('shadow_risk_warning', 'TEXT'),
+        ('shadow_final_edge_reason', 'TEXT'),
+        ('risk_level_source', 'TEXT'),
+        ('risk_level_scan_date', 'TEXT'),
+        ('risk_level_age_days', 'INTEGER'),
+        ('risk_entry', 'REAL'),
+        ('risk_target', 'REAL'),
+        ('risk_stop', 'REAL'),
+        ('risk_close', 'REAL'),
+        ('old_final_edge_reason', 'TEXT'),
+        ('old_all_blocking_gates', 'TEXT'),
+        ('old_actionable', 'INTEGER'),
+        ('shadow_forecast_old_veto', 'TEXT'),
+        ('shadow_forecast_policy', 'TEXT'),
+        ('shadow_forecast_reason', 'TEXT'),
+        ('shadow_forecast_would_reject_new', 'INTEGER'),
+        ('shadow_forecast_weakness_count', 'INTEGER'),
+        ('shadow_forecast_structural_block', 'INTEGER'),
+        ('shadow_forecast_adjusted_conviction', 'TEXT'),
+        ('shadow_forecast_position_mult', 'REAL'),
+        ('shadow_low_rule_scan_class', 'TEXT'),
+        ('shadow_low_rule_policy', 'TEXT'),
+        ('shadow_low_rule_exception', 'INTEGER'),
+        ('shadow_low_rule_exception_reason', 'TEXT'),
+        ('shadow_low_rule_would_fail_old', 'INTEGER'),
+        ('shadow_low_rule_would_fail_new', 'INTEGER'),
+        ('shadow_neg_breadth_policy', 'TEXT'),
+        ('shadow_neg_breadth_reason', 'TEXT'),
+        ('shadow_neg_breadth_would_fail_old', 'INTEGER'),
+        ('shadow_neg_breadth_would_fail_new', 'INTEGER'),
+        ('shadow_neg_breadth_adjusted_conviction', 'TEXT'),
+        ('shadow_neg_breadth_position_mult', 'REAL'),
+        ('shadow_anti_law_primary_rule', 'TEXT'),
+        ('shadow_anti_law_sub_rules', 'TEXT'),
+        ('shadow_anti_law_policy', 'TEXT'),
+        ('shadow_anti_law_reason', 'TEXT'),
+        ('shadow_anti_law_would_block_old', 'INTEGER'),
+        ('shadow_anti_law_would_block_new', 'INTEGER'),
+        ('shadow_anti_law_adjusted_conviction', 'TEXT'),
+        ('shadow_anti_law_position_mult', 'REAL'),
+        ('shadow_stale_watch_path', 'TEXT'),
+        ('shadow_stale_pullback_triggered', 'INTEGER'),
+        ('shadow_stale_momentum_triggered', 'INTEGER'),
+        ('shadow_stale_momentum_day', 'INTEGER'),
+        ('shadow_stale_momentum_entry', 'REAL'),
+        ('shadow_stale_momentum_stop', 'REAL'),
+        ('shadow_stale_momentum_rr', 'REAL'),
+        ('shadow_stale_watch_position_mult', 'REAL'),
+        ('shadow_stale_watch_reason', 'TEXT'),
+        ('shadow_stale_would_watch_queue', 'INTEGER'),
+    ]:
+        try:
+            conn.execute(f'ALTER TABLE gate_audit_snapshots ADD COLUMN {col} {defn}')
+        except Exception:
+            pass
     # Ph 32 — Recommendation Outcome Tracker
     conn.executescript("""
     CREATE TABLE IF NOT EXISTS recommendation_outcomes (
@@ -161,33 +335,465 @@ def ensure_tables(conn):
             pass
     conn.commit()
 
+def write_final_signal(conn, *, date, symbol, setup_type, score, entry_price,
+                       entry_high, stop_loss, t1_target, t2_target, r_ratio,
+                       scan_score, pine_score, ml_score, regime, actionable,
+                       veto_reason, source_breakdown):
+    """
+    Single Source of Truth for client-facing output.
+    unified_signals keeps research history; final_signals is the product gate.
+    """
+    confidence = max(0.0, min(1.0, safe_float(score) / 100.0))
+    try:
+        source_json = json.dumps(source_breakdown or {}, ensure_ascii=False, sort_keys=True)
+    except Exception:
+        source_json = '{}'
+
+    conn.execute("""
+        INSERT OR REPLACE INTO final_signals
+        (trade_date, symbol, setup_type, score, entry_price, entry_high, stop_loss,
+         t1_target, t2_target, r_ratio, source_rules, source_ues, source_pine,
+         source_ml, regime, confidence, actionable, veto_reason, source_breakdown,
+         updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
+    """, (
+        date, symbol, setup_type, score, entry_price, entry_high, stop_loss,
+        t1_target, t2_target, r_ratio, scan_score, score, pine_score,
+        ml_score, regime, confidence, 1 if actionable else 0,
+        veto_reason, source_json
+    ))
+
 def safe_float(v, default=0.0):
     try:
         if v is None: return default
         return float(v)
     except: return default
 
+QUALITY_SYMBOLS_V3 = {
+    'MOSC', 'UTOP', 'TORA', 'ADRI', 'AMES', 'KWIN', 'SNFI',
+    'AALR', 'HBCO', 'AIFI', 'WKOL', 'IBCT',
+}
+
+def _setup_text(setup_type):
+    return (setup_type or '').strip().lower()
+
+def _setup_has(setup_type, *needles):
+    text = _setup_text(setup_type)
+    return any(n.lower() in text for n in needles)
+
+def _get_latest_bar_context(conn, symbol, date):
+    """
+    Compact OHLCV context for final product gates.
+    Uses 300 bars for ATH checks per TRADING_LESSONS.md.
+    """
+    ctx = {
+        'has_price_context': False,
+        'bars_300': 0,
+        'vol_ratio_20': None,
+        'close_position': None,
+        'range_pct': None,
+        'momentum_3d': None,
+        'recent_low_8': None,
+        'price_vs_ath_pct': None,
+        'is_near_ath_300': False,
+        'prior_peak_vol_ratio_10': None,
+        'volume_retention_10': None,
+    }
+    try:
+        rows = conn.execute("""
+            SELECT date(bar_time,'unixepoch') AS d, open, high, low, close, volume
+            FROM ohlcv_history_execution
+            WHERE symbol=? AND date(bar_time,'unixepoch') <= ?
+            ORDER BY bar_time DESC
+            LIMIT 320
+        """, (symbol, date)).fetchall()
+    except Exception:
+        return ctx
+
+    if not rows:
+        return ctx
+
+    latest = rows[0]
+    close = safe_float(latest['close'], None)
+    high = safe_float(latest['high'], None)
+    low = safe_float(latest['low'], None)
+    volume = safe_float(latest['volume'], None)
+    if close is None or high is None or low is None:
+        return ctx
+
+    prior20 = [safe_float(r['volume'], 0.0) for r in rows[1:21] if safe_float(r['volume'], 0.0) > 0]
+    # median بدل mean: متوسط الحجم الحسابي يتضخم بأيام الضخّ (KABO 2026-06-09:
+    # mean=9.5M بسبب ضخّ مايو بينما median=2.4M) فيُظهر نسبة حجم أقل من الواقع
+    avg20 = median(prior20) if prior20 else None
+    vol_ratio = (volume / avg20) if (volume is not None and avg20 and avg20 > 0) else None
+    candle_range = max(high - low, 0.0)
+    close_position = ((close - low) / candle_range) if candle_range > 0 else 0.5
+
+    highs_300 = [safe_float(r['high'], None) for r in rows[:300]]
+    highs_300 = [v for v in highs_300 if v is not None and v > 0]
+    ath_300 = max(highs_300) if highs_300 else None
+    bars_300 = len(highs_300)
+    price_vs_ath_pct = ((ath_300 - close) / ath_300 * 100.0) if ath_300 else None
+
+    lows_8 = [safe_float(r['low'], None) for r in rows[:8]]
+    lows_8 = [v for v in lows_8 if v is not None and v > 0]
+    prior_peak_vol = max((safe_float(r['volume'], 0.0) for r in rows[1:11]), default=0.0)
+    prior_peak_vol_ratio = (prior_peak_vol / avg20) if (avg20 and prior_peak_vol > 0) else None
+    volume_retention = (volume / prior_peak_vol) if (volume is not None and prior_peak_vol > 0) else None
+    momentum_3d = None
+    if len(rows) >= 4:
+        close_3d = safe_float(rows[3]['close'], None)
+        if close_3d and close_3d > 0:
+            momentum_3d = (close / close_3d - 1.0) * 100.0
+
+    ctx.update({
+        'has_price_context': True,
+        'open': safe_float(latest['open'], None),
+        'high': high,
+        'low': low,
+        'close': close,
+        'volume': volume,
+        'avg_volume_20': avg20,
+        'vol_ratio_20': vol_ratio,
+        'close_position': close_position,
+        'range_pct': (candle_range / close * 100.0) if close > 0 else None,
+        'momentum_3d': momentum_3d,
+        'recent_low_8': min(lows_8) if lows_8 else None,
+        'bars_300': bars_300,
+        'ath_300': ath_300,
+        'price_vs_ath_pct': price_vs_ath_pct,
+        'is_near_ath_300': bool(bars_300 >= 250 and price_vs_ath_pct is not None and price_vs_ath_pct <= 3.0),
+        'prior_peak_vol_ratio_10': prior_peak_vol_ratio,
+        'volume_retention_10': volume_retention,
+    })
+    return ctx
+
+def _apply_final_edge_gates(symbol, setup_type, scan_score, entry_price, entry_high,
+                            stop_loss, t1_target, r_ratio, used_fallback_risk,
+                            scan_volume_ratio, price_ctx, quant_rule=None,
+                            quant_matches=0, quant_score=50.0,
+                            volume_ratio_min=2.5):
+    """
+    Final client-facing gate from TRADING_LESSONS.md.
+    It is intentionally stricter than research/unified_signals.
+
+    volume_ratio_min: ML-Advanced #4 — Thompson-sampled from gate_shadow_book
+    outcomes (bounded [2.2, 3.0] upstream); default 2.5 per TRADING_LESSONS.
+    """
+    vmin = max(2.2, min(3.0, safe_float(volume_ratio_min, 2.5)))
+    setup = _setup_text(setup_type)
+    if not setup and quant_rule and quant_matches >= 8 and quant_score >= 65.0:
+        setup = _setup_text(quant_rule)
+        metrics = dict(price_ctx or {})
+        metrics['setup_proxy'] = 'quant_discovery'
+    else:
+        metrics = dict(price_ctx or {})
+    metrics['scan_volume_ratio'] = scan_volume_ratio
+    metrics['quality_symbol_v3'] = symbol in QUALITY_SYMBOLS_V3
+
+    if not setup:
+        return False, 'FINAL_EDGE:NO_RULE_SETUP', metrics
+    if safe_float(scan_score, 0.0) < 55.0:
+        # Phase 2.8D — quant-path exception (scan missing, not weak real)
+        _low_rule_exempt = False
+        _low_ctx = (price_ctx or {}).get('_low_rule_ctx') or {}
+        _risk_val = (price_ctx or {}).get('_risk_validation') or {}
+        try:
+            from low_rule_score_policy import evaluate_low_rule_score_policy
+            _lr_pol = evaluate_low_rule_score_policy(
+                scan_score=scan_score,
+                quant_matches=quant_matches,
+                quant_rule=quant_rule,
+                setup_type=setup_type,
+                ues=safe_float(_low_ctx.get('ues'), 0.0),
+                ml_score=safe_float(_low_ctx.get('ml_score'), 0.0),
+                risk_bucket=_risk_val.get('bucket'),
+                risk_valid_for_rr=bool(_risk_val.get('valid_for_rr')),
+                risk_actionability=_risk_val.get('actionability'),
+                final_edge_failure=None,
+                hard_gate_failure=None,
+                quality_gate_failures=_low_ctx.get('quality_gate_failures'),
+                anti_law=bool(_low_ctx.get('anti_law')),
+                used_fallback_risk=used_fallback_risk,
+            )
+            _low_rule_exempt = bool(_lr_pol.get('exception_applies'))
+            metrics['scan_score_class'] = _lr_pol.get('scan_score_class')
+            if _low_rule_exempt:
+                metrics['low_rule_exception'] = _lr_pol.get('exception_reason')
+        except Exception:
+            pass
+        if not _low_rule_exempt:
+            return False, 'FINAL_EDGE:LOW_RULE_SCORE', metrics
+    if used_fallback_risk:
+        return False, 'FINAL_EDGE:NO_STRUCTURAL_SL', metrics
+    if not (entry_price and entry_high and stop_loss and t1_target and r_ratio):
+        return False, 'FINAL_EDGE:MISSING_RISK_LEVELS', metrics
+    if not (stop_loss < entry_price < t1_target and entry_high >= entry_price):
+        return False, 'FINAL_EDGE:INVALID_RISK_STRUCTURE', metrics
+
+    # P0 — validate_risk_levels() drives RR (replaces max(entry, close) misdiagnosis)
+    risk_validation = (price_ctx or {}).get('_risk_validation')
+    if risk_validation:
+        metrics['risk_bucket'] = risk_validation.get('bucket')
+        metrics['risk_actionability'] = risk_validation.get('actionability')
+        metrics['effective_entry_model'] = risk_validation.get('effective_entry_model')
+        metrics['risk_warning'] = risk_validation.get('risk_warning')
+        if not risk_validation.get('valid_for_rr'):
+            metrics['effective_entry'] = risk_validation.get('effective_entry')
+            metrics['effective_rr'] = risk_validation.get('rr')
+            reason = risk_validation.get('final_edge_reason') or 'FINAL_EDGE:RISK_VALIDATION_FAILED'
+            return False, reason, metrics
+        effective_entry = safe_float(risk_validation.get('effective_entry'), None)
+        effective_rr = safe_float(risk_validation.get('rr'), None)
+        if not effective_entry or stop_loss >= effective_entry:
+            return False, 'FINAL_EDGE:INVALID_EFFECTIVE_ENTRY', metrics
+        metrics['effective_entry'] = effective_entry
+        metrics['effective_rr'] = effective_rr
+        if effective_rr is None or effective_rr < 1.3:
+            return False, 'FINAL_EDGE:RR_TOO_LOW_AFTER_RECALC', metrics
+    else:
+        effective_entry = max(
+            safe_float(entry_price, 0.0),
+            safe_float((price_ctx or {}).get('close'), 0.0),
+        )
+        if not effective_entry or stop_loss >= effective_entry:
+            return False, 'FINAL_EDGE:INVALID_EFFECTIVE_ENTRY', metrics
+        effective_rr = (t1_target - effective_entry) / max(effective_entry - stop_loss, 0.0001)
+        metrics['effective_entry'] = effective_entry
+        metrics['effective_rr'] = effective_rr
+        if effective_rr < 1.3:
+            return False, 'FINAL_EDGE:RR_TOO_LOW_AFTER_RECALC', metrics
+
+    stop_dist_pct = (entry_price - stop_loss) / entry_price * 100.0 if entry_price else None
+    metrics['stop_dist_pct'] = stop_dist_pct
+    recent_low_8 = safe_float((price_ctx or {}).get('recent_low_8'), None)
+    if stop_dist_pct is None or stop_dist_pct < 1.5 or stop_dist_pct > 10.0:
+        return False, 'FINAL_EDGE:STRUCTURAL_SL_IMPLAUSIBLE', metrics
+    if recent_low_8 and stop_loss > recent_low_8 * 1.01:
+        return False, 'FINAL_EDGE:SL_NOT_BELOW_RECENT_STRUCTURE', metrics
+
+    vol_ratio = safe_float(scan_volume_ratio, None)
+    if vol_ratio is None or vol_ratio <= 0:
+        vol_ratio = safe_float((price_ctx or {}).get('vol_ratio_20'), None)
+    metrics['final_vol_ratio'] = vol_ratio
+
+    is_near_ath_setup = _setup_has(setup, 'ath')
+    is_near_ath_300 = bool((price_ctx or {}).get('is_near_ath_300'))
+    if is_near_ath_setup and safe_float((price_ctx or {}).get('bars_300'), 0) < 250:
+        return False, 'FINAL_EDGE:ATH_HISTORY_LT_300', metrics
+    if (is_near_ath_setup or is_near_ath_300) and (vol_ratio is None or vol_ratio < vmin):
+        return False, 'FINAL_EDGE:NEAR_ATH_LOW_VOLUME', metrics
+
+    is_breakout = _setup_has(setup, 'breakout', 'power')
+    is_retest = _setup_has(setup, 'institutional retest', 'retest', 'post-breakout')
+    is_accum = _setup_has(setup, 'volume accumulation', 'accumulation')
+    is_trend = _setup_has(setup, 'trend continuation')
+
+    if is_breakout and (vol_ratio is None or vol_ratio < vmin):
+        return False, 'FINAL_EDGE:BREAKOUT_VOLUME_LT_2_5X', metrics
+    if is_breakout and vol_ratio is not None and vol_ratio > 3.0:
+        return False, 'FINAL_EDGE:BREAKOUT_HIGH_VOLUME_CHASE', metrics
+    if is_accum and (vol_ratio is None or vol_ratio < vmin):
+        return False, 'FINAL_EDGE:ACCUMULATION_VOLUME_LT_2_5X', metrics
+    if is_accum and vol_ratio is not None and vol_ratio > 3.0:
+        return False, 'FINAL_EDGE:ACCUMULATION_HIGH_VOLUME_CHASE', metrics
+    if is_retest:
+        prior_peak_ratio = safe_float((price_ctx or {}).get('prior_peak_vol_ratio_10'), None)
+        retention = safe_float((price_ctx or {}).get('volume_retention_10'), None)
+        if vol_ratio is None or vol_ratio < 1.5:
+            return False, 'FINAL_EDGE:RETEST_ENTRY_VOLUME_LT_1_5X', metrics
+        if prior_peak_ratio is not None and prior_peak_ratio < 2.0:
+            return False, 'FINAL_EDGE:WEAK_BREAKOUT_DAY_VOLUME', metrics
+        if retention is not None and retention < 0.40:
+            return False, 'FINAL_EDGE:VOLUME_COLLAPSE_AFTER_BREAKOUT', metrics
+
+    close_pos = safe_float((price_ctx or {}).get('close_position'), None)
+    range_pct = safe_float((price_ctx or {}).get('range_pct'), None)
+    momentum_3d = safe_float((price_ctx or {}).get('momentum_3d'), None)
+
+    if is_accum and range_pct is not None and range_pct > 8.0:
+        return False, 'FINAL_EDGE:ACCUMULATION_RANGE_TOO_WIDE', metrics
+    if momentum_3d is not None and momentum_3d > 15.0 and not is_retest:
+        return False, 'FINAL_EDGE:NO_CHASE_3D_EXTENDED', metrics
+
+    actual_open = safe_float((price_ctx or {}).get('open'), None)
+    actual_close = safe_float((price_ctx or {}).get('close'), None)
+    chased_zone = (
+        entry_high
+        and (
+            (actual_open is not None and actual_open > entry_high * 1.005)
+            or (actual_close is not None and actual_close > entry_high * 1.005)
+        )
+    )
+    metrics['chased_zone'] = bool(chased_zone)
+    if chased_zone and effective_rr < 1.5:
+        return False, 'FINAL_EDGE:NO_CHASE_RR_TOO_LOW', metrics
+
+    if close_pos is not None and close_pos > 0.66:
+        if effective_rr < 2.0 or vol_ratio is None or not (vmin <= vol_ratio <= 3.0):
+            return False, 'FINAL_EDGE:UPPER_THIRD_WEAK_EDGE', metrics
+
+    if is_trend and symbol not in QUALITY_SYMBOLS_V3:
+        return False, 'FINAL_EDGE:TREND_ONLY_NOT_QUALITY_SYMBOL', metrics
+
+    return True, None, metrics
+
+def _apply_ml_governance_dampening(score, date, conn):
+    """Pull unreliable ML toward neutral when governance rejects the latest model run."""
+    try:
+        gov = conn.execute("""
+            SELECT accepted_for_client, risk_level
+            FROM ml_governance_audit
+            WHERE run_date <= ? ORDER BY run_date DESC LIMIT 1
+        """, (date,)).fetchone()
+        if gov and not int(gov['accepted_for_client'] or 0):
+            weight = 0.35 if str(gov['risk_level']).upper() == 'HIGH' else 0.55
+            return 50.0 + (score - 50.0) * weight
+    except Exception:
+        pass
+    return score
+
+
 def get_explosion_score(symbol, date, conn):
     """Get ML explosion probability (0-100).
-    Looks forward 1 day AND back 7 days to handle the pred_date vs signal_date mismatch:
-    ML predictions are computed for *tomorrow* using today's data, so pred_date = signal_date + 1.
+
+    pred_date may lag signal_date by 1 day. Within a 7-day window we prefer the
+  highest non-zero prob_pct (not merely the newest row) so a broken ensemble run
+    cannot zero-out symbols that still have valid lgbm predictions from prior days.
     """
     try:
         d = datetime.date.fromisoformat(date)
-        # Allow predictions dated from 7 days ago to 1 day ahead
         lookback  = (d - datetime.timedelta(days=7)).strftime('%Y-%m-%d')
         lookahead = (d + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
         row = conn.execute(
-            """SELECT prob_pct FROM explosion_predictions
+            """SELECT prob_pct, pred_date, model_version FROM explosion_predictions
                WHERE symbol=? AND pred_date>=? AND pred_date<=?
-               ORDER BY pred_date DESC LIMIT 1""",
+                 AND prob_pct IS NOT NULL AND prob_pct > 0
+               ORDER BY prob_pct DESC, pred_date DESC LIMIT 1""",
             (symbol, lookback, lookahead)
         ).fetchone()
+        if not row:
+            row = conn.execute(
+                """SELECT prob_pct FROM explosion_predictions
+                   WHERE symbol=? AND pred_date>=? AND pred_date<=?
+                   ORDER BY pred_date DESC LIMIT 1""",
+                (symbol, lookback, lookahead)
+            ).fetchone()
         if row:
-            return safe_float(row['prob_pct'], 50.0)
+            score = _apply_ml_governance_dampening(safe_float(row['prob_pct'], 50.0), date, conn)
+            return score
     except Exception:
-        pass  # Table may not exist yet — run egx:ml:train first
-    return 50.0  # neutral default when no ML prediction
+        pass
+    return 50.0
+
+
+def get_fused_ml_score(symbol, date, conn, explosion_score=50.0, scan_score=0.0,
+                       quant_score=50.0, forecast_pup=None, quant_matches=0,
+                       pine_rs=None):
+    """
+    Best-of multi-engine ML fusion for client gates.
+
+    Combines explosion_predictions, quant_discovery, scan confirmation, stock
+    forecast, and DTW similarity so one broken model run cannot collapse the
+    entire actionable pipeline.
+    """
+    engines = [('explosion', safe_float(explosion_score, 50.0))]
+
+    if forecast_pup is not None and safe_float(forecast_pup, 0.5) > 0.52:
+        engines.append(('forecast', safe_float(forecast_pup, 0.5) * 100.0))
+
+    if safe_float(quant_score, 50.0) >= 68.0:
+        engines.append(('quant', safe_float(quant_score, 50.0)))
+    if quant_matches >= 10 and safe_float(quant_score, 50.0) >= 75.0:
+        engines.append(('quant_rules', min(safe_float(quant_score, 50.0) + 3.0, 88.0)))
+
+    try:
+        opp = conn.execute(
+            """SELECT opportunity_score FROM opportunity_score_v2
+               WHERE symbol=? AND trade_date<=? ORDER BY trade_date DESC LIMIT 1""",
+            (symbol, date),
+        ).fetchone()
+        if opp and safe_float(opp['opportunity_score'], 0) >= 70.0:
+            engines.append(('opportunity', safe_float(opp['opportunity_score'], 0)))
+    except Exception:
+        pass
+
+    if pine_rs is not None and safe_float(pine_rs, 0) >= 75.0:
+        engines.append(('pine_rs', min(55.0 + safe_float(pine_rs, 0) * 0.35, 85.0)))
+
+    if safe_float(explosion_score, 50.0) < 35.0 and safe_float(scan_score, 0.0) >= 55.0:
+        engines.append(('scan_proxy', min(safe_float(scan_score, 0.0) * 0.92, 82.0)))
+
+    try:
+        dtw = conn.execute("""
+            SELECT dtw_similarity, dtw_expected_gain
+            FROM dtw_similarity_cache
+            WHERE symbol=? AND calc_date >= date(?, '-5 days')
+            ORDER BY calc_date DESC LIMIT 1
+        """, (symbol, date)).fetchone()
+        if dtw:
+            sim = safe_float(dtw['dtw_similarity'], 0.0)
+            gain = safe_float(dtw['dtw_expected_gain'], 0.0)
+            if sim >= 0.72 and gain > 0.03:
+                engines.append(('dtw', min(55.0 + gain * 180.0, 85.0)))
+    except Exception:
+        pass
+
+    # ML-Advanced #5: lead-lag pulse — sector leader moved 1-3 days ago
+    try:
+        ll = conn.execute(
+            "SELECT feature_value v FROM feature_store WHERE symbol=? AND feature_name='leadlag_pulse' "
+            "AND feature_date >= date(?, '-3 days') AND feature_date <= ? "
+            "ORDER BY feature_date DESC LIMIT 1", (symbol, date, date)).fetchone()
+        if ll and safe_float(ll['v'], 0.0) >= 0.70:
+            engines.append(('leadlag', min(55.0 + safe_float(ll['v'], 0.0) * 30.0, 82.0)))
+    except Exception:
+        pass
+
+    # ML-Advanced #9: historical pattern analogs (learned embeddings + kNN)
+    try:
+        an = conn.execute(
+            "SELECT analog_wr, analog_n FROM pattern_analogs WHERE symbol=? "
+            "AND date >= date(?, '-3 days') AND date <= ? ORDER BY date DESC LIMIT 1",
+            (symbol, date, date)).fetchone()
+        if an and (an['analog_n'] or 0) >= 25 and safe_float(an['analog_wr'], 0.0) >= 0.60:
+            engines.append(('analogs', min(50.0 + safe_float(an['analog_wr'], 0.0) * 45.0, 84.0)))
+    except Exception:
+        pass
+
+    # ML-Advanced #7: Mixture-of-Experts (regime-weighted meta experts)
+    try:
+        mo = conn.execute(
+            "SELECT moe_prob FROM meta_label_scores WHERE symbol=? AND date=?",
+            (symbol, date)).fetchone()
+        if mo and safe_float(mo['moe_prob'], 0.0) >= 0.62:
+            engines.append(('moe', min(safe_float(mo['moe_prob'], 0.0) * 100.0, 86.0)))
+    except Exception:
+        pass
+
+    # ML-Advanced #6: DOM bid-pressure (order book imbalance ≥2x toward bids)
+    try:
+        dm = conn.execute(
+            "SELECT feature_value v FROM feature_store WHERE symbol=? AND feature_name='dom_imbalance_v2' "
+            "AND feature_date >= date(?, '-2 days') ORDER BY feature_date DESC LIMIT 1",
+            (symbol, date)).fetchone()
+        if dm and safe_float(dm['v'], 0.0) >= 2.0:
+            engines.append(('dom', min(58.0 + safe_float(dm['v'], 0.0) * 2.0, 70.0)))
+    except Exception:
+        pass
+
+    scores = [v for _, v in engines]
+    fused = max(scores) if scores else 50.0
+    strong = sum(1 for v in scores if v >= 60.0)
+    if strong >= 2:
+        fused = min(100.0, fused + 3.0)
+    if strong >= 3:
+        fused = min(100.0, fused + 2.0)
+
+    breakdown = {k: round(v, 1) for k, v in engines}
+    breakdown['fused'] = round(fused, 1)
+    breakdown['explosion_raw'] = round(safe_float(explosion_score, 50.0), 1)
+    return fused, breakdown
 
 def get_breadth_score(date, conn):
     """
@@ -320,8 +926,8 @@ def get_technical_score(symbol, date, conn):
     if above_ema20 is None or above_ema50 is None or above_ema200 is None:
         try:
             ohlcv_bars = conn.execute(
-                "SELECT close FROM ohlcv_history WHERE symbol=? AND bar_time <= "
-                "(SELECT MAX(bar_time) FROM ohlcv_history WHERE symbol=? AND "
+                "SELECT close FROM ohlcv_history_execution WHERE symbol=? AND bar_time <= "
+                "(SELECT MAX(bar_time) FROM ohlcv_history_execution WHERE symbol=? AND "
                 " date(bar_time,'unixepoch') <= ?) "
                 "ORDER BY bar_time DESC LIMIT 210",
                 (symbol, symbol, date)
@@ -518,13 +1124,17 @@ def get_anti_law_score(symbol, date, conn):
             (symbol,)
         ).fetchall()
         for rs in rows_static:
-            if rs['is_veto']:
-                static_veto = True
-                break
-            # Auto-veto: HIGH severity + precision>0.55 + significant loss
-            # Some records have is_veto=0 but clearly warrant a veto (e.g. NDRL prec=0.57 avg_loss=-11.8%)
             prec = float(rs['anti_precision'] or 0)
             avg_loss = float(rs['avg_loss'] or 0)
+            # Hard veto only on proven catastrophic static patterns (2026-06 audit:
+            # loose is_veto=1 blocked 119/254 symbols; strict rule → 32 symbols).
+            if rs['is_veto'] and rs['severity'] == 'HIGH' and prec >= 0.62 and avg_loss < -0.08:
+                static_veto = True
+                break
+            if rs['is_veto'] and rs['severity'] == 'HIGH' and prec > 0.55 and avg_loss < -0.40:
+                static_veto = True
+                break
+            # Auto-veto without is_veto flag: extreme loss patterns
             if rs['severity'] == 'HIGH' and prec > 0.55 and avg_loss < -0.4:
                 static_veto = True
                 break
@@ -666,6 +1276,197 @@ def get_alpha_grid_score(symbol, conn):
     except Exception:
         pass
     return 50.0  # no alpha data yet
+
+def _mean(vals):
+    vals = [safe_float(v, None) for v in vals]
+    vals = [v for v in vals if v is not None]
+    return sum(vals) / len(vals) if vals else 0.0
+
+def _stdev(vals):
+    vals = [safe_float(v, None) for v in vals]
+    vals = [v for v in vals if v is not None]
+    if len(vals) < 2:
+        return 0.0
+    m = _mean(vals)
+    return (sum((v - m) ** 2 for v in vals) / (len(vals) - 1)) ** 0.5
+
+def _pct_rank(value, vals):
+    vals = [safe_float(v, None) for v in vals]
+    vals = [v for v in vals if v is not None]
+    if not vals:
+        return 0.5
+    return sum(1 for v in vals if v <= value) / len(vals)
+
+def _compute_rsi_from_closes(closes, period=14):
+    closes = [safe_float(c, None) for c in closes]
+    closes = [c for c in closes if c is not None]
+    if len(closes) <= period:
+        return 50.0
+    gains, losses = [], []
+    for i in range(len(closes) - period, len(closes)):
+        d = closes[i] - closes[i - 1]
+        gains.append(max(0.0, d))
+        losses.append(max(0.0, -d))
+    ag, al = _mean(gains), _mean(losses)
+    if al <= 0:
+        return 100.0
+    return 100.0 - 100.0 / (1.0 + ag / al)
+
+def _quant_atom_match(name, x):
+    try:
+        if name == 'rsi_35_55': return 35 <= x['rsi'] <= 55
+        if name == 'rsi_45_65': return 45 <= x['rsi'] <= 65
+        if name == 'rsi_40_70': return 40 <= x['rsi'] <= 70
+        if name == 'rsi_50_75': return 50 <= x['rsi'] <= 75
+        if name == 'rsi_lt45': return x['rsi'] < 45
+        if name == 'rsi_gt55_lt75': return 55 < x['rsi'] < 75
+        if name == 'rsi_not_hot': return x['rsi'] <= 72
+        if name == 'vol_1_5_3': return 1.5 <= x['vol_ratio'] <= 3.0
+        if name == 'vol_1_8_3': return 1.8 <= x['vol_ratio'] <= 3.0
+        if name == 'vol_2_4': return 2.0 <= x['vol_ratio'] <= 4.0
+        if name == 'vol_2_5_3': return 2.5 <= x['vol_ratio'] <= 3.0
+        if name == 'vol_lt1_5': return x['vol_ratio'] < 1.5
+        if name == 'vol_gt3': return x['vol_ratio'] > 3.0
+        if name == 'vol_3_8': return 3.0 < x['vol_ratio'] <= 8.0
+        if name == 'vol_gt5': return x['vol_ratio'] > 5.0
+        if name == 'lower_third_close': return x['close_pos'] <= 0.33
+        if name == 'middle_close': return 0.33 < x['close_pos'] <= 0.66
+        if name == 'upper_close': return x['close_pos'] > 0.66
+        if name == 'very_upper_close': return x['close_pos'] >= 0.82
+        if name == 'bb_squeeze_low20': return x['bb_width_pct'] <= 0.20
+        if name == 'bb_squeeze_low35': return x['bb_width_pct'] <= 0.35
+        if name == 'bb_expanding': return x['bb_width_pct'] >= 0.70
+        if name == 'ret1_pos': return x['ret1'] > 0
+        if name == 'ret1_flat_pos': return 0 <= x['ret1'] <= 0.05
+        if name == 'ret1_not_gap_chase': return x['ret1'] <= 0.08
+        if name == 'mom3_pos': return x['ret3'] > 0
+        if name == 'mom3_2_12': return 0.02 <= x['ret3'] <= 0.12
+        if name == 'mom3_soft_pullback': return -0.05 <= x['ret3'] <= 0.0
+        if name == 'mom5_pos_lt15': return 0 < x['ret5'] <= 0.15
+        if name == 'mom5_2_18': return 0.02 <= x['ret5'] <= 0.18
+        if name == 'mom20_pos': return x['ret20'] > 0
+        if name == 'mom20_5_35': return 0.05 <= x['ret20'] <= 0.35
+        if name == 'not_extended_3d': return x['ret3'] <= 0.12
+        if name == 'not_extended_5d': return x['ret5'] <= 0.18
+        if name == 'near_ath_300': return x['pct_from_ath'] <= 0.03
+        if name == 'not_near_ath': return x['pct_from_ath'] > 0.03
+        if name == 'far_from_ath_10': return x['pct_from_ath'] >= 0.10
+        if name == 'above_ema20': return x['above_ema20']
+        if name == 'above_ema50': return x['above_ema50']
+        if name == 'high20_break': return x['high20_break']
+        if name == 'low20_retest': return x['low20_retest']
+        if name == 'range_lt4pct': return x['range_pct'] <= 0.04
+        if name == 'range_4_9pct': return 0.04 < x['range_pct'] <= 0.09
+        if name == 'range_gt9pct': return x['range_pct'] > 0.09
+    except Exception:
+        return False
+    return False
+
+def get_quant_discovery_score(symbol, date, conn):
+    """
+    Precision-mined discovery confirmation. Neutral=50.
+    It supports UES only; it cannot create a client-facing signal by itself.
+    """
+    try:
+        rows = conn.execute("""
+            SELECT open, high, low, close, volume
+            FROM ohlcv_history
+            WHERE symbol=? AND date(bar_time,'unixepoch') <= ?
+              AND close IS NOT NULL AND close > 0
+            ORDER BY bar_time DESC LIMIT 320
+        """, (symbol, date)).fetchall()
+        if len(rows) < 60:
+            return 50.0, None, 0
+        bars = list(reversed(rows))
+        closes = [safe_float(r['close']) for r in bars]
+        highs = [safe_float(r['high']) for r in bars]
+        lows = [safe_float(r['low']) for r in bars]
+        vols = [safe_float(r['volume']) for r in bars]
+        b = bars[-1]
+        close = safe_float(b['close'])
+        if close <= 0:
+            return 50.0, None, 0
+
+        prior_vols = [v for v in vols[-21:-1] if v > 0]
+        avg_vol20 = _mean(prior_vols) if prior_vols else 0.0
+        rng = max(safe_float(b['high']) - safe_float(b['low']), 0.0)
+        bbw = (4 * _stdev(closes[-20:]) / _mean(closes[-20:])) if len(closes) >= 20 and _mean(closes[-20:]) > 0 else 0.0
+        bb_hist = []
+        for i in range(max(20, len(closes) - 80), len(closes)):
+            seg = closes[i - 19:i + 1]
+            m = _mean(seg)
+            if m > 0:
+                bb_hist.append(4 * _stdev(seg) / m)
+        ath300 = max(highs[-300:]) if highs[-300:] else 0.0
+
+        x = {
+            'rsi': _compute_rsi_from_closes(closes[-80:], 14),
+            'vol_ratio': safe_float(b['volume']) / avg_vol20 if avg_vol20 > 0 else 1.0,
+            'ret1': close / closes[-2] - 1 if len(closes) >= 2 and closes[-2] else 0.0,
+            'ret3': close / closes[-4] - 1 if len(closes) >= 4 and closes[-4] else 0.0,
+            'ret5': close / closes[-6] - 1 if len(closes) >= 6 and closes[-6] else 0.0,
+            'ret20': close / closes[-21] - 1 if len(closes) >= 21 and closes[-21] else 0.0,
+            'close_pos': (close - safe_float(b['low'])) / rng if rng > 0 else 0.5,
+            'range_pct': rng / close if close > 0 else 0.0,
+            'pct_from_ath': (ath300 - close) / ath300 if ath300 > 0 else 1.0,
+            'bb_width_pct': _pct_rank(bbw, bb_hist),
+            'above_ema20': close > _mean(closes[-20:]),
+            'above_ema50': close > _mean(closes[-50:]),
+            'high20_break': close >= max(highs[-20:]) * 0.995 if len(highs) >= 20 else False,
+            'low20_retest': close <= min(lows[-20:]) * 1.08 if len(lows) >= 20 else False,
+        }
+
+        # ML-Advanced #3: prefer DSR/PBO-vetted rules (multiple-testing protection).
+        # Unvetted rules stay usable but capped — their edge may be selection luck.
+        try:
+            rules = conn.execute("""
+                SELECT rule_name, conditions_json, n_oos, oos_precision, baseline_precision,
+                       oos_expectancy_pct, oos_profit_factor, stability_score,
+                       COALESCE(vetted, 0) AS vetted
+                FROM quant_discovery_rules
+                WHERE run_date=(SELECT MAX(run_date) FROM quant_discovery_rules)
+                  AND n_oos >= 250
+                  AND stability_score >= 0.70
+                  AND oos_precision >= baseline_precision
+                ORDER BY vetted DESC, composite_score DESC LIMIT 80
+            """).fetchall()
+        except Exception:
+            rules = conn.execute("""
+                SELECT rule_name, conditions_json, n_oos, oos_precision, baseline_precision,
+                       oos_expectancy_pct, oos_profit_factor, stability_score,
+                       0 AS vetted
+                FROM quant_discovery_rules
+                WHERE run_date=(SELECT MAX(run_date) FROM quant_discovery_rules)
+                  AND n_oos >= 250
+                  AND stability_score >= 0.70
+                  AND oos_precision >= baseline_precision
+                ORDER BY composite_score DESC LIMIT 80
+            """).fetchall()
+        best = None
+        matched = 0
+        for r in rules:
+            try:
+                conds = json.loads(r['conditions_json'] or '[]')
+            except Exception:
+                conds = []
+            if conds and all(_quant_atom_match(c, x) for c in conds):
+                matched += 1
+                precision = safe_float(r['oos_precision'], 0.5)
+                baseline = safe_float(r['baseline_precision'], 0.395)
+                expectancy = safe_float(r['oos_expectancy_pct'], 0.0)
+                pf = safe_float(r['oos_profit_factor'], 1.0)
+                edge = (precision - baseline) * 100.0 + max(0.0, expectancy) * 2.0 + max(0.0, pf - 1.0) * 4.0
+                score = max(40.0, min(92.0, 50.0 + edge))
+                if not int(r['vetted'] or 0):
+                    score = min(score, 78.0)   # DSR/PBO unvetted → cap influence
+                cand = (score, r['rule_name'])
+                if best is None or cand[0] > best[0]:
+                    best = cand
+        if best:
+            return round(best[0], 1), best[1], matched
+        return 50.0, None, 0
+    except Exception:
+        return 50.0, None, 0
 
 def get_dna_score(symbol, date, conn):
     """
@@ -861,6 +1662,63 @@ def get_spectral_score(symbol, date, conn):
         return 1.0, "unknown", 0.5
 
 
+def _macro_edge_bonus(raw_score):
+    """
+    Convert the OOS-validated macro sector edge into a small ranking adjustment.
+    This must never override the client gates; it only nudges otherwise valid ideas.
+    """
+    if raw_score is None:
+        return 0.0
+    raw = safe_float(raw_score, 0.0)
+    if raw > 0:
+        return max(0.0, min(2.0, raw * 4.0))
+    return max(-1.0, min(0.0, raw * 3.0))
+
+
+def load_macro_edge_scores(conn, date):
+    """
+    Load the latest accepted macro sector edge from feature_store.
+
+    The validator only writes macro_edge_sector_score after purged OOS sector links
+    pass strict stability gates. Symbol-level macro links remain context-only.
+    """
+    try:
+        fd = conn.execute("""
+            SELECT MAX(feature_date) AS feature_date
+            FROM feature_store
+            WHERE feature_name='macro_edge_sector_score'
+              AND feature_date <= ?
+              AND feature_date >= date(?, '-10 days')
+        """, (date, date)).fetchone()
+        feature_date = fd['feature_date'] if fd else None
+        if not feature_date:
+            return {}
+
+        rows = conn.execute("""
+            SELECT symbol, feature_value, version
+            FROM feature_store
+            WHERE feature_name='macro_edge_sector_score'
+              AND feature_date=?
+        """, (feature_date,)).fetchall()
+        out = {}
+        for r in rows:
+            score = safe_float(r['feature_value'], 0.0)
+            out[r['symbol']] = {
+                'score': score,
+                'bonus': _macro_edge_bonus(score),
+                'feature_date': feature_date,
+                'version': r['version'] or 'macro_edge_v1',
+            }
+        return out
+    except Exception:
+        return {}
+
+
+def get_macro_edge_score(symbol, date, conn):
+    scores = load_macro_edge_scores(conn, date)
+    return scores.get(symbol, {'score': 0.0, 'bonus': 0.0, 'feature_date': None, 'version': None})
+
+
 def get_behavioral_score(symbol, conn):
     """
     Ph 28 — Stock Behavioral Memory.
@@ -961,21 +1819,173 @@ def load_adaptive_gate_params(conn):
         'noisy_prox_threshold': 0.55,
     }
     try:
+        # latest value per param (Ph50 and Thompson write on different run_dates)
         rows = conn.execute("""
-            SELECT param_name, param_value FROM adaptive_gate_params
-            WHERE run_date = (SELECT MAX(run_date) FROM adaptive_gate_params)
+            SELECT param_name, param_value FROM adaptive_gate_params a
+            WHERE run_date = (SELECT MAX(run_date) FROM adaptive_gate_params b
+                              WHERE b.param_name = a.param_name)
         """).fetchall()
         for r in rows:
             defaults[r['param_name']] = float(r['param_value'])
     except Exception:
         pass
+    # ML-Advanced #4: Thompson-sampled volume threshold (hard-bounded for safety)
+    vrm = defaults.get('volume_ratio_min')
+    if vrm is not None:
+        defaults['volume_ratio_min'] = max(2.2, min(3.0, float(vrm)))
+    # ML-Advanced #11: drift throttle raises the ML floor by +4 when the
+    # adversarial validator says today's market differs from training data
+    try:
+        r = conn.execute(
+            "SELECT feature_value v FROM feature_store WHERE symbol='MARKET' "
+            "AND feature_name='mladv_drift_throttle' ORDER BY feature_date DESC LIMIT 1"
+        ).fetchone()
+        defaults['drift_throttle'] = float(r['v']) if r else 0.0
+    except Exception:
+        defaults['drift_throttle'] = 0.0
     return defaults
+
+
+def collect_quality_gate_failures(ues, ml_score, spectral_regime, behavioral_class,
+                                  false_signal_rate, cycle_bottom_prox, breadth_signal,
+                                  adaptive_params=None, active_regime=None, rsi14=None,
+                                  rsi_slope=None, ad_ratio=None, vol_ratio=None,
+                                  close_position=None, meta_prob=None,
+                                  conformal_p_lo=None, conformal_p_hi=None, conformal_confident=None,
+                                  survival_p_tp=None, survival_p_sl=None,
+                                  conviction=None):
+    """
+    Gate Doctor — evaluate ALL quality-gate conditions (no early exit).
+    Returns list of failure reason codes (empty = pass).
+    """
+    failures = []
+    params = adaptive_params or {}
+    regime = (active_regime or 'BULL').upper()
+
+    ml_thr = params.get(f'ml_threshold_{regime}',
+             params.get('ml_threshold_OVERALL', 65.0))
+    noisy_prox_thr = params.get('noisy_prox_threshold', 0.55)
+    volatile_ok = float(params.get('volatile_allowed', 0.0)) >= 1.0
+    volatile_ml = params.get('volatile_ml_premium', 75.0)
+    drift_on = float(params.get('drift_throttle', 0.0)) >= 1.0
+    base_ml_thr = ml_thr
+    if drift_on:
+        ml_thr = min(ml_thr + 4.0, 80.0)
+
+    if ml_score < ml_thr:
+        if drift_on and ml_score >= base_ml_thr:
+            failures.append('drift_throttle_ml_floor')
+        else:
+            failures.append('ml_too_low')
+
+    if meta_prob is not None and meta_prob < 0.30 and ml_score < 80.0:
+        failures.append('meta_label_low')
+
+    if conformal_p_hi is not None and conformal_p_hi < 0.45 and ml_score < 85.0:
+        failures.append('conformal_low_bound')
+    if (conformal_confident == 0 and conformal_p_lo is not None
+            and conformal_p_lo < 0.35 and ml_score < 82.0):
+        failures.append('conformal_uncertain')
+
+    if survival_p_sl is not None and survival_p_tp is not None:
+        if survival_p_sl >= 0.55 and survival_p_sl > survival_p_tp + 0.20:
+            failures.append('survival_sl_dominant')
+
+    if spectral_regime == 'noisy' and (cycle_bottom_prox or 0.0) < noisy_prox_thr:
+        if ml_score >= 85.0:
+            pass
+        elif (cycle_bottom_prox or 0.0) >= 0.85 and ues >= 72.0 and ml_score >= 65.0:
+            pass
+        else:
+            failures.append('noisy_low_prox')
+
+    bclass = (behavioral_class or 'UNKNOWN').upper()
+    if bclass == 'VOLATILE':
+        _volatile_bear_exception = (
+            regime == 'BEAR'
+            and ml_score >= 85.0
+            and rsi14 is not None and rsi14 <= 30.0
+        )
+        if volatile_ok and ml_score >= volatile_ml:
+            pass
+        elif _volatile_bear_exception:
+            pass
+        elif bclass == 'STEADY' and ml_score >= 80.0 and ues >= 72.0:
+            pass
+        else:
+            failures.append('volatile_stock')
+    if bclass == 'DORMANT':
+        failures.append('dormant_stock')
+
+    if (false_signal_rate or 0.0) > 0.65:
+        failures.append('high_false_rate')
+
+    breadth = (breadth_signal or '')
+    if 'BEAR' in breadth and 'LEAN' not in breadth and 'MODERATE' not in breadth:
+        failures.append('bear_breadth')
+
+    # Phase 2.9D — tiered negative breadth (hard veto only when policy says would_fail_new)
+    if ad_ratio is not None and safe_float(ad_ratio, 1.0) < 1.0:
+        _nb_hard = False
+        try:
+            from negative_breadth_policy import evaluate_negative_breadth_policy
+            _nb_pol = evaluate_negative_breadth_policy(
+                ad_ratio=ad_ratio, ues=ues, ml_score=ml_score, conviction=conviction,
+            )
+            _nb_hard = bool(_nb_pol.get('would_fail_new'))
+        except Exception:
+            if not (ues >= 78.0 and ml_score >= 72.0) and not (ues >= 75.0 and ml_score >= 80.0):
+                _nb_hard = True
+        if _nb_hard:
+            failures.append('negative_breadth_ad')
+
+    if vol_ratio is not None and vol_ratio > 3.0:
+        failures.append('high_volume_chase')
+
+    if vol_ratio is not None and vol_ratio < 1.50:
+        _lower_third_vol_ok = (
+            close_position is not None
+            and close_position <= 0.34
+            and ues >= 72.0
+            and ml_score >= 65.0
+            and vol_ratio >= 0.90
+        )
+        if not _lower_third_vol_ok:
+            failures.append('low_volume_signal')
+
+    _bear_oversold_ues_exception = (
+        regime == 'BEAR'
+        and ml_score >= 85.0
+        and rsi14 is not None and rsi14 <= 35.0
+        and cycle_bottom_prox is not None and cycle_bottom_prox >= 0.80
+    )
+    _ues_floor = 58.0 if _bear_oversold_ues_exception else 70.0
+    if ues < _ues_floor:
+        failures.append('ues_too_low')
+
+    if bclass == 'EXPLOSIVE' and rsi14 is not None and rsi14 > 67.0:
+        failures.append('explosive_overbought')
+
+    if bclass == 'VOLATILE' and rsi14 is not None and rsi14 > 70.0:
+        failures.append('volatile_overbought')
+
+    if rsi14 is not None and rsi_slope is not None:
+        if rsi14 > 65.0 and rsi_slope < -2.5:
+            failures.append(f'rsi_momentum_collapse:{rsi14:.0f}')
+
+    if not _apply_choppy_regime_quality_boost(ues, regime, ml_score):
+        failures.append(f'choppy_quality_insufficient:ues={ues:.0f},ml={ml_score:.0f}')
+
+    return failures
 
 
 def apply_quality_gate(ues, ml_score, spectral_regime, behavioral_class,
                        false_signal_rate, cycle_bottom_prox, breadth_signal,
                        adaptive_params=None, active_regime=None, rsi14=None,
-                       rsi_slope=None, ad_ratio=None, vol_ratio=None):
+                       rsi_slope=None, ad_ratio=None, vol_ratio=None,
+                       close_position=None, meta_prob=None,
+                       conformal_p_lo=None, conformal_p_hi=None, conformal_confident=None,
+                       survival_p_tp=None, survival_p_sl=None):
     """
     Ph 27/50 — Adaptive quality gate for institutional-grade signals.
     All conditions must pass. Returns (passed: bool, rejection_reason: str|None).
@@ -1002,137 +2012,25 @@ def apply_quality_gate(ues, ml_score, spectral_regime, behavioral_class,
       8. EXPLOSIVE + RSI > 70: block (backtest: RSI>70 EXPLOSIVE PF 1.39 vs RSI<65 PF 1.61)
       9. RSI momentum collapse: RSI>65 + rsi_slope<-2.5 = near-overbought with collapsing momentum
     """
-    params = adaptive_params or {}
-    regime = (active_regime or 'BULL').upper()
-
-    # Determine adaptive ML threshold: regime-specific → overall → default 65
-    ml_thr = params.get(f'ml_threshold_{regime}',
-             params.get('ml_threshold_OVERALL', 65.0))
-    noisy_prox_thr = params.get('noisy_prox_threshold', 0.55)
-    volatile_ok    = float(params.get('volatile_allowed', 0.0)) >= 1.0
-    volatile_ml    = params.get('volatile_ml_premium', 75.0)
-
-    if ml_score < ml_thr:
-        return False, f'ml_too_low'
-
-    # Noisy spectral regime: require cycle proximity OR very high ML score.
-    # Rationale: when >50% of market is in noisy regime, cycle structure is unreliable.
-    # High ML score (≥85%) overrides the cycle filter — technical + ML consensus is enough.
-    if spectral_regime == 'noisy' and (cycle_bottom_prox or 0.0) < noisy_prox_thr:
-        if ml_score >= 85.0:
-            pass   # ML score strong enough to override noisy cycle filter
-        else:
-            return False, 'noisy_low_prox'
-
-    bclass = (behavioral_class or 'UNKNOWN').upper()
-    if bclass == 'VOLATILE':
-        # BEAR regime extreme oversold exception: VOLATILE stocks with RSI<=30 + ML>=85%
-        # are prime mean reversion candidates (MHOT: RSI=20.4, ML=89.87% on 2026-05-23)
-        _volatile_bear_exception = (
-            regime == 'BEAR'
-            and ml_score >= 85.0
-            and rsi14 is not None and rsi14 <= 30.0
-        )
-        if volatile_ok and ml_score >= volatile_ml:
-            pass   # Ph50 Bayesian permission granted with ML premium
-        elif _volatile_bear_exception:
-            pass   # BEAR regime extreme oversold mean reversion exception
-        else:
-            return False, 'volatile_stock'
-    if bclass == 'DORMANT':
-        return False, 'dormant_stock'
-
-    if (false_signal_rate or 0.0) > 0.65:
-        return False, 'high_false_rate'
-
-    breadth = (breadth_signal or '')
-    if 'BEAR' in breadth and 'LEAN' not in breadth and 'MODERATE' not in breadth:
-        return False, 'bear_breadth'
-
-    # A/D ratio gate (Gate 6b — 2026-05-22, tightened 2026-05-23):
-    # ad_ratio = n_advances/n_declines from market_breadth_enhanced
-    # Backtest discovery (2026-05-22): min_ad_ratio=1.0 filter → 6m WR=76.2% vs 71% baseline (+5.2pp)
-    #                     combined ad>=1.0 + vol<=3 → 6m WR=78.6% (+7.6pp), 3m=85.7%, 12m=64%
-    #                     with max_ues=96: 6m WR=80.4%, PF=10.55, Exp=+0.851R (N=51) ← new best
-    # Threshold calibration:
-    #   ad < 0.5 = panic day (2:1 decliners) — full market selling, avoid ALL long entries
-    #   ad < 0.8 = negative breadth day (~56% declining) — statistically worse signal quality
-    #   ad < 1.0 = any negative breadth — optimal filter (removes ~50% of days for +5.2pp WR)
-    # Production gate raised 0.8 → 1.0 (2026-05-23): N drops from 68→51 but WR rises 77.9%→80.4%.
-    # ~8-9 signals/month is adequate frequency for EGX trading.
-    if ad_ratio is not None and ad_ratio < 1.0:
-        return False, 'negative_breadth_ad'
-
-    # Vol ratio gate (2026-05-22 backtest discovery):
-    # vol_ratio = today's volume / 20-day avg volume (from indicators_cache.vol_ratio_20)
-    # vol_ratio > 3: WR=64% (18pp below baseline 71%!) — high-volume "chase" entries fail at 2x rate
-    # vol_ratio < 1.5: WR=82% — normal/quiet volume entries outperform significantly
-    # Rationale: spikes >3× average volume = panic-buying/news-driven = unsustainable price moves
-    if vol_ratio is not None and vol_ratio > 3.0:
-        return False, 'high_volume_chase'
-
-    # Minimum volume gate — Gate 6d (added 2026-05-23):
-    # vol_ratio < 0.90 → low_volume_signal
-    # Signals on below-average-volume days lack conviction; 8 of 15 six-month losers
-    # had vol_ratio < 0.90. Grid search (6m): min_vol=0.90 → WR=80.6% PF=10.31 Exp=+0.903R (N=36)
-    # vs baseline WR=77.6% (N=67). On 12m: 76.2% vs 73.8% (+2.4pp), Exp +0.699R→+0.783R (+12%).
-    # Consistent improvement across both windows confirms real signal, not overfitting.
-    if vol_ratio is not None and vol_ratio < 0.90:
-        return False, 'low_volume_signal'
-
-    # UES floor raised 62→68→70 (2026-05-22): proxy analysis shows UES>=82 → WR=55% PF=1.81
-    # Live UES (unified_score) scale differs from proxy; 70 live ≈ 82 proxy for quality filtering
-    # Raising floor reduces false signals from low-quality ambiguous setups
-    # EXCEPTION: BEAR regime extreme oversold — UES floor lowered to 58 (2026-05-23)
-    # In BEAR regime, UES is naturally depressed (lower scan scores, bear breadth, weak technicals)
-    # but these are exactly the conditions for mean reversion. Allow with lower bar when:
-    # ML >= 85%, RSI <= 35, cycle_bottom_prox >= 0.80 (stock near cycle trough)
-    _bear_oversold_ues_exception = (
-        regime == 'BEAR'
-        and ml_score >= 85.0
-        and rsi14 is not None and rsi14 <= 35.0
-        and cycle_bottom_prox is not None and cycle_bottom_prox >= 0.80
+    failures = collect_quality_gate_failures(
+        ues, ml_score, spectral_regime, behavioral_class,
+        false_signal_rate, cycle_bottom_prox, breadth_signal,
+        adaptive_params=adaptive_params, active_regime=active_regime,
+        rsi14=rsi14, rsi_slope=rsi_slope, ad_ratio=ad_ratio, vol_ratio=vol_ratio,
+        close_position=close_position, meta_prob=meta_prob,
+        conformal_p_lo=conformal_p_lo, conformal_p_hi=conformal_p_hi,
+        conformal_confident=conformal_confident,
+        survival_p_tp=survival_p_tp, survival_p_sl=survival_p_sl,
     )
-    _ues_floor = 58.0 if _bear_oversold_ues_exception else 70.0
-    if ues < _ues_floor:
-        return False, 'ues_too_low'
-
-    # EXPLOSIVE + overbought gate (v6 — 2026-05-22 RSI sweep validated):
-    # RSI sweep (6m n=201): rsi<=65: WR=71.0% PF=3.74 | rsi<=67: WR=70.1% PF=3.20 | rsi<=70: WR=64.8%
-    # RSI 67-70 for EXPLOSIVE loses ~5pp WR vs RSI<=67 sweet spot. Tightened 70→67.
-    # Previously: 75→70→67. Each step validated by backtest data.
-    if bclass == 'EXPLOSIVE' and rsi14 is not None and rsi14 > 67.0:
-        return False, 'explosive_overbought'
-
-    # VOLATILE + RSI > 70 gate (tightened from 72 — 2026-05-22 RSI sweet spot):
-    # RSI 67-70 zone costs ~5pp WR. VOLATILE class is already risky — tighten further.
-    if bclass == 'VOLATILE' and rsi14 is not None and rsi14 > 70.0:
-        return False, 'volatile_overbought'
-
-    # STEADY: RSI penalty is baked into UES scoring (RSI 67-70: +8pts vs +25 for 60-67).
-    # Signals with RSI 67-72 for STEADY class will score lower UES and may fall below
-    # the UES gate (70) — soft filter rather than hard block for trend-following setups.
-    # DORMANT RSI gate: disabled — dormant breakouts often have elevated RSI at start
-
-    # Gate 9 (Phase 3): RSI momentum collapse — near-overbought + fast declining slope
-    # RSI 65-70 with slope < -2.5/day means RSI gained 7+ points then reversed quickly
-    # = exhaustion spike, not sustainable momentum. High reversal risk.
-    if rsi14 is not None and rsi_slope is not None:
-        if rsi14 > 65.0 and rsi_slope < -2.5:
-            return False, f'rsi_momentum_collapse:{rsi14:.0f}'
-
-    # Gate 11 (Phase 3): CHOPPY regime quality boost
-    # CHOPPY backtest WR=50%, PF=1.07 — below breakeven after slippage
-    # Require higher UES (75+) and stronger ML score (70%+) in CHOPPY
-    if not _apply_choppy_regime_quality_boost(ues, regime, ml_score):
-        return False, f'choppy_quality_insufficient:ues={ues:.0f},ml={ml_score:.0f}'
-
+    if failures:
+        return False, failures[0]
     return True, None
 
 
 def compute_ues(explosion, breadth, technical, cross_market, liquidity, anti_law,
                 law_conf=None, alpha_grid=None, dna_score=None, cycle_score=None,
-                spectral_boost=None, behavioral_score=None, pine_score=None):
+                spectral_boost=None, behavioral_score=None, pine_score=None,
+                quant_score=None):
     """
     Unified Evidence Score — 13 layers. v2 (win-rate calibrated)
     Core 6 layers (fixed weights) + 6 additive adjustments + 1 spectral multiplier.
@@ -1148,6 +2046,7 @@ def compute_ues(explosion, breadth, technical, cross_market, liquidity, anti_law
       cycle_score      → ±5 pts  (Ph 75 — cycle timing, was ±4)
       behavioral_score → ±6 pts  (Ph 28 — stock behavioral class + FSR)
       pine_score       → ±5 pts  (Ph 29 — TradingView RS percentile + VWAP bias)
+      quant_score      → ±5 pts  (Precision-mined OOS discovery confirmation)
       spectral_boost   → ×[0.85,1.15] (Ph 21 — FFT cycle intelligence, post-UES multiplier)
 
     Explosion score interpretation:
@@ -1159,10 +2058,15 @@ def compute_ues(explosion, breadth, technical, cross_market, liquidity, anti_law
     # reduce its weight slightly to avoid penalizing stocks with no ML data
     exp_weight = 0.28
     if abs(explosion - 50.0) < 1.0:  # near-exactly 50 = no real ML signal
+        # BUG-05 FIX: original 0.20+0.25+0.17+0.15+0.10+0.10 = 0.97 (3% shortfall).
+        # On 100-point scale a 3-point bias flips borderline stocks across the gate.
+        # New weights: 0.20+0.28+0.17+0.15+0.10+0.10 = 1.00 — exact normalization.
         exp_weight = 0.20  # reduce weight when no ML prediction available
-        breadth_w = 0.25   # shift weight to breadth (market-wide context)
+        breadth_w  = 0.28  # absorb the 0.08 from reduced exp (was 0.25 → wrong)
     else:
         breadth_w = 0.20
+    # Verify: ML case: 0.28+0.20+0.17+0.15+0.10+0.10 = 1.00 ✓
+    #         No-ML:   0.20+0.28+0.17+0.15+0.10+0.10 = 1.00 ✓
 
     core = (
         exp_weight  * explosion +
@@ -1172,8 +2076,6 @@ def compute_ues(explosion, breadth, technical, cross_market, liquidity, anti_law
         0.10        * liquidity +
         0.10        * anti_law
     )
-    # Ensure weights sum to 1.0 for either case
-    # (0.28+0.20+0.17+0.15+0.10+0.10 = 1.00 or 0.20+0.25+0.17+0.15+0.10+0.10 = 0.97 → ok, small rounding)
 
     # Additive adjustments (expanded from v1)
     law_adj      = ((safe_float(law_conf,          50.0) - 50.0) / 50.0) * 6.0 if law_conf          is not None else 0.0
@@ -1182,8 +2084,9 @@ def compute_ues(explosion, breadth, technical, cross_market, liquidity, anti_law
     cycle_adj    = ((safe_float(cycle_score,       50.0) - 50.0) / 50.0) * 5.0 if cycle_score       is not None else 0.0
     behav_adj    = ((safe_float(behavioral_score,  50.0) - 50.0) / 50.0) * 6.0 if behavioral_score  is not None else 0.0
     pine_adj     = ((safe_float(pine_score,        50.0) - 50.0) / 50.0) * 5.0 if pine_score        is not None else 0.0
+    quant_adj    = ((safe_float(quant_score,       50.0) - 50.0) / 50.0) * 5.0 if quant_score       is not None else 0.0
 
-    ues_additive = max(0.0, min(100.0, core + law_adj + alpha_adj + dna_adj + cycle_adj + behav_adj + pine_adj))
+    ues_additive = max(0.0, min(100.0, core + law_adj + alpha_adj + dna_adj + cycle_adj + behav_adj + pine_adj + quant_adj))
 
     # Post-UES spectral multiplier (non-linear, Ph 21)
     if spectral_boost is not None:
@@ -1295,11 +2198,13 @@ def cmd_score_symbol(params):
     spec_boost, spec_regime, cycle_btm = get_spectral_score(symbol, date, conn) # Ph 21
     behav_score, bclass, fsr = get_behavioral_score(symbol, conn)               # Ph 28
     pine_score_v, pine_rs, pine_bias = get_pine_analytics_score(symbol, date, conn) # Ph 29
+    macro_edge_v = get_macro_edge_score(symbol, date, conn)
 
     ues = compute_ues(exp_score, breadth_score, tech_score, cross_score,
                       liq_score, anti_score, law_score, alpha_score, dna_score,
                       cycle_score, spectral_boost=spec_boost,
                       behavioral_score=behav_score, pine_score=pine_score_v)
+    ues = min(100.0, max(0.0, ues + macro_edge_v.get('bonus', 0.0)))
 
     # Get RSI + RSI slope for quality gate (Phase 3: Gate 9 — momentum collapse filter)
     _rsi_row2 = conn.execute(
@@ -1345,7 +2250,7 @@ def cmd_score_symbol(params):
 
     # Latest price
     price_row = conn.execute(
-        "SELECT close FROM ohlcv_history WHERE symbol=? ORDER BY bar_time DESC LIMIT 1",
+        "SELECT close FROM ohlcv_history_execution WHERE symbol=? ORDER BY bar_time DESC LIMIT 1",
         (symbol,)
     ).fetchone()
     entry_price = price_row['close'] if price_row else None
@@ -1375,6 +2280,9 @@ def cmd_score_symbol(params):
             'spectral_boost':  round(spec_boost, 3),    # Ph 21 multiplier
             'spectral_regime': spec_regime,             # Ph 21 regime
             'cycle_bottom':    cycle_btm,               # Ph 21 phase proximity
+            'macro_edge_score': round(safe_float(macro_edge_v.get('score'), 0.0), 4),
+            'macro_edge_bonus': round(safe_float(macro_edge_v.get('bonus'), 0.0), 3),
+            'macro_edge_feature_date': macro_edge_v.get('feature_date'),
         },
         'weights': {
             'explosion_ml': '25%', 'breadth': '20%', 'technical': '20%',
@@ -1383,6 +2291,7 @@ def cmd_score_symbol(params):
             'dna_score': '±4pt boost', 'cycle_score': '±4pt boost',
             'behavioral': '±6pt Ph28', 'pine': '±5pt Ph29',
             'spectral_boost': '×[0.85,1.15] Ph21',
+            'macro_edge': '±2pt max; sector OOS only',
         },
         'liquidity_tier': liq_tier,
         'max_position_egp': max_pos,
@@ -1459,9 +2368,17 @@ def _apply_hard_gates(signal: dict, regime: str = 'NEUTRAL') -> tuple:
             except Exception:
                 pass
         is_bear_oversold_exception = (ml_s >= 85.0 and rsi_s <= 35.0 and not _has_unit_error)
-        if not is_bear_oversold_exception:
-            if signal_type not in ('INVESTMENT', 'UNDERVALUED', 'investment', 'undervalued'):
-                return False, "BEAR_REGIME_FILTER"
+        # BUG-02 FIX: original check compared against signal_type which holds scan hash IDs
+        # (e.g. "MUT_05878d6867c8") — never matched "INVESTMENT"/"UNDERVALUED" → 0 gate_passed
+        # every BEAR day. Use behavioral_class and conviction_tier instead:
+        #   STEADY/DORMANT  → value/accumulation stocks — allowed in BEAR
+        #   HIGH_CONVICTION → strong enough signal to pass even in BEAR regime
+        _bclass_v  = signal.get('behavioral_class', '') or ''
+        _ctier_v   = signal.get('conviction_tier', '')  or ''
+        is_investment_type = _bclass_v in ('STEADY', 'DORMANT')
+        is_high_conviction = _ctier_v in ('HIGH_CONVICTION', 'ULTRA_CONVICTION')
+        if not is_bear_oversold_exception and not is_investment_type and not is_high_conviction:
+            return False, "BEAR_REGIME_FILTER"
 
     # Gate 10 (Phase 3 ADX cap): ADX>=40 has WR=44.8% PF=0.83 in backtests
     # Over-extended trends in EGX tend to reverse before reaching targets
@@ -1498,12 +2415,229 @@ def _apply_choppy_regime_quality_boost(ues: float, regime: str, ml_score: float)
     return True
 
 
+def _next_open_after(conn, symbol, signal_date):
+    try:
+        row = conn.execute(
+            """SELECT open FROM ohlcv_history_execution
+               WHERE symbol=? AND date(bar_time,'unixepoch') > ?
+               ORDER BY bar_time LIMIT 1""",
+            (symbol, signal_date),
+        ).fetchone()
+        return safe_float(row['open'], None) if row else None
+    except Exception:
+        return None
+
+
+def _risk_level_age_days(conn, symbol, scan_date, signal_date):
+    if not scan_date or not signal_date or scan_date >= signal_date:
+        return 0
+    try:
+        row = conn.execute(
+            """SELECT COUNT(DISTINCT date(bar_time,'unixepoch')) AS n
+               FROM ohlcv_history_execution
+               WHERE symbol=? AND date(bar_time,'unixepoch') > ?
+                 AND date(bar_time,'unixepoch') <= ?""",
+            (symbol, scan_date, signal_date),
+        ).fetchone()
+        return int(row['n']) if row and row['n'] is not None else None
+    except Exception:
+        return None
+
+
+def _resolve_risk_levels(conn, symbol, signal_date, entry, target, stop, setup_type,
+                         scan_source_date, level_source, price_ctx):
+    """P0 risk pipeline — validate_risk_levels for production + audit snapshot fields."""
+    try:
+        from risk_level_validator import validate_risk_levels
+    except Exception:
+        return {}, None
+    close = safe_float((price_ctx or {}).get('close'), None)
+    if not (close and entry and target and stop):
+        return {}, None
+    next_open = _next_open_after(conn, symbol, signal_date)
+    vs = validate_risk_levels(
+        symbol=symbol,
+        date=signal_date,
+        close=close,
+        entry=entry,
+        target=target,
+        stop=stop,
+        scan_date=scan_source_date,
+        setup_type=setup_type,
+        level_source=level_source,
+        next_open=next_open,
+    )
+    snapshot = {
+        'shadow_risk_bucket': vs.get('bucket'),
+        'shadow_risk_actionability': vs.get('actionability'),
+        'shadow_risk_valid_for_rr': 1 if vs.get('valid_for_rr') else 0,
+        'shadow_effective_entry': vs.get('effective_entry'),
+        'shadow_effective_entry_model': vs.get('effective_entry_model'),
+        'shadow_computed_rr': vs.get('rr'),
+        'shadow_risk_warning': vs.get('risk_warning'),
+        'shadow_final_edge_reason': vs.get('final_edge_reason'),
+        'risk_level_source': level_source,
+        'risk_level_scan_date': scan_source_date,
+        'risk_level_age_days': _risk_level_age_days(conn, symbol, scan_source_date, signal_date),
+        'risk_entry': entry,
+        'risk_target': target,
+        'risk_stop': stop,
+        'risk_close': close,
+    }
+    return snapshot, vs
+
+
+def _sequential_gate_audit(hard_gate_failure, quality_failures, anti_law, final_edge_failure,
+                           forecast_veto, risk_veto, conviction_veto):
+    """Return (all_blocking_gates, first_blocking_gate, exclusive_blockers)."""
+    all_gates = []
+    if hard_gate_failure:
+        all_gates.append(f'HARD_GATE:{hard_gate_failure}')
+    for reason in (quality_failures or []):
+        all_gates.append(f'QG:{reason}')
+    if anti_law:
+        all_gates.append('ANTI_LAW')
+    if final_edge_failure:
+        all_gates.append(str(final_edge_failure))
+    if risk_veto:
+        all_gates.append(risk_veto)
+    if conviction_veto:
+        all_gates.append(conviction_veto)
+    if forecast_veto:
+        all_gates.append(forecast_veto)
+
+    first = all_gates[0] if all_gates else None
+    exclusive = []
+    if hard_gate_failure and len(all_gates) == 1:
+        exclusive.append(f'HARD_GATE:{hard_gate_failure}')
+    elif not hard_gate_failure and len(quality_failures or []) == 1 and len(all_gates) == 1:
+        exclusive.append(f'QG:{quality_failures[0]}')
+    elif (not hard_gate_failure and not quality_failures and anti_law
+          and len(all_gates) == 1):
+        exclusive.append('ANTI_LAW')
+    elif (len(all_gates) == 1 and final_edge_failure and not quality_failures
+          and not hard_gate_failure and not anti_law):
+        exclusive.append(str(final_edge_failure))
+    return all_gates, first, exclusive
+
+
+def _persist_gate_audit_snapshot(conn, row):
+    try:
+        conn.execute("""
+            INSERT OR REPLACE INTO gate_audit_snapshots
+            (signal_date, symbol, ues, ml_score, meta_prob, survival_p_tp, survival_p_sl,
+             scan_score, quant_matches, ad_ratio, vol_ratio, rsi14, close_position,
+             spectral_regime, behavioral_class, breadth_signal, regime, conviction,
+             anti_law, quality_gate_passed, quality_gate_failures,
+             final_edge_passed, final_edge_failure, hard_gate_failure, forecast_veto,
+             actionable, veto_reason, first_blocking_gate, exclusive_blockers, all_blocking_gates,
+             entry_price, stop_loss, t1_target,
+             shadow_risk_bucket, shadow_risk_actionability, shadow_risk_valid_for_rr,
+             shadow_effective_entry, shadow_effective_entry_model, shadow_computed_rr,
+             shadow_risk_warning, shadow_final_edge_reason,
+             risk_level_source, risk_level_scan_date, risk_level_age_days,
+             risk_entry, risk_target, risk_stop, risk_close,
+             old_final_edge_reason, old_all_blocking_gates, old_actionable,
+             shadow_forecast_old_veto, shadow_forecast_policy, shadow_forecast_reason,
+             shadow_forecast_would_reject_new, shadow_forecast_weakness_count,
+             shadow_forecast_structural_block, shadow_forecast_adjusted_conviction,
+             shadow_forecast_position_mult,
+             shadow_low_rule_scan_class, shadow_low_rule_policy, shadow_low_rule_exception,
+             shadow_low_rule_exception_reason, shadow_low_rule_would_fail_old,
+             shadow_low_rule_would_fail_new,
+             shadow_neg_breadth_policy, shadow_neg_breadth_reason,
+             shadow_neg_breadth_would_fail_old, shadow_neg_breadth_would_fail_new,
+             shadow_neg_breadth_adjusted_conviction, shadow_neg_breadth_position_mult,
+             shadow_anti_law_primary_rule, shadow_anti_law_sub_rules, shadow_anti_law_policy,
+             shadow_anti_law_reason, shadow_anti_law_would_block_old,
+             shadow_anti_law_would_block_new, shadow_anti_law_adjusted_conviction,
+             shadow_anti_law_position_mult,
+             shadow_stale_watch_path, shadow_stale_pullback_triggered,
+             shadow_stale_momentum_triggered, shadow_stale_momentum_day,
+             shadow_stale_momentum_entry, shadow_stale_momentum_stop,
+             shadow_stale_momentum_rr, shadow_stale_watch_position_mult,
+             shadow_stale_watch_reason, shadow_stale_would_watch_queue)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,
+                    ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """, (
+            row['signal_date'], row['symbol'], row.get('ues'), row.get('ml_score'),
+            row.get('meta_prob'), row.get('survival_p_tp'), row.get('survival_p_sl'),
+            row.get('scan_score'), row.get('quant_matches'), row.get('ad_ratio'),
+            row.get('vol_ratio'), row.get('rsi14'), row.get('close_position'),
+            row.get('spectral_regime'), row.get('behavioral_class'), row.get('breadth_signal'),
+            row.get('regime'), row.get('conviction'), row.get('anti_law'),
+            row.get('quality_gate_passed'), json.dumps(row.get('quality_gate_failures') or []),
+            row.get('final_edge_passed'), row.get('final_edge_failure'),
+            row.get('hard_gate_failure'), row.get('forecast_veto'),
+            row.get('actionable'), row.get('veto_reason'),
+            row.get('first_blocking_gate'), json.dumps(row.get('exclusive_blockers') or []),
+            json.dumps(row.get('all_blocking_gates') or []),
+            row.get('entry_price'), row.get('stop_loss'), row.get('t1_target'),
+            row.get('shadow_risk_bucket'), row.get('shadow_risk_actionability'),
+            row.get('shadow_risk_valid_for_rr'),
+            row.get('shadow_effective_entry'), row.get('shadow_effective_entry_model'),
+            row.get('shadow_computed_rr'), row.get('shadow_risk_warning'),
+            row.get('shadow_final_edge_reason'),
+            row.get('risk_level_source'), row.get('risk_level_scan_date'),
+            row.get('risk_level_age_days'),
+            row.get('risk_entry'), row.get('risk_target'), row.get('risk_stop'),
+            row.get('risk_close'),
+            row.get('old_final_edge_reason'), json.dumps(row.get('old_all_blocking_gates') or []),
+            row.get('old_actionable'),
+            row.get('shadow_forecast_old_veto'), row.get('shadow_forecast_policy'),
+            row.get('shadow_forecast_reason'), row.get('shadow_forecast_would_reject_new'),
+            row.get('shadow_forecast_weakness_count'), row.get('shadow_forecast_structural_block'),
+            row.get('shadow_forecast_adjusted_conviction'), row.get('shadow_forecast_position_mult'),
+            row.get('shadow_low_rule_scan_class'), row.get('shadow_low_rule_policy'),
+            row.get('shadow_low_rule_exception'), row.get('shadow_low_rule_exception_reason'),
+            row.get('shadow_low_rule_would_fail_old'), row.get('shadow_low_rule_would_fail_new'),
+            row.get('shadow_neg_breadth_policy'), row.get('shadow_neg_breadth_reason'),
+            row.get('shadow_neg_breadth_would_fail_old'), row.get('shadow_neg_breadth_would_fail_new'),
+            row.get('shadow_neg_breadth_adjusted_conviction'), row.get('shadow_neg_breadth_position_mult'),
+            row.get('shadow_anti_law_primary_rule'), row.get('shadow_anti_law_sub_rules'),
+            row.get('shadow_anti_law_policy'), row.get('shadow_anti_law_reason'),
+            row.get('shadow_anti_law_would_block_old'), row.get('shadow_anti_law_would_block_new'),
+            row.get('shadow_anti_law_adjusted_conviction'), row.get('shadow_anti_law_position_mult'),
+            row.get('shadow_stale_watch_path'), row.get('shadow_stale_pullback_triggered'),
+            row.get('shadow_stale_momentum_triggered'), row.get('shadow_stale_momentum_day'),
+            row.get('shadow_stale_momentum_entry'), row.get('shadow_stale_momentum_stop'),
+            row.get('shadow_stale_momentum_rr'), row.get('shadow_stale_watch_position_mult'),
+            row.get('shadow_stale_watch_reason'), row.get('shadow_stale_would_watch_queue'),
+        ))
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("gate_audit_snapshot persist failed: %s", e)
+
+
+def _upstream_preflight_issues(conn, date):
+    """Fail fast when scan/ML layers have not caught up to the signal date."""
+    issues = []
+    max_scan = conn.execute("SELECT MAX(scan_date) FROM scans").fetchone()[0]
+    max_pred = conn.execute("SELECT MAX(pred_date) FROM explosion_predictions").fetchone()[0]
+    if not max_scan or max_scan < date:
+        issues.append(f'scans_latest={max_scan} < signal_date={date}')
+    if not max_pred or max_pred < date:
+        issues.append(f'ml_pred_latest={max_pred} < signal_date={date}')
+    return issues
+
+
 def cmd_score_all(params):
-    date = params.get('date', datetime.date.today().strftime('%Y-%m-%d'))
     min_scan_score = float(params.get('min_scan_score', 0))
 
     conn = get_db()
     ensure_tables(conn)
+    date = params.get('date') or latest_ohlcv_date(conn)
+
+    if not params.get('allow_stale'):
+        preflight_issues = _upstream_preflight_issues(conn, date)
+        if preflight_issues:
+            conn.close()
+            return {
+                'success': False,
+                'error': 'upstream_not_ready',
+                'date': date,
+                'issues': preflight_issues,
+            }
 
     # ── Build scan_score_lookup (symbol → {score, setup_type}) ─────────────────
     # Strategy: exact-date match first, then rolling 3-day fallback for staleness.
@@ -1517,11 +2651,12 @@ def cmd_score_all(params):
     if _scan_rows:
         _scan_lookup = {r['symbol']: {'score': r['score'], 'setup_type': r['setup_type']} for r in _scan_rows}
     else:
-        # Rolling 3-day fallback — TradingView scanner may not run every session
+        # Rolling 10-day fallback — EGX holidays/Eid gaps can leave 5+ sessions without scans.
+        # June 2026 audit: 3-day window missed 2026-06-04 scans when scoring 2026-06-08.
         _scan_rows2 = conn.execute(
             """SELECT symbol, MAX(score) as score, setup_type
                FROM scans
-               WHERE scan_date >= date(?, '-3 days') AND scan_date <= ?
+               WHERE scan_date >= date(?, '-10 days') AND scan_date <= ?
                  AND rejected=0 AND score>=?
                GROUP BY symbol""",
             (date, date, min_scan_score)
@@ -1547,6 +2682,58 @@ def cmd_score_all(params):
     ml_thr_active = adaptive_params.get(f'ml_threshold_{regime}',
                     adaptive_params.get('ml_threshold_OVERALL', 65.0))
 
+    # ML-Advanced #1: meta-labeler probabilities for this date (bulk load)
+    _meta_map = {}
+    try:
+        for _mr in conn.execute(
+                "SELECT symbol, meta_prob, moe_prob FROM meta_label_scores WHERE date=?", (date,)):
+            _meta_map[_mr['symbol']] = (safe_float(_mr['meta_prob'], None),
+                                        safe_float(_mr['moe_prob'], None))
+    except Exception:
+        pass
+
+    # ML-Advanced #10: conformal win-prob bounds (bulk load)
+    _conformal_map = {}
+    try:
+        for _cr in conn.execute(
+                "SELECT symbol, p_lo, p_hi, confident FROM conformal_scores WHERE date=?", (date,)):
+            _conformal_map[_cr['symbol']] = (
+                safe_float(_cr['p_lo'], None), safe_float(_cr['p_hi'], None),
+                int(_cr['confident'] or 0))
+    except Exception:
+        pass
+
+    # Phase 2.10 — anti-law daily scan (bulk load for sub-rule shadow)
+    _anti_scan_map = {}
+    try:
+        for _ar in conn.execute(
+                "SELECT symbol, triggered_types, strongest_anti_law, safety_level, anti_law_veto "
+                "FROM anti_law_daily_scan WHERE date=?", (date,)):
+            _anti_scan_map[_ar['symbol']] = dict(_ar)
+    except Exception:
+        pass
+
+    # ML-Advanced #8: survival exit profile (bulk load)
+    _survival_map = {}
+    try:
+        for _sr in conn.execute(
+                "SELECT symbol, p_tp_first, p_sl_first, hold_days FROM survival_exit_profile "
+                "WHERE date=?", (date,)):
+            _survival_map[_sr['symbol']] = (
+                safe_float(_sr['p_tp_first'], None), safe_float(_sr['p_sl_first'], None),
+                int(_sr['hold_days'] or 7))
+    except Exception:
+        pass
+
+    # Phase 2.12C — forward bars for STALE watch-queue shadow (bulk load once per date)
+    _stale_by_sym = {}
+    _stale_sym_idx = {}
+    try:
+        from gate_doctor_audit import load_bars
+        _stale_by_sym, _stale_sym_idx = load_bars(conn)
+    except Exception:
+        pass
+
     # Ph58 — Markov consensus: load latest market-level Markov signal
     _markov_signal_1d = 0.5   # neutral default
     _markov_triple    = False
@@ -1562,17 +2749,53 @@ def cmd_score_all(params):
     except Exception:
         pass
 
-    # Ph58 — Stock-level tomorrow forecasts (symbol → p_up)
+    # Ph58 — Stock-level tomorrow forecasts (symbol → reliable bullish vote)
     _stock_pup = {}
+    _stock_forecast = {}
+    _stock_fcast_vote = {}
     try:
         _frows = conn.execute("""
-            SELECT symbol, p_up FROM stock_tomorrow_forecast
+            SELECT symbol, direction, p_up, p_flat, p_down, confidence, forecast_reliable, abstained
+            FROM stock_tomorrow_forecast
             WHERE forecast_date = (SELECT MAX(forecast_date) FROM stock_tomorrow_forecast
                                    WHERE forecast_date <= ?)
         """, (date,)).fetchall()
         _stock_pup = {r['symbol']: float(r['p_up'] or 0.5) for r in _frows}
+        for r in _frows:
+            reliable = bool(int(r['forecast_reliable'] if r['forecast_reliable'] is not None else 1))
+            abstained = bool(int(r['abstained'] or 0)) or str(r['direction'] or '').upper() == 'ABSTAIN'
+            _stock_forecast[r['symbol']] = {
+                'direction': str(r['direction'] or 'FLAT').upper(),
+                'p_up': float(r['p_up'] or 0.0),
+                'p_down': float(r['p_down'] or 0.0),
+                'confidence': float(r['confidence'] or 0.0),
+                'reliable': reliable,
+                'abstained': abstained,
+            }
+            if reliable and not abstained:
+                _stock_fcast_vote[r['symbol']] = float(r['p_up'] or 0.5) > 0.52
     except Exception:
-        pass
+        try:
+            _frows = conn.execute("""
+                SELECT symbol, direction, p_up, p_flat, p_down, confidence FROM stock_tomorrow_forecast
+                WHERE forecast_date = (SELECT MAX(forecast_date) FROM stock_tomorrow_forecast
+                                       WHERE forecast_date <= ?)
+            """, (date,)).fetchall()
+            _stock_pup = {r['symbol']: float(r['p_up'] or 0.5) for r in _frows}
+            _stock_forecast = {
+                r['symbol']: {
+                    'direction': str(r['direction'] or 'FLAT').upper(),
+                    'p_up': float(r['p_up'] or 0.0),
+                    'p_down': float(r['p_down'] or 0.0),
+                    'confidence': float(r['confidence'] or 0.0),
+                    'reliable': True,
+                    'abstained': False,
+                }
+                for r in _frows
+            }
+            _stock_fcast_vote = {r['symbol']: float(r['p_up'] or 0.5) > 0.52 for r in _frows}
+        except Exception:
+            pass
 
     # Ph58 — Spectral signals per symbol (symbol → spectral_regime, cycle_bottom_prox)
     _spectral_map = {}
@@ -1587,6 +2810,9 @@ def cmd_score_all(params):
     except Exception:
         pass
 
+    # Macro edge: only populated when macro_edge_validator accepts strict sector OOS links.
+    _macro_edge_map = load_macro_edge_scores(conn, date)
+
     results          = []
     hard_gate_rejected = []   # signals blocked by _apply_hard_gates()
     _gate_rejection_counts = {}  # gate_type → count for summary log
@@ -1594,7 +2820,18 @@ def cmd_score_all(params):
     for sig in scans:
         symbol    = sig['symbol']
         scan_raw  = safe_float(sig['score'])   # raw scan score (0–100)
-        exp_score  = get_explosion_score(symbol, date, conn)
+        exp_raw    = get_explosion_score(symbol, date, conn)
+        quant_score_v, quant_rule_v, quant_matches_v = get_quant_discovery_score(symbol, date, conn)
+        pine_score_v, pine_rs, pine_bias = get_pine_analytics_score(symbol, date, conn)
+        exp_score, ml_breakdown = get_fused_ml_score(
+            symbol, date, conn,
+            explosion_score=exp_raw,
+            scan_score=scan_raw,
+            quant_score=quant_score_v,
+            forecast_pup=_stock_pup.get(symbol),
+            quant_matches=quant_matches_v,
+            pine_rs=pine_rs,
+        )
         tech_score = get_technical_score(symbol, date, conn)
         liq_score, liq_tier, max_pos = get_liquidity_score(symbol, conn)
         anti_score, is_anti = get_anti_law_score(symbol, date, conn)
@@ -1603,17 +2840,24 @@ def cmd_score_all(params):
         cycle_score = get_cycle_score(symbol, date, conn)                            # Ph 75
         spec_boost, spec_regime, cycle_btm = get_spectral_score(symbol, date, conn) # Ph 21
         behav_score, bclass, fsr = get_behavioral_score(symbol, conn)               # Ph 28
-        pine_score_v, pine_rs, pine_bias = get_pine_analytics_score(symbol, date, conn)  # Ph 29
+        macro_edge_v = _macro_edge_map.get(symbol, {
+            'score': 0.0,
+            'bonus': 0.0,
+            'feature_date': None,
+            'version': None,
+        })
 
         ues = compute_ues(exp_score, breadth_score, tech_score, cross_score,
                           liq_score, anti_score, law_score, alpha_score, dna_score,
                           cycle_score, spectral_boost=spec_boost,
-                          behavioral_score=behav_score, pine_score=pine_score_v)
+                          behavioral_score=behav_score, pine_score=pine_score_v,
+                          quant_score=quant_score_v)
         # Ph 22: also compute UES WITHOUT spectral boost for shadow comparison
         ues_no_spec = compute_ues(exp_score, breadth_score, tech_score, cross_score,
                                   liq_score, anti_score, law_score, alpha_score, dna_score,
                                   cycle_score, spectral_boost=None,
-                                  behavioral_score=behav_score, pine_score=pine_score_v)
+                                  behavioral_score=behav_score, pine_score=pine_score_v,
+                                  quant_score=quant_score_v)
 
         # Ph 58 — Consensus Adjustment: agree/disagree bonus/penalty
         # Checks: (1) Markov market signal, (2) per-stock tomorrow forecast, (3) spectral regime
@@ -1621,17 +2865,25 @@ def cmd_score_all(params):
         _spec_info  = _spectral_map.get(symbol, ('noisy', 0.0))
         _spec_bull  = (_spec_info[0] in ('cyclical', 'expansion') and _spec_info[1] > 0.5)
         _markov_bull = (_markov_signal_1d > 0.65)
-        _fcast_bull  = (_pup > 0.52)
-        _n_agree     = sum([_markov_bull, _fcast_bull, _spec_bull])
+        _fcast_vote  = _stock_fcast_vote.get(symbol)
+        _votes       = [_markov_bull, _spec_bull]
+        if _fcast_vote is not None:
+            _votes.append(_fcast_vote)
+        _n_agree     = sum(_votes)
         if _n_agree >= 3:
             _consensus_adj = +5.0   # Triple consensus: strong bonus
         elif _n_agree == 2:
             _consensus_adj = +2.0   # Double consensus: mild bonus
-        elif _n_agree == 0:
+        elif _n_agree == 0 and len(_votes) >= 2:
             _consensus_adj = -3.0   # No consensus: penalise
         else:
             _consensus_adj = 0.0    # Mixed: neutral
         ues = min(100.0, max(0.0, ues + _consensus_adj))
+
+        # OOS-proven macro sector edge: ranking nudge only; quality/client gates remain in force.
+        _macro_edge_bonus = safe_float(macro_edge_v.get('bonus'), 0.0)
+        if _macro_edge_bonus:
+            ues = min(100.0, max(0.0, ues + _macro_edge_bonus))
 
         # Fetch RSI + RSI slope for quality gate (Phase 3: Gate 9 — momentum collapse filter)
         _rsi14_for_gate  = None
@@ -1657,30 +2909,94 @@ def cmd_score_all(params):
         except Exception:
             pass
 
-        conviction = get_conviction_tier(ues, regime, breadth_sig, is_anti,
+        anti_quant_override = bool(
+            is_anti
+            and anti_score > 0
+            and quant_score_v >= 85.0
+            and quant_matches_v >= 10
+            and scan_raw >= 55.0
+            and exp_score >= 45.0
+        )
+        anti_ues_override = bool(
+            is_anti
+            and ues >= 78.0
+            and scan_raw >= 72.0
+            and (exp_score >= 58.0 or quant_score_v >= 75.0)
+        )
+        is_anti_for_decision = bool(is_anti and not anti_quant_override and not anti_ues_override)
+
+        conviction = get_conviction_tier(ues, regime, breadth_sig, is_anti_for_decision,
                                          scan_score=scan_raw, ml_score=exp_score,
                                          behavioral_class=bclass, rsi14=_rsi14_for_gate)
 
+        _price_ctx_gate = _get_latest_bar_context(conn, symbol, date)
+        _close_pos_gate = safe_float(_price_ctx_gate.get('close_position'), None)
+
         # Ph 27/50 — Adaptive Quality Gate (Bayesian-calibrated thresholds) + Phase 3 + AD breadth + vol
-        gate_passed, gate_reason = apply_quality_gate(
+        _meta_p = (_meta_map.get(symbol) or (None, None))[0]
+        _conf = _conformal_map.get(symbol, (None, None, None))
+        _surv = _survival_map.get(symbol, (None, None, None))
+        _qg_failures = collect_quality_gate_failures(
             ues, exp_score, spec_regime, bclass, fsr, cycle_btm, breadth_sig,
             adaptive_params=adaptive_params, active_regime=regime,
             rsi14=_rsi14_for_gate, rsi_slope=_rsi_slope_gate,
-            ad_ratio=_ad_ratio_today, vol_ratio=_vol_now
+            ad_ratio=_ad_ratio_today, vol_ratio=_vol_now,
+            close_position=_close_pos_gate, meta_prob=_meta_p,
+            conformal_p_lo=_conf[0], conformal_p_hi=_conf[1], conformal_confident=_conf[2],
+            survival_p_tp=_surv[0], survival_p_sl=_surv[1],
+            conviction=conviction,
         )
+        gate_passed = not _qg_failures
+        gate_reason = _qg_failures[0] if _qg_failures else None
+
+        # Phase 2.9D — conviction / position penalty for soft negative breadth tiers
+        _nb_pol_v = {}
+        _effective_conviction = conviction
+        _nb_pos_mult = 1.0
+        try:
+            from negative_breadth_policy import evaluate_negative_breadth_policy
+            _nb_pol_v = evaluate_negative_breadth_policy(
+                ad_ratio=_ad_ratio_today, ues=ues, ml_score=exp_score, conviction=conviction,
+            )
+            if _nb_pol_v.get('applies'):
+                _effective_conviction = _nb_pol_v.get('adjusted_conviction') or conviction
+                _nb_pos_mult = safe_float(_nb_pol_v.get('position_multiplier'), 1.0)
+        except Exception:
+            pass
+        _max_pos_adj = round(max_pos * _nb_pos_mult, 0) if max_pos else max_pos
 
         # Fetch scan entry levels (entry_low/high, stop_loss, t1, t2)
         entry_price_v = None; entry_high_v = None; stop_loss_v = None
         t1_v = None; t2_v = None; r_ratio_v = None
         setup_type_v  = None
+        scan_volume_ratio_v = None
+        scan_source_date_v = None
+        _level_source_v = None
+        _used_fallback_risk = False
         try:
             sr = conn.execute(
-                """SELECT entry_low, entry_high, stop_loss, t1, t2, rr1, close_price, setup_type
+                """SELECT scan_date, entry_low, entry_high, stop_loss, t1, t2, rr1, close_price,
+                          setup_type, volume_ratio
                    FROM scans WHERE scan_date=? AND symbol=? AND rejected=0
                    ORDER BY score DESC LIMIT 1""",
                 (date, symbol)
             ).fetchone()
             if sr:
+                _level_source_v = 'scans_same_day'
+            if not sr:
+                sr = conn.execute(
+                    """SELECT scan_date, entry_low, entry_high, stop_loss, t1, t2, rr1, close_price,
+                              setup_type, volume_ratio
+                       FROM scans
+                       WHERE scan_date >= date(?, '-10 days') AND scan_date <= ?
+                         AND symbol=? AND rejected=0
+                       ORDER BY score DESC, scan_date DESC LIMIT 1""",
+                    (date, date, symbol)
+                ).fetchone()
+                if sr:
+                    _level_source_v = 'scans_lookback_10d'
+            if sr:
+                scan_source_date_v = sr['scan_date']
                 entry_price_v = safe_float(sr['close_price']) or safe_float(sr['entry_low'])
                 entry_high_v  = safe_float(sr['entry_high'])
                 stop_loss_v   = safe_float(sr['stop_loss'])
@@ -1688,6 +3004,7 @@ def cmd_score_all(params):
                 t2_v          = safe_float(sr['t2'])
                 r_ratio_v     = safe_float(sr['rr1'])
                 setup_type_v  = sr['setup_type']
+                scan_volume_ratio_v = safe_float(sr['volume_ratio'], None)
         except Exception:
             pass
 
@@ -1698,9 +3015,9 @@ def cmd_score_all(params):
         # target = entry*(1 + 3.0*ATR14_pct)  → 2:1 R/R
         if entry_price_v is None or (entry_price_v and (not stop_loss_v or stop_loss_v <= 0)):
             try:
-                # Fetch the last close on or before signal date from ohlcv_history
+                # Fetch the last close on or before signal date from ohlcv_history_execution
                 _ohlcv_row = conn.execute(
-                    """SELECT close FROM ohlcv_history
+                    """SELECT close FROM ohlcv_history_execution
                        WHERE symbol=?
                          AND date(bar_time,'unixepoch') <= ?
                        ORDER BY bar_time DESC LIMIT 1""",
@@ -1726,6 +3043,7 @@ def cmd_score_all(params):
                     t2_v          = round(_entry * (1.0 + 5.0 * _atr_pct), 4)
                     _stop_dist    = max(_entry - stop_loss_v, 0.0001)
                     r_ratio_v     = round((_t1_dist := t1_v - _entry) / _stop_dist, 2) if _stop_dist else 2.0
+                    _used_fallback_risk = True
             except Exception:
                 pass  # leave as None if anything goes wrong
 
@@ -1734,10 +3052,34 @@ def cmd_score_all(params):
         # This prevents signals being tracked with unlimited downside risk.
         if entry_price_v and (not stop_loss_v or stop_loss_v <= 0):
             stop_loss_v = round(entry_price_v * 0.95, 4)  # 5% default SL
+            _used_fallback_risk = True
         if entry_price_v and not t1_v:
             t1_v = round(entry_price_v * 1.10, 4)   # 10% default T1 (2:1 R/R with 5% SL)
         if entry_price_v and not t2_v:
             t2_v = round(entry_price_v * 1.15, 4)   # 15% default T2
+
+        if _used_fallback_risk and not scan_source_date_v:
+            _level_source_v = 'atr_fallback'
+        elif not _level_source_v:
+            _level_source_v = 'missing'
+
+        # P0 — risk level validation (production Final Edge RR path + audit logging)
+        _risk_shadow_v, _risk_validation_v = _resolve_risk_levels(
+            conn, symbol, date,
+            entry_price_v, t1_v, stop_loss_v,
+            setup_type_v or sig.get('setup_type'),
+            scan_source_date_v, _level_source_v, _price_ctx_gate,
+        )
+        if _risk_validation_v:
+            _price_ctx_gate = dict(_price_ctx_gate or {})
+            _price_ctx_gate['_risk_validation'] = _risk_validation_v
+        _price_ctx_gate = dict(_price_ctx_gate or {})
+        _price_ctx_gate['_low_rule_ctx'] = {
+            'ues': ues,
+            'ml_score': exp_score,
+            'anti_law': bool(is_anti_for_decision),
+            'quality_gate_failures': _qg_failures,
+        }
 
         # ── Hard Gates (applied after UES, before adding to active signals) ──
         # Build a lightweight dict for gate inspection
@@ -1768,11 +3110,16 @@ def cmd_score_all(params):
             pass
 
         _gate_signal_dict = {
-            'rsi14':        _rsi_now,
-            'adx14':        _adx_now,
-            'adv20_value':  _adv20_v,
-            'signal_type':  setup_type_v or sig.get('setup_type') or '',
-            'ml_score':     exp_score,   # for BEAR regime oversold exception
+            'rsi14':            _rsi_now,
+            'adx14':            _adx_now,
+            'adv20_value':      _adv20_v,
+            'signal_type':      setup_type_v or sig.get('setup_type') or '',
+            # BUG-02 FIX: BEAR_REGIME_FILTER compared against signal_type (scan hash IDs
+            # like "MUT_05878d6867c8" — never matched "INVESTMENT"/"UNDERVALUED").
+            # Pass behavioral_class and conviction_tier so the filter uses canonical values.
+            'behavioral_class': bclass,      # STEADY/EXPLOSIVE/VOLATILE/DORMANT/UNKNOWN
+            'conviction_tier':  conviction,  # HIGH_CONVICTION/MEDIUM_CONVICTION/WATCH/REJECT
+            'ml_score':         exp_score,   # for BEAR regime oversold exception
         }
 
         hard_passed, hard_reason = _apply_hard_gates(_gate_signal_dict, regime=regime)
@@ -1804,11 +3151,95 @@ def cmd_score_all(params):
                 'REJECT', regime, breadth_sig, scan_raw,
                 n_laws, top_law_id, entry_price_v, entry_high_v, stop_loss_v,
                 t1_v, t2_v, r_ratio_v,
-                liq_tier, max_pos, 1 if is_anti else 0,
+                liq_tier, max_pos, 1 if is_anti_for_decision else 0,
                 dna_score, cycle_score,
                 0, f'HARD_GATE:{hard_reason}', bclass, pine_rs
             ))
+            _hg_all, _hg_first, _hg_excl = _sequential_gate_audit(
+                hard_reason, _qg_failures, False, None, None, None, None,
+            )
+            _persist_gate_audit_snapshot(conn, {
+                'signal_date': date, 'symbol': symbol, 'ues': round(ues, 1),
+                'ml_score': exp_score, 'meta_prob': _meta_p,
+                'survival_p_tp': _surv[0], 'survival_p_sl': _surv[1],
+                'scan_score': scan_raw, 'quant_matches': quant_matches_v,
+                'ad_ratio': _ad_ratio_today, 'vol_ratio': _vol_now,
+                'rsi14': _rsi14_for_gate, 'close_position': _close_pos_gate,
+                'spectral_regime': spec_regime, 'behavioral_class': bclass,
+                'breadth_signal': breadth_sig, 'regime': regime,
+                'conviction': conviction, 'anti_law': 0,
+                'quality_gate_passed': 0 if _qg_failures else 1,
+                'quality_gate_failures': _qg_failures,
+                'final_edge_passed': 0, 'final_edge_failure': None,
+                'hard_gate_failure': hard_reason, 'forecast_veto': None,
+                'actionable': 0, 'veto_reason': f'HARD_GATE:{hard_reason}',
+                'first_blocking_gate': _hg_first,
+                'exclusive_blockers': _hg_excl, 'all_blocking_gates': _hg_all,
+                'entry_price': entry_price_v, 'stop_loss': stop_loss_v, 't1_target': t1_v,
+                'old_final_edge_reason': f'HARD_GATE:{hard_reason}',
+                'old_all_blocking_gates': _hg_all,
+                'old_actionable': 0,
+                **_risk_shadow_v,
+            })
+            write_final_signal(
+                conn,
+                date=date,
+                symbol=symbol,
+                setup_type=setup_type_v or sig.get('setup_type'),
+                score=round(ues, 1),
+                entry_price=entry_price_v,
+                entry_high=entry_high_v,
+                stop_loss=stop_loss_v,
+                t1_target=t1_v,
+                t2_target=t2_v,
+                r_ratio=r_ratio_v,
+                scan_score=scan_raw,
+                pine_score=pine_score_v,
+                ml_score=exp_score,
+                regime=regime,
+                actionable=False,
+                veto_reason=f'HARD_GATE:{hard_reason}',
+                source_breakdown={
+                    'rules': scan_raw,
+                    'ues': round(ues, 1),
+                    'ml': exp_score,
+                    'ml_fusion': ml_breakdown,
+                    'pine_score': pine_score_v,
+                    'pine_rs_percentile': pine_rs,
+                    'quant_discovery_score': quant_score_v,
+                    'quant_discovery_rule': quant_rule_v,
+                    'quant_discovery_matches': quant_matches_v,
+                    'macro_edge_score': round(safe_float(macro_edge_v.get('score'), 0.0), 4),
+                    'macro_edge_bonus': round(safe_float(macro_edge_v.get('bonus'), 0.0), 3),
+                    'macro_edge_feature_date': macro_edge_v.get('feature_date'),
+                    'macro_edge_version': macro_edge_v.get('version'),
+                    'liquidity': liq_score,
+                    'anti_law': anti_score,
+                    'anti_quant_override': anti_quant_override,
+                    'anti_ues_override': anti_ues_override,
+                    'quality_gate_passed': False,
+                    'gate_reason': f'HARD_GATE:{hard_reason}',
+                },
+            )
             continue  # do not add to active signals list
+
+        _final_edge_passed, _final_edge_reason, _final_edge_metrics = _apply_final_edge_gates(
+            symbol=symbol,
+            setup_type=setup_type_v or sig.get('setup_type'),
+            scan_score=scan_raw,
+            entry_price=entry_price_v,
+            entry_high=entry_high_v,
+            stop_loss=stop_loss_v,
+            t1_target=t1_v,
+            r_ratio=r_ratio_v,
+            used_fallback_risk=_used_fallback_risk,
+            scan_volume_ratio=scan_volume_ratio_v,
+            price_ctx=_price_ctx_gate,
+            volume_ratio_min=adaptive_params.get('volume_ratio_min', 2.5),
+            quant_rule=quant_rule_v,
+            quant_matches=quant_matches_v,
+            quant_score=quant_score_v,
+        )
 
         conn.execute("""
             INSERT OR REPLACE INTO unified_signals
@@ -1824,13 +3255,289 @@ def cmd_score_all(params):
         """, (
             date, symbol, exp_score, breadth_score, tech_score,
             cross_score, liq_score, anti_score, ues,
-            conviction, regime, breadth_sig, scan_raw,
+            _effective_conviction, regime, breadth_sig, scan_raw,
             n_laws, top_law_id, entry_price_v, entry_high_v, stop_loss_v,
             t1_v, t2_v, r_ratio_v,
-            liq_tier, max_pos, 1 if is_anti else 0,
+            liq_tier, _max_pos_adj, 1 if is_anti_for_decision else 0,
             dna_score, cycle_score,
             1 if gate_passed else 0, gate_reason, bclass, pine_rs
         ))
+
+        _risk_complete = bool(entry_price_v and entry_high_v and stop_loss_v and t1_v and r_ratio_v)
+        _valid_risk_structure = bool(
+            _risk_complete
+            and stop_loss_v < entry_price_v
+            and t1_v > entry_price_v
+            and entry_high_v >= entry_price_v
+        )
+        _rr_ok = bool(r_ratio_v and r_ratio_v >= 1.3)
+        _actionable = (
+            gate_passed
+            and _final_edge_passed
+            and not is_anti_for_decision
+            and _valid_risk_structure
+            and _rr_ok
+            and _effective_conviction in ('ULTRA_CONVICTION', 'HIGH_CONVICTION', 'MEDIUM_CONVICTION')
+        )
+        _forecast_veto = None
+        _fc = _stock_forecast.get(symbol)
+        if _fc and _fc.get('reliable', True) and not _fc.get('abstained', False):
+            if _fc.get('direction') == 'DOWN':
+                _forecast_veto = 'FORECAST_DOWN'
+            elif (_fc.get('p_down') or 0.0) > (_fc.get('p_up') or 0.0):
+                _forecast_veto = 'FORECAST_DOWNSIDE_DOMINANT'
+        if _actionable and _forecast_veto:
+            _actionable = False
+
+        # Phase 2.7 — forecast policy shadow (observe only; no production decision change)
+        _forecast_shadow_v = {}
+        try:
+            from forecast_down_policy import build_forecast_shadow_fields
+            _forecast_shadow_v = build_forecast_shadow_fields(
+                forecast_veto=_forecast_veto,
+                ues=ues,
+                ml_score=exp_score,
+                setup_type=setup_type_v or sig.get('setup_type'),
+                conviction=conviction,
+                risk_bucket=_risk_shadow_v.get('shadow_risk_bucket'),
+                risk_valid_for_rr=_risk_shadow_v.get('shadow_risk_valid_for_rr', 0),
+                risk_actionability=_risk_shadow_v.get('shadow_risk_actionability'),
+                ad_ratio=_ad_ratio_today,
+                vol_ratio=_vol_now,
+                rs_percentile=pine_rs,
+                is_sector_leader=bool(pine_rs and pine_rs >= 70),
+                final_edge_passed=1 if _final_edge_passed else 0,
+                final_edge_failure=_final_edge_reason,
+                hard_gate_failure=None,
+                quality_gate_failures=_qg_failures,
+                anti_law=1 if is_anti_for_decision else 0,
+                quality_gate_passed=1 if gate_passed else 0,
+            )
+        except Exception:
+            pass
+
+        # Phase 2.8 — LOW_RULE quant-path shadow (observe only; no production change)
+        _low_rule_shadow_v = {}
+        try:
+            from low_rule_score_policy import build_low_rule_shadow_fields
+            _low_rule_shadow_v = build_low_rule_shadow_fields(
+                scan_score=scan_raw,
+                quant_matches=quant_matches_v,
+                quant_rule=quant_rule_v,
+                setup_type=setup_type_v or sig.get('setup_type'),
+                ues=ues,
+                ml_score=exp_score,
+                risk_bucket=_risk_shadow_v.get('shadow_risk_bucket'),
+                risk_valid_for_rr=_risk_shadow_v.get('shadow_risk_valid_for_rr', 0),
+                risk_actionability=_risk_shadow_v.get('shadow_risk_actionability'),
+                final_edge_failure=_final_edge_reason,
+                hard_gate_failure=None,
+                quality_gate_failures=_qg_failures,
+                anti_law=1 if is_anti_for_decision else 0,
+                used_fallback_risk=_used_fallback_risk,
+            )
+        except Exception:
+            pass
+
+        # Phase 2.9 — negative breadth tiered policy shadow (observe only)
+        _neg_breadth_shadow_v = {}
+        try:
+            from negative_breadth_policy import build_negative_breadth_shadow_fields
+            _neg_breadth_shadow_v = build_negative_breadth_shadow_fields(
+                ad_ratio=_ad_ratio_today,
+                ues=ues,
+                ml_score=exp_score,
+                conviction=conviction,
+                forecast_veto=_forecast_veto,
+                anti_law=1 if is_anti_for_decision else 0,
+            )
+        except Exception:
+            pass
+
+        # Phase 2.10 — ANTI_LAW sub-rule shadow (observe only; no production change)
+        _anti_law_shadow_v = {}
+        try:
+            from anti_law_policy import build_anti_law_shadow_fields
+            _al_scan = _anti_scan_map.get(symbol) or {}
+            _anti_law_shadow_v = build_anti_law_shadow_fields(
+                is_anti=is_anti,
+                is_anti_for_decision=is_anti_for_decision,
+                triggered_types=_al_scan.get('triggered_types'),
+                strongest_anti_law=_al_scan.get('strongest_anti_law'),
+                safety_level=_al_scan.get('safety_level'),
+                ues=ues,
+                ml_score=exp_score,
+                quant_matches=quant_matches_v,
+                quant_score=quant_score_v,
+                scan_score=scan_raw,
+                risk_bucket=_risk_shadow_v.get('shadow_risk_bucket'),
+                risk_valid_for_rr=_risk_shadow_v.get('shadow_risk_valid_for_rr', 0),
+                conviction=_effective_conviction,
+                static_veto=bool(is_anti and not _al_scan),
+            )
+        except Exception:
+            pass
+
+        # Phase 2.12C — STALE watch queue shadow (pullback + momentum paths)
+        _stale_watch_shadow_v = {}
+        if _risk_shadow_v.get('shadow_risk_bucket') == 'STALE_TARGET':
+            try:
+                from gate_doctor_audit import forward_bars
+                from stale_watch_queue import build_stale_watch_shadow_fields
+                _sig_pos = _stale_sym_idx.get(symbol, {}).get(date)
+                _sig_arr = _stale_by_sym.get(symbol)
+                _signal_low = None
+                if _sig_arr and _sig_pos is not None:
+                    _signal_low = _sig_arr[_sig_pos][3]
+                _fwd = forward_bars(_stale_by_sym, _stale_sym_idx, symbol, date, 6)
+                _stale_watch_shadow_v = build_stale_watch_shadow_fields(
+                    risk_bucket=_risk_shadow_v.get('shadow_risk_bucket'),
+                    entry=_risk_shadow_v.get('risk_entry'),
+                    stop=_risk_shadow_v.get('risk_stop'),
+                    target=_risk_shadow_v.get('risk_target'),
+                    close=_risk_shadow_v.get('risk_close'),
+                    signal_low=_signal_low,
+                    ues=ues,
+                    ml_score=exp_score,
+                    vol_ratio=_vol_now,
+                    forward_bars=_fwd,
+                )
+            except Exception:
+                pass
+
+        _veto_reason = None
+        if not _actionable:
+            if _forecast_veto:
+                _veto_reason = _forecast_veto
+            elif is_anti_for_decision:
+                _veto_reason = 'ANTI_LAW'
+            elif not gate_passed:
+                _veto_reason = f'QUALITY_GATE:{gate_reason}'
+            elif not _final_edge_passed:
+                _veto_reason = _final_edge_reason
+            elif not _risk_complete:
+                _veto_reason = 'MISSING_RISK_LEVELS'
+            elif not _valid_risk_structure:
+                _veto_reason = 'INVALID_RISK_STRUCTURE'
+            elif not _rr_ok:
+                _veto_reason = 'RR_TOO_LOW'
+            elif _effective_conviction not in ('ULTRA_CONVICTION', 'HIGH_CONVICTION', 'MEDIUM_CONVICTION'):
+                _veto_reason = f'LOW_CONVICTION:{_effective_conviction}'
+
+        _risk_veto = None
+        if not _actionable and not _forecast_veto and not is_anti_for_decision and gate_passed and _final_edge_passed:
+            if not _risk_complete:
+                _risk_veto = 'MISSING_RISK_LEVELS'
+            elif not _valid_risk_structure:
+                _risk_veto = 'INVALID_RISK_STRUCTURE'
+            elif not _rr_ok:
+                _risk_veto = 'RR_TOO_LOW'
+        _conv_veto = None
+        if (not _actionable and not _forecast_veto and not is_anti_for_decision
+                and gate_passed and _final_edge_passed and not _risk_veto
+                and _effective_conviction not in ('ULTRA_CONVICTION', 'HIGH_CONVICTION', 'MEDIUM_CONVICTION')):
+            _conv_veto = f'LOW_CONVICTION:{_effective_conviction}'
+        _all_gates, _first_gate, _excl_gates = _sequential_gate_audit(
+            None, _qg_failures, is_anti_for_decision, _final_edge_reason if not _final_edge_passed else None,
+            _forecast_veto, _risk_veto, _conv_veto,
+        )
+        _persist_gate_audit_snapshot(conn, {
+            'signal_date': date, 'symbol': symbol, 'ues': round(ues, 1),
+            'ml_score': exp_score, 'meta_prob': _meta_p,
+            'survival_p_tp': _surv[0], 'survival_p_sl': _surv[1],
+            'scan_score': scan_raw, 'quant_matches': quant_matches_v,
+            'ad_ratio': _ad_ratio_today, 'vol_ratio': _vol_now,
+            'rsi14': _rsi14_for_gate, 'close_position': _close_pos_gate,
+            'spectral_regime': spec_regime, 'behavioral_class': bclass,
+            'breadth_signal': breadth_sig, 'regime': regime,
+            'conviction': _effective_conviction, 'anti_law': 1 if is_anti_for_decision else 0,
+            'quality_gate_passed': 1 if gate_passed else 0,
+            'quality_gate_failures': _qg_failures,
+            'final_edge_passed': 1 if _final_edge_passed else 0,
+            'final_edge_failure': _final_edge_reason,
+            'hard_gate_failure': None, 'forecast_veto': _forecast_veto,
+            'actionable': 1 if _actionable else 0,
+            'veto_reason': _veto_reason,
+            'first_blocking_gate': _first_gate,
+            'exclusive_blockers': _excl_gates,
+            'all_blocking_gates': _all_gates,
+            'entry_price': entry_price_v, 'stop_loss': stop_loss_v, 't1_target': t1_v,
+            'old_final_edge_reason': _veto_reason or _final_edge_reason,
+            'old_all_blocking_gates': _all_gates,
+            'old_actionable': 1 if _actionable else 0,
+            **_risk_shadow_v,
+            **_forecast_shadow_v,
+            **_low_rule_shadow_v,
+            **_neg_breadth_shadow_v,
+            **_anti_law_shadow_v,
+            **_stale_watch_shadow_v,
+        })
+
+        write_final_signal(
+            conn,
+            date=date,
+            symbol=symbol,
+            setup_type=setup_type_v or sig.get('setup_type'),
+            score=round(ues, 1),
+            entry_price=entry_price_v,
+            entry_high=entry_high_v,
+            stop_loss=stop_loss_v,
+            t1_target=t1_v,
+            t2_target=t2_v,
+            r_ratio=r_ratio_v,
+            scan_score=scan_raw,
+            pine_score=pine_score_v,
+            ml_score=exp_score,
+            regime=regime,
+            actionable=_actionable,
+            veto_reason=_veto_reason,
+            source_breakdown={
+                'rules': scan_raw,
+                'ues': round(ues, 1),
+                'ml': exp_score,
+                'ml_fusion': ml_breakdown,
+                'breadth': breadth_score,
+                'technical': tech_score,
+                'cross_market': cross_score,
+                'liquidity': liq_score,
+                'anti_law': anti_score,
+                'anti_quant_override': anti_quant_override,
+                'anti_ues_override': anti_ues_override,
+                'dna': dna_score,
+                'cycle': cycle_score,
+                'pine_score': pine_score_v,
+                'pine_rs_percentile': pine_rs,
+                'pine_bias': pine_bias,
+                'quant_discovery_score': quant_score_v,
+                'quant_discovery_rule': quant_rule_v,
+                'quant_discovery_matches': quant_matches_v,
+                'macro_edge_score': round(safe_float(macro_edge_v.get('score'), 0.0), 4),
+                'macro_edge_bonus': round(safe_float(macro_edge_v.get('bonus'), 0.0), 3),
+                'macro_edge_feature_date': macro_edge_v.get('feature_date'),
+                'macro_edge_version': macro_edge_v.get('version'),
+                'quality_gate_passed': bool(gate_passed),
+                'gate_reason': gate_reason,
+                'final_edge_passed': bool(_final_edge_passed),
+                'final_edge_reason': _final_edge_reason,
+                'final_edge_metrics': _final_edge_metrics,
+                'scan_source_date': scan_source_date_v,
+                'conviction_tier': _effective_conviction,
+                'conviction_tier_raw': conviction,
+                'neg_breadth_policy': _nb_pol_v.get('new_policy'),
+                'neg_breadth_reason': _nb_pol_v.get('new_reason'),
+                'neg_breadth_position_mult': _nb_pos_mult,
+                'liquidity_tier': liq_tier,
+                'behavioral_class': bclass,
+                'meta_prob': _meta_p,
+                'moe_prob': (_meta_map.get(symbol) or (None, None))[1],
+                'conformal_p_lo': _conf[0],
+                'conformal_p_hi': _conf[1],
+                'conformal_confident': _conf[2],
+                'survival_p_tp': _surv[0],
+                'survival_p_sl': _surv[1],
+                'survival_hold_days': _surv[2],
+            },
+        )
 
         # Ph 22: write to shadow log (outcome filled later by shadow_fill_outcomes)
         try:
@@ -1844,11 +3551,11 @@ def cmd_score_all(params):
         except Exception:
             pass
 
-        if conviction not in ('REJECT',):
+        if _effective_conviction not in ('REJECT',):
             results.append({
                 'symbol':              symbol,
                 'unified_score':       round(ues, 1),
-                'conviction_tier':     conviction,
+                'conviction_tier':     _effective_conviction,
                 'scan_score':          safe_float(sig['score']),
                 'liquidity_tier':      liq_tier,
                 'spectral_regime':     spec_regime,           # Ph 21
@@ -1857,11 +3564,23 @@ def cmd_score_all(params):
                 'behavioral_class':    bclass,                # Ph 28
                 'false_signal_rate':   round(fsr, 3),         # Ph 28
                 'pine_rs_percentile':  pine_rs,               # Ph 29
+                'quant_discovery_score': quant_score_v,
+                'quant_discovery_rule':  quant_rule_v,
+                'quant_discovery_matches': quant_matches_v,
+                'macro_edge_score':     round(safe_float(macro_edge_v.get('score'), 0.0), 4),
+                'macro_edge_bonus':     round(safe_float(macro_edge_v.get('bonus'), 0.0), 3),
                 'quality_gate':        gate_passed,           # Ph 27
                 'gate_reason':         gate_reason,           # Ph 27
             })
 
     conn.commit()
+    try:
+        n_final_actionable = conn.execute(
+            "SELECT COUNT(*) FROM final_signals WHERE trade_date=? AND actionable=1",
+            (date,)
+        ).fetchone()[0]
+    except Exception:
+        n_final_actionable = 0
     conn.close()
     results.sort(key=lambda x: -x['unified_score'])
 
@@ -1886,7 +3605,8 @@ def cmd_score_all(params):
         'success': True,
         'date': date,
         'n_scored': len(scans),
-        'n_actionable': len(results),
+        'n_actionable': n_final_actionable,
+        'n_research_candidates': len(results),
         'n_gate_passed': n_gate_passed,                # Ph 27
         'n_hard_rejected': n_hard_rejected,            # Hard gate count
         'n_high':   sum(1 for r in results if r['conviction_tier'] == 'HIGH_CONVICTION'),
@@ -2062,7 +3782,7 @@ def cmd_build_full(params):
 def cmd_shadow_fill_outcomes(params):
     """
     Fill return_3d / return_5d / exploded for shadow_log rows older than 5 trading days.
-    Uses ohlcv_history for price returns and explosive_moves for explosion labels.
+    Uses ohlcv_history_execution for price returns and explosive_moves for explosion labels.
     Run daily (adds ~10ms).
     """
     conn = get_db()
@@ -2084,7 +3804,7 @@ def cmd_shadow_fill_outcomes(params):
         try:
             # Close price on prediction_date (bar_time is unix timestamp)
             p0_row = conn.execute("""
-                SELECT close FROM ohlcv_history
+                SELECT close FROM ohlcv_history_execution
                 WHERE symbol=? AND date(bar_time,'unixepoch')=?
                 LIMIT 1
             """, (sym, pdate)).fetchone()
@@ -2099,7 +3819,7 @@ def cmd_shadow_fill_outcomes(params):
                 target = (datetime.date.fromisoformat(pdate) +
                           datetime.timedelta(days=n_days)).isoformat()
                 r = conn.execute("""
-                    SELECT close FROM ohlcv_history
+                    SELECT close FROM ohlcv_history_execution
                     WHERE symbol=? AND date(bar_time,'unixepoch')>=?
                     ORDER BY bar_time ASC LIMIT 1
                 """, (sym, target)).fetchone()
@@ -2483,7 +4203,7 @@ def cmd_track_outcomes(params):
         if not entry:
             try:
                 ep_row = conn.execute("""
-                    SELECT close FROM ohlcv_history
+                    SELECT close FROM ohlcv_history_execution
                     WHERE symbol=? AND date(bar_time,'unixepoch')=?
                     ORDER BY bar_time DESC LIMIT 1
                 """, (symbol, sig_date)).fetchone()
@@ -2505,7 +4225,7 @@ def cmd_track_outcomes(params):
         # Then pick the Nth bar to get the Nth trading-day close (correct, no calendar math)
         try:
             bars_after = conn.execute("""
-                SELECT close FROM ohlcv_history
+                SELECT close FROM ohlcv_history_execution
                 WHERE symbol=? AND date(bar_time,'unixepoch') > ?
                 ORDER BY bar_time ASC LIMIT 15
             """, (symbol, sig_date)).fetchall()
@@ -2917,12 +4637,12 @@ def cmd_signal_freshness(params):
     - stopped:  close_price تحت stop_loss
     مفيد لفرز الإشارات قبل الإرسال دون الحاجة إلى TradingView.
     """
-    date_str = params.get('date', datetime.date.today().isoformat())
     max_chase_pct = float(params.get('max_chase_pct', 5.0))
     warn_pct      = float(params.get('warn_pct',      2.0))
 
     conn = get_db()
     ensure_tables(conn)
+    date_str = params.get('date') or latest_ohlcv_date(conn)
 
     rows = conn.execute("""
         SELECT us.symbol, us.entry_price, us.entry_high, us.stop_loss,
@@ -2931,9 +4651,9 @@ def cmd_signal_freshness(params):
         FROM unified_signals us
         LEFT JOIN (
             SELECT symbol, close
-            FROM ohlcv_history oh1
+            FROM ohlcv_history_execution oh1
             WHERE bar_time = (
-                SELECT MAX(bar_time) FROM ohlcv_history oh2
+                SELECT MAX(bar_time) FROM ohlcv_history_execution oh2
                 WHERE oh2.symbol = oh1.symbol
                   AND date(oh2.bar_time,'unixepoch') <= ?
             )
@@ -3209,7 +4929,7 @@ def cmd_check_entry_triggers(params):
         # Look for OHLCV bars on/after signal_date where price entered zone
         bars = conn.execute("""
             SELECT date(bar_time,'unixepoch') as d, open, high, low, close, volume
-            FROM ohlcv_history
+            FROM ohlcv_history_execution
             WHERE symbol=? AND date(bar_time,'unixepoch') >= ?
               AND date(bar_time,'unixepoch') <= ?
             ORDER BY bar_time ASC
@@ -3300,7 +5020,7 @@ def cmd_stop_loss_hits(params):
         # Get latest OHLCV close
         bar = conn.execute("""
             SELECT close, low, date(bar_time,'unixepoch') as d
-            FROM ohlcv_history
+            FROM ohlcv_history_execution
             WHERE symbol=?
             ORDER BY bar_time DESC LIMIT 1
         """, (sym,)).fetchone()
@@ -3351,6 +5071,55 @@ def cmd_stop_loss_hits(params):
     }
 
 
+def cmd_apply_arbitration_veto(params):
+    """
+    Demote final_signals only when Phase-34 arbitration triggered an absolute veto.
+    Soft AVOID decisions are advisory (shown in research) — they must NOT wipe
+    actionable signals that already passed the quality gate.
+    """
+    conn = get_db()
+    ensure_tables(conn)
+    date = params.get('date') or latest_ohlcv_date(conn)
+
+    rows = conn.execute("""
+        SELECT a.symbol, a.decision, a.veto_reason, a.veto_triggered
+        FROM arbitration_decisions a
+        INNER JOIN final_signals f
+          ON f.symbol = a.symbol AND f.trade_date = ?
+        WHERE a.date = ?
+          AND f.actionable = 1
+          AND COALESCE(a.veto_triggered, 0) = 1
+    """, (date, date)).fetchall()
+
+    vetoed = []
+    for row in rows:
+        base = row['veto_reason'] or row['decision'] or 'VETO'
+        reason = f"ARBITRATION_VETO:{base}"[:240]
+        conn.execute("""
+            UPDATE final_signals
+            SET actionable = 0,
+                veto_reason = ?,
+                updated_at = datetime('now')
+            WHERE trade_date = ? AND symbol = ?
+        """, (reason, date, row['symbol']))
+        vetoed.append(row['symbol'])
+
+    conn.commit()
+    remaining = conn.execute(
+        "SELECT COUNT(*) FROM final_signals WHERE trade_date=? AND actionable=1",
+        (date,)
+    ).fetchone()[0]
+    conn.close()
+
+    return {
+        'success': True,
+        'date': date,
+        'n_vetoed': len(vetoed),
+        'n_actionable_remaining': remaining,
+        'vetoed_symbols': vetoed[:30],
+    }
+
+
 COMMANDS = {
     'score_symbol': cmd_score_symbol,
     'score_all': cmd_score_all,
@@ -3370,6 +5139,7 @@ COMMANDS = {
     'signal_age': cmd_signal_age,                             # Ph 40 signal age tracker
     'check_entry_triggers': cmd_check_entry_triggers,         # Ph 44 entry trigger detection
     'stop_loss_hits': cmd_stop_loss_hits,                     # Ph 45 stop-loss hit detector
+    'apply_arbitration_veto': cmd_apply_arbitration_veto,     # Ph 34 → final_signals gate
 }
 
 if __name__ == '__main__':
@@ -3382,6 +5152,8 @@ if __name__ == '__main__':
     try:
         result = handler(params)
         print(json.dumps(result, default=str))
+        if isinstance(result, dict) and result.get('error') == 'upstream_not_ready':
+            sys.exit(1)
     except Exception as e:
         import traceback
         print(json.dumps({'error': str(e), 'traceback': traceback.format_exc()}))

@@ -243,10 +243,11 @@ export async function getEquity() {
 }
 
 export async function getQuote({ symbol } = {}) {
+  const symbolJson = JSON.stringify(symbol || '');
   const data = await evaluate(`
     (function() {
       var api = ${CHART_API};
-      var sym = '${symbol || ''}';
+      var sym = ${symbolJson};
       if (!sym) { try { sym = api.symbol(); } catch(e) {} }
       if (!sym) { try { sym = api.symbolExt().symbol; } catch(e) {} }
       var ext = {};
