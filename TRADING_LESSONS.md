@@ -507,3 +507,20 @@ npm run egx:cache:backfill -- --date YYYY-MM-DD   # يوم كامل
 ```
 
 learning_loop يشغّل backfill تلقائياً عند missing_indicators ≥ 2
+
+### القاعدة #18 — الحلقة المغلقة الرئيسية (يونيو 2026)
+
+```
+npm run egx:closed:loop   # master loop — 7 مراحل:
+
+1. delivery_audit → client_delivered (P6 delivered-only WR)
+2. proof + forensic
+3. learning (counterfactual + autopsy + laws)
+4. delivery_laws → egx_rules_runtime.json → safety_check
+5. directives → research_directives (Phase 26)
+6. opportunity_score_v2 → promotion → safety → delivered
+7. discovery_feedback queue (up/down-rank patterns)
+```
+
+post_session_ops + cron الأحد يشغّلان `egx:closed:loop`
+P6 promotion: ULTRA يُخفّض لـ HIGH عند WR < 50% و n ≥ 20

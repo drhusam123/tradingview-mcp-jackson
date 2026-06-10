@@ -11,7 +11,7 @@ import { PROJECT_ROOT } from './load_env.mjs';
 export const PROOF_MIN_N = 30;
 export const PROOF_MIN_WR = 60;
 
-export function getProofLoopMetrics({ tier = 'ULTRA_CONVICTION', horizon = 't5' } = {}) {
+export function getProofLoopMetrics({ tier = 'ULTRA_CONVICTION', horizon = 't5', deliveredOnly = false } = {}) {
   if (!existsSync(DB_PATH)) {
     return {
       tier,
@@ -32,6 +32,9 @@ export function getProofLoopMetrics({ tier = 'ULTRA_CONVICTION', horizon = 't5' 
   const db = new Database(DB_PATH, { readonly: true });
   let row;
   try {
+    const deliveredClause = deliveredOnly
+      ? 'AND COALESCE(client_delivered, 0) = 1'
+      : '';
     row = db.prepare(`
       SELECT
         COUNT(*) AS n,
@@ -41,6 +44,7 @@ export function getProofLoopMetrics({ tier = 'ULTRA_CONVICTION', horizon = 't5' 
       WHERE outcome_filled >= ?
         AND ${hitCol} IS NOT NULL
         AND conviction_tier = ?
+        ${deliveredClause}
     `).get(minFilled, tier);
   } finally {
     db.close();
@@ -65,6 +69,7 @@ export function getProofLoopMetrics({ tier = 'ULTRA_CONVICTION', horizon = 't5' 
   return {
     tier,
     horizon,
+    delivered_only: deliveredOnly,
     n_completed: n,
     n_wins: wins,
     win_rate: wr != null ? Math.round(wr * 10) / 10 : null,

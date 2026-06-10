@@ -77,9 +77,9 @@ try {
 }
 
 try {
-  execSync(`"${NODE}" scripts/egx_learning_loop.mjs`, { cwd: PROJECT_ROOT, stdio: 'inherit', timeout: 120_000 });
+  execSync(`"${NODE}" scripts/egx_closed_loop.mjs`, { cwd: PROJECT_ROOT, stdio: 'inherit', timeout: 360_000 });
 } catch (e) {
-  console.log(`⚠️  Learning loop: ${e.message?.slice(0, 80)}`);
+  console.log(`⚠️  Closed loop: ${e.message?.slice(0, 80)}`);
 }
 
 try {

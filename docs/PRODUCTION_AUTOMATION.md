@@ -44,7 +44,9 @@ Cron wrapper: `egx_telegram_cron.mjs` = prepare-send → live → reconcile → 
 
 **P6 proof loop:** `npm run egx:proof:forensic` → `data/proof_forensic_last.json`
 
-**Closed learning loop (Sun 06:40):** `egx_learning_loop` → forensic + counterfactual + `delivery_laws_*.json`
+**Master closed loop (Sun 06:40 + post-session):** `egx:closed:loop` → delivered sync + learning + runtime rules + research directives + opportunity quality + discovery feedback
+
+**Learning sub-loop:** `egx:learning:loop` → forensic + counterfactual + `delivery_laws_*.json`
 
 **Loss autopsy:** `npm run egx:loss:autopsy` → `data/loss_autopsy_last.json` (residual ULTRA loss patterns)
 
@@ -79,6 +81,7 @@ Test: `npm run egx:alert:test` | `npm run egx:alert:test:success`
 | `egx:loss:autopsy` | ULTRA loss pattern autopsy |
 | `egx:cache:backfill` | Historical indicators_cache gaps |
 | `egx:p6:status` | P6 samples + counterfactual WR |
+| `egx:closed:loop` | Master 7-stage closed loop |
 | `egx:quality:gate` | Fast L2 `gate_daily` |
 | `egx:proof:forensic` | ULTRA WR breakdown |
 

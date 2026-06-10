@@ -21,6 +21,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 DB_PATH = ROOT / "data" / "egx_trading.db"
 RULES_PATH = ROOT / "egx_rules.json"
+PROOF_PATH = ROOT / "data" / "proof_loop_last.json"
+P6_MIN_WR_SOFT = 50
+P6_MIN_N_SOFT = 20
 
 _DEFAULT_RULES = {
     "lessons_filters": {
@@ -90,6 +93,21 @@ def _is_hard_veto(reason: str | None) -> bool:
     if not reason:
         return False
     return any(reason.startswith(p) for p in HARD_VETO_PREFIXES)
+
+
+def _p6_ultra_promotion_allowed() -> bool:
+    """Proof-aware gate: pause new ULTRA promotions when live WR is critically low."""
+    if not PROOF_PATH.exists():
+        return True
+    try:
+        proof = json.loads(PROOF_PATH.read_text(encoding="utf-8"))
+        wr = proof.get("win_rate")
+        n = int(proof.get("n_completed") or 0)
+        if n >= P6_MIN_N_SOFT and wr is not None and float(wr) < P6_MIN_WR_SOFT:
+            return False
+    except Exception:
+        pass
+    return True
 
 
 def _load_egx_rules() -> dict:
@@ -278,6 +296,8 @@ def run(params: dict | None = None) -> dict:
         if ues >= 78 and ml >= 72 and scan >= 70 and opp >= 78:
             tier = "ULTRA"
         elif ues >= 72 and ml >= 65 and opp >= 75:
+            tier = "HIGH"
+        if tier == "ULTRA" and not _p6_ultra_promotion_allowed():
             tier = "HIGH"
         elif opp < min_opp or ues < min_ues or scan < min_scan or ml < min_ml:
             continue

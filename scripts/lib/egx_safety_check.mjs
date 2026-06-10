@@ -43,12 +43,26 @@ const DEFAULT_RULES = {
 };
 
 export function loadEgxRules() {
-  if (!existsSync(RULES_PATH)) return { ...DEFAULT_RULES };
-  try {
-    return { ...DEFAULT_RULES, ...JSON.parse(readFileSync(RULES_PATH, 'utf8')) };
-  } catch {
-    return { ...DEFAULT_RULES };
+  let rules = { ...DEFAULT_RULES };
+  if (existsSync(RULES_PATH)) {
+    try {
+      rules = { ...DEFAULT_RULES, ...JSON.parse(readFileSync(RULES_PATH, 'utf8')) };
+    } catch { /* keep defaults */ }
   }
+  const runtimePath = join(ROOT, 'data/egx_rules_runtime.json');
+  if (existsSync(runtimePath)) {
+    try {
+      const rt = JSON.parse(readFileSync(runtimePath, 'utf8'));
+      if (rt.behavioral_filters) {
+        rules.behavioral_filters = { ...rules.behavioral_filters, ...rt.behavioral_filters };
+      }
+      if (rt.lessons_filters) {
+        rules.lessons_filters = { ...rules.lessons_filters, ...rt.lessons_filters };
+      }
+      rules._runtime_overlay_at = rt.at;
+    } catch { /* ignore bad runtime file */ }
+  }
+  return rules;
 }
 
 function dbReadonly() {

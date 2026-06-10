@@ -35,12 +35,16 @@ try {
 } catch { /* optional */ }
 const proofLine = formatProofLoopLine(proof);
 const learn = readJson('data/learning_loop_last.json');
+const closedLoop = readJson('data/closed_loop_last.json');
 const learnLine = learn?.counterfactual?.projected_wr != null
   ? `  Learning:    WR ${learn.counterfactual.actual_wr}%→${learn.counterfactual.projected_wr}% (+${learn.counterfactual.wr_delta ?? 0}pp counterfactual)`
   : '';
 const autopsy = learn?.loss_autopsy || readJson('data/loss_autopsy_last.json');
 const autopsyLine = autopsy?.n_residual_losses != null
   ? `  Loss autopsy: ${autopsy.n_residual_losses} residual | rules ${autopsy.proposed_rules?.length ?? 0}`
+  : '';
+const closedLine = closedLoop?.discovery_feedback != null
+  ? `  Closed loop: ${closedLoop.directives_ingested ?? 0} directives | ${closedLoop.discovery_feedback} discovery items | opp Q ${closedLoop.opportunity_quality?.quality_score ?? '—'}%`
   : '';
 
 let gitLine = 'git: unknown';
@@ -66,6 +70,7 @@ console.log(`
   ${proofLine}
 ${learnLine}
 ${autopsyLine}
+${closedLine}
   Git:          ${gitLine}
 
 ── ONE COMMANDS ──
@@ -73,6 +78,7 @@ ${autopsyLine}
   npm run egx:automation:status   # runbook + digest + logs
   npm run egx:runbook:next        # next session preview
   npm run egx:proof:forensic      # ULTRA WR breakdown (P6)
+  npm run egx:closed:loop         # master closed loop (all stages)
   npm run egx:learning:loop       # forensic + counterfactual + laws
   npm run egx:loss:autopsy        # residual ULTRA loss patterns
   npm run egx:p6:status           # P6 samples + counterfactual
