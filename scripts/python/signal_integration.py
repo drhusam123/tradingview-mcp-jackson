@@ -1442,6 +1442,22 @@ def get_quant_discovery_score(symbol, date, conn):
                   AND oos_precision >= baseline_precision
                 ORDER BY composite_score DESC LIMIT 80
             """).fetchall()
+        try:
+            from discovery_feedback_loader import load_feedback_queue, adjust_match_score
+            _fb_queue = load_feedback_queue()
+        except Exception:
+            _fb_queue = []
+            adjust_match_score = lambda s, c, b=None, q=None: s
+
+        bclass_row = None
+        try:
+            bclass_row = conn.execute(
+                "SELECT behavioral_class FROM stock_behavioral_memory WHERE symbol=?", (symbol,)
+            ).fetchone()
+        except Exception:
+            bclass_row = None
+        bclass = (bclass_row["behavioral_class"] if bclass_row else None)
+
         best = None
         matched = 0
         for r in rules:
@@ -1459,6 +1475,8 @@ def get_quant_discovery_score(symbol, date, conn):
                 score = max(40.0, min(92.0, 50.0 + edge))
                 if not int(r['vetted'] or 0):
                     score = min(score, 78.0)   # DSR/PBO unvetted → cap influence
+                if _fb_queue:
+                    score = adjust_match_score(score, conds, bclass, _fb_queue)
                 cand = (score, r['rule_name'])
                 if best is None or cand[0] > best[0]:
                     best = cand

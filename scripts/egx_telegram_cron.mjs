@@ -15,6 +15,7 @@ import {
 } from './lib/delivery_audit.mjs';
 import { alertNotification, opsSuccessAlert } from './lib/notification_alert.mjs';
 import { buildDeliveryDigest } from './lib/ops_digest.mjs';
+import { syncDeliveredOutcomes } from './lib/delivered_outcomes.mjs';
 import { isTradingDay, cairoDateParts } from './lib/egx_calendar.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -112,6 +113,15 @@ try {
   }
 
   run(`"${NODE}" scripts/egx_export_trades_csv.mjs`, 'Export trades.csv', { optional: true });
+
+  if (!DRY_RUN) {
+    try {
+      const sync = syncDeliveredOutcomes();
+      console.log(`📬 Delivered outcomes synced: ${sync.rows_updated ?? 0} rows`);
+    } catch (e) {
+      console.log(`⚠️  Delivered sync: ${e.message?.slice(0, 60)}`);
+    }
+  }
 
   await opsSuccessAlert('CRON_DELIVERY_OK', buildDeliveryDigest(signalDate));
 

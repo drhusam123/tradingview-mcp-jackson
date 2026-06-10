@@ -22,6 +22,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 DB_PATH = ROOT / "data" / "egx_trading.db"
 
+try:
+    from discovery_feedback_loader import load_feedback_queue, adjust_rule_composite, feedback_summary
+except ImportError:
+    load_feedback_queue = lambda: []
+    adjust_rule_composite = lambda r, q=None: r
+    feedback_summary = lambda q=None: {"n_items": 0}
+
 
 def safe(v, default=0.0):
     try:
@@ -397,6 +404,11 @@ def run_discovery(params):
             by_id[r["id"]] = r
     candidates = list(by_id.values())
 
+    feedback_queue = params.get("feedback_queue") or load_feedback_queue()
+    if feedback_queue:
+        for r in candidates:
+            adjust_rule_composite(r, feedback_queue)
+
     composite_top = sorted(
         candidates,
         key=lambda x: (x["composite_score"], x["oos_expectancy_pct"], x["oos_lift"]),
@@ -436,8 +448,10 @@ def run_discovery(params):
         ))
     db.commit()
     db.close()
+    fb = feedback_summary(feedback_queue)
     return {
         "success": True,
+        "feedback_applied": fb,
         "n_examples": len(examples),
         "n_symbols": len(data),
         "split_date": split_date,

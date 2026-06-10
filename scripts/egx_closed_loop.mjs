@@ -126,7 +126,9 @@ const report = {
     'delivery_laws → egx_rules_runtime.json → safety_check',
     'directives → research_directives',
     'opportunity_score_v2 → promotion → safety → delivered',
-    'forensic/autopsy → discovery_feedback queue',
+    'forensic/autopsy → discovery_feedback → quant_discovery + score_all',
+    'telegram_cron → syncDeliveredOutcomes after live send',
+    'opportunity_quality → opportunity_quality_history.json',
   ],
 };
 

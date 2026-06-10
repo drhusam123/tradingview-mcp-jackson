@@ -16,6 +16,7 @@ import { writeFileSync, readFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { execFileSync } from 'child_process';
+import { loadDiscoveryFeedback, readPendingResearchDirectives } from './lib/load_discovery_feedback.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DATA_DIR  = join(__dirname, '../data');
@@ -51,17 +52,37 @@ if (result.error) {
   process.exit(1);
 }
 
+const feedback = loadDiscoveryFeedback();
+const p6Directives = readPendingResearchDirectives(8);
+if (feedback.n_items) {
+  wl(`  🔁 P6 feedback: ${feedback.n_items} items (closed loop → discovery)`);
+  feedback.queue.slice(0, 4).forEach(item => {
+    wl(`     • [${item.type}] ${item.target} — ${item.rationale}`);
+  });
+}
+if (p6Directives.length) {
+  wl(`  📋 Pending research_directives: ${p6Directives.length}`);
+  p6Directives.slice(0, 3).forEach(d => {
+    wl(`     • ${d.target} (p=${d.priority})`);
+  });
+}
+
 let quant = null;
 if (!QUICK) {
   wl('  🧪 Quant discovery — mining OOS entry rules...');
+  const quantParams = JSON.stringify({
+    feedback_queue: feedback.queue,
+    p6_directives: p6Directives.map(d => d.target),
+  });
   try {
-    quant = JSON.parse(execFileSync('python3', [QUANT_SCRIPT, 'run', '{}'], {
+    quant = JSON.parse(execFileSync('python3', [QUANT_SCRIPT, 'run', quantParams], {
       cwd: join(__dirname, '..'),
       encoding: 'utf8',
       timeout: 1000 * 60 * 20,
     }));
     if (quant?.success) {
-      wl(`  ✅ Quant rules: ${quant.rules_kept}/${quant.rules_tested} kept | baseline=${(quant.baseline_precision * 100).toFixed(1)}%`);
+      const fb = quant.feedback_applied?.n_items ?? 0;
+      wl(`  ✅ Quant rules: ${quant.rules_kept}/${quant.rules_tested} kept | baseline=${(quant.baseline_precision * 100).toFixed(1)}% | feedback=${fb}`);
       (quant.top_rules || []).slice(0, 3).forEach((r, i) => {
         wl(`     ${i + 1}. ${r.rule} | OOS=${(r.precision * 100).toFixed(1)}% | lift=${r.lift}x | exp=${r.expectancy_pct}%`);
       });
@@ -185,6 +206,9 @@ try {
     opportunity_trade_date: opportunity?.trade_date ?? null,
     opportunity_scored: opportunity?.symbols_scored ?? null,
     opportunity_stage_counts: opportunity?.stage_counts ?? null,
+    discovery_feedback_items: feedback.n_items,
+    p6_directives_pending: p6Directives.length,
+    quant_feedback_applied: quant?.feedback_applied ?? null,
     elapsed: result.total_elapsed || ((Date.now()-t0)/1000).toFixed(1),
     notified: NOTIFY,
   });

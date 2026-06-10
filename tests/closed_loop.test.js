@@ -39,6 +39,7 @@ describe('closed loop connectors', () => {
 
   it('runOpportunityQualityLoop returns pipeline fields', { skip: !existsSync(DB_PATH) }, () => {
     const r = runOpportunityQualityLoop('2026-06-10');
+    assert.ok(r);
     assert.ok('n_top_opportunity' in r || 'error' in r);
   });
 

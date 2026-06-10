@@ -524,3 +524,16 @@ npm run egx:closed:loop   # master loop — 7 مراحل:
 
 post_session_ops + cron الأحد يشغّلان `egx:closed:loop`
 P6 promotion: ULTRA يُخفّض لـ HIGH عند WR < 50% و n ≥ 20
+
+### القاعدة #19 — discovery_feedback → quant + scoring (يونيو 2026)
+
+```
+P6 forensic/autopsy → discovery_feedback_last.json
+  → quant_discovery.py (rule composite penalties)
+  → signal_integration get_quant_discovery_score (live match adjust)
+  → egx_discover.mjs (weekly DMIDS + quant)
+  → research_director morning_run
+```
+
+EXPLOSIVE ضعيف → عقوبة على vol_lt1_5, vol_gt3, upper_close, high20_break
+telegram_cron → syncDeliveredOutcomes بعد كل إرسال حي

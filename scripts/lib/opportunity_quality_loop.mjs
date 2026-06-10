@@ -2,7 +2,9 @@
  * Opportunity quality loop — tracks high-opportunity names through gates → delivery.
  */
 import Database from 'better-sqlite3';
-import { existsSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { join } from 'path';
+import { PROJECT_ROOT } from './load_env.mjs';
 import { DB_PATH } from './delivery_audit.mjs';
 import { runEgxSafetyCheck } from './egx_safety_check.mjs';
 
@@ -58,7 +60,7 @@ export function runOpportunityQualityLoop(signalDate) {
   const highOppBlocked = pipeline.filter(p => p.safety_blocked && p.opportunity_score >= 75);
   const missed = pipeline.filter(p => p.missed_high_opp);
 
-  return {
+  const report = {
     signal_date: signalDate,
     n_top_opportunity: topOpp.length,
     n_actionable: actionable.length,
@@ -87,4 +89,27 @@ export function runOpportunityQualityLoop(signalDate) {
       }] : []),
     ],
   };
+
+  persistOpportunityHistory(report);
+  return report;
+}
+
+function persistOpportunityHistory(report) {
+  const histPath = join(PROJECT_ROOT, 'data/opportunity_quality_history.json');
+  let hist = { entries: [] };
+  if (existsSync(histPath)) {
+    try { hist = JSON.parse(readFileSync(histPath, 'utf8')); } catch { /* */ }
+  }
+  hist.entries.push({
+    at: new Date().toISOString(),
+    signal_date: report.signal_date,
+    n_top_opportunity: report.n_top_opportunity,
+    n_delivered: report.n_delivered,
+    n_safety_blocked: report.n_safety_blocked,
+    quality_score: report.quality_score,
+    missed: report.missed_high_opportunity?.length ?? 0,
+  });
+  hist.entries = hist.entries.slice(-90);
+  mkdirSync(join(PROJECT_ROOT, 'data'), { recursive: true });
+  writeFileSync(histPath, JSON.stringify(hist, null, 2));
 }
