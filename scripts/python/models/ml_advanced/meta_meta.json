@@ -1,0 +1,1 @@
+{"features": ["vol_ratio", "ret1", "ret3", "ret5", "ret20", "atr_pct", "range_pct", "close_pos", "rsi14", "dist_ath300", "hi20_break", "bb_pct", "ema20_dist", "ema50_dist", "vol_std20", "dow", "is_bull", "is_bear", "mom_consist", "vol_trend5"], "holdout_auc": 0.5729213804081659, "trained": "2026-06-10", "n_events": 9086, "moe_experts": {"BULL": 2787, "BEAR": 2442, "SIDE": 3857}}

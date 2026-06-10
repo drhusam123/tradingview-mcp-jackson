@@ -1,0 +1,53 @@
+// @version=6
+// EGX MCP Exporter
+// Fixed-key table for TradingView Desktop MCP data_get_pine_tables.
+indicator("EGX MCP Exporter", overlay=true, max_bars_back=300)
+
+lenVol = input.int(20, "Volume MA", minval=5, maxval=100)
+lenFast = input.int(21, "Fast EMA", minval=5, maxval=100)
+lenSlow = input.int(55, "Slow EMA", minval=10, maxval=200)
+lenRange = input.int(20, "Range Lookback", minval=5, maxval=100)
+
+emaFast = ta.ema(close, lenFast)
+emaSlow = ta.ema(close, lenSlow)
+rsi14 = ta.rsi(close, 14)
+volAvg = ta.sma(volume, lenVol)
+volRatio = volAvg > 0 ? volume / volAvg : na
+rangeHigh = ta.highest(high, lenRange)
+rangeLow = ta.lowest(low, lenRange)
+rangeDen = math.max(rangeHigh - rangeLow, syminfo.mintick)
+closePosition = (close - rangeLow) / rangeDen
+atr14 = ta.atr(14)
+atrPct = close > 0 ? atr14 / close * 100 : na
+trendScore = emaSlow > 0 ? (emaFast / emaSlow - 1) * 100 : na
+sessionBias = close >= emaFast and emaFast >= emaSlow ? "ABOVE_VWAP" : close <= emaFast and emaFast <= emaSlow ? "BELOW_VWAP" : "AT_VWAP"
+squeeze = atrPct < ta.sma(atrPct, 50) * 0.75 ? 1 : 0
+momentum = close[5] > 0 ? (close / close[5] - 1) * 100 : na
+
+var table t = table.new(position.bottom_right, 2, 14, bgcolor=color.new(color.black, 10), border_width=1)
+
+cell(row, key, val) =>
+    table.cell(t, 0, row, key, text_color=color.silver, text_size=size.tiny)
+    table.cell(t, 1, row, val, text_color=color.white, text_size=size.tiny)
+
+fmt(v) =>
+    na(v) ? "na" : str.tostring(v, format.mintick)
+
+if barstate.islast
+    cell(0, "EXPORTER", "EGX_MCP_EXPORTER_V1")
+    cell(1, "SYMBOL", syminfo.ticker)
+    cell(2, "CLOSE", fmt(close))
+    cell(3, "VWAP", fmt(emaFast))
+    cell(4, "OR_HIGH", fmt(rangeHigh))
+    cell(5, "OR_LOW", fmt(rangeLow))
+    cell(6, "SESSION_BIAS", sessionBias)
+    cell(7, "RS_SCORE", fmt(rsi14))
+    cell(8, "RS_PERCENTILE", fmt(math.min(100, math.max(0, rsi14))))
+    cell(9, "VOL_RATIO", fmt(volRatio))
+    cell(10, "CLOSE_POSITION", fmt(closePosition))
+    cell(11, "ATR_PCT", fmt(atrPct))
+    cell(12, "TREND_SCORE", fmt(trendScore))
+    cell(13, "SQUEEZE", str.tostring(squeeze))
+
+plot(emaFast, "Exporter Fast EMA", color=color.new(color.teal, 35))
+plot(emaSlow, "Exporter Slow EMA", color=color.new(color.orange, 45))

@@ -1,0 +1,109 @@
+{
+  "success": true,
+  "generated_at": "2026-06-04T20:40:57.752126",
+  "policy": {
+    "high_prob": 0.75,
+    "medium_prob": 0.7,
+    "abstain_prob": 0.5,
+    "high_rank_limit": 10,
+    "medium_rank_limit": 30,
+    "high_vol_ratio": 1.5,
+    "medium_vol_ratio": 1.0,
+    "min_precision_high": 0.4,
+    "min_precision_medium": 0.32,
+    "oos_baseline_precision": 0.2807
+  },
+  "baseline_precision": 0.2807,
+  "by_threshold": [
+    {
+      "threshold": 0.3,
+      "selected": 359,
+      "precision": 0.5794,
+      "recall": 0.8125
+    },
+    {
+      "threshold": 0.35,
+      "selected": 343,
+      "precision": 0.5948,
+      "recall": 0.7969
+    },
+    {
+      "threshold": 0.4,
+      "selected": 321,
+      "precision": 0.6137,
+      "recall": 0.7695
+    },
+    {
+      "threshold": 0.45,
+      "selected": 305,
+      "precision": 0.6262,
+      "recall": 0.7461
+    },
+    {
+      "threshold": 0.5,
+      "selected": 288,
+      "precision": 0.6181,
+      "recall": 0.6953
+    },
+    {
+      "threshold": 0.55,
+      "selected": 265,
+      "precision": 0.6415,
+      "recall": 0.6641
+    },
+    {
+      "threshold": 0.6,
+      "selected": 253,
+      "precision": 0.6482,
+      "recall": 0.6406
+    },
+    {
+      "threshold": 0.65,
+      "selected": 233,
+      "precision": 0.6481,
+      "recall": 0.5898
+    },
+    {
+      "threshold": 0.7,
+      "selected": 208,
+      "precision": 0.6731,
+      "recall": 0.5469
+    },
+    {
+      "threshold": 0.75,
+      "selected": 178,
+      "precision": 0.7079,
+      "recall": 0.4922
+    },
+    {
+      "threshold": 0.8,
+      "selected": 152,
+      "precision": 0.7105,
+      "recall": 0.4219
+    },
+    {
+      "threshold": 0.85,
+      "selected": 117,
+      "precision": 0.6752,
+      "recall": 0.3086
+    },
+    {
+      "threshold": 0.9,
+      "selected": 94,
+      "precision": 0.6915,
+      "recall": 0.2539
+    },
+    {
+      "threshold": 0.95,
+      "selected": 47,
+      "precision": 0.7021,
+      "recall": 0.1289
+    }
+  ],
+  "top_k": {
+    "precision_at_10": 0.4,
+    "precision_at_20": 0.5,
+    "precision_at_50": 0.72,
+    "precision_at_top10pct": 0.7033
+  }
+}

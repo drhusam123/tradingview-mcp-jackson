@@ -1,0 +1,94 @@
+//@version=5
+// ╔═══════════════════════════════════════════════════════════════════════╗
+// ║  EGX ML Signals Dashboard — AUTO-GENERATED 2026-06-06                ║
+// ║  Phase 20 | egx_ml_trainer.py                                       ║
+// ║  Shows: Ensemble Prob | Kelly% | UES | EV5d | Conformal Confidence  ║
+// ╚═══════════════════════════════════════════════════════════════════════╝
+indicator("EGX ML Signals [2026-06-06]", overlay=true, max_labels_count=50)
+
+// ── Embedded signal data ────────────────────────────────────────────────
+int     N       = 20
+string[] SYMS   = array.from("ACAMD", "JUFO", "AIH", "GPIM", "GGCC", "ALUM", "MBEG", "ISMQ", "MPRC", "AIFI", "DSCW", "ADPC", "ATQA", "ATLC", "GBCO", "DGTZ", "DTPP", "EASB", "UTOP", "GIHD")
+float[]  PROBS  = array.from(0.926, 0.904, 0.899, 0.894, 0.873, 0.871, 0.868, 0.853, 0.851, 0.851, 0.84, 0.84, 0.822, 0.793, 0.785, 0.306, 0.291, 0.291, 0.29, 0.289)
+float[]  KELLYS = array.from(0.098, 0.098, 0.098, 0.098, 0.098, 0.098, 0.098, 0.098, 0.098, 0.098, 0.098, 0.098, 0.098, 0.098, 0.098, 0.031, 0.0, 0.0, 0.0, 0.0)
+float[]  UES    = array.from(50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0, 50.0)
+bool[]   CONF   = array.from(false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false)
+float[]  EV5D   = array.from(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+
+// ── Dashboard table ──────────────────────────────────────────────────────
+var table tbl = table.new(
+    position.top_right, 7, 22,
+    bgcolor      = color.new(color.black, 10),
+    border_width = 1,
+    border_color = color.new(color.gray, 50),
+    frame_width  = 2,
+    frame_color  = color.new(color.blue, 30)
+)
+
+if barstate.islast
+    // Header
+    table.cell(tbl, 0, 0, "Symbol",  text_color=color.white, text_size=size.small, bgcolor=color.new(color.navy,20))
+    table.cell(tbl, 1, 0, "Prob%",   text_color=color.white, text_size=size.small, bgcolor=color.new(color.navy,20))
+    table.cell(tbl, 2, 0, "Kelly%",  text_color=color.white, text_size=size.small, bgcolor=color.new(color.navy,20))
+    table.cell(tbl, 3, 0, "UES",     text_color=color.white, text_size=size.small, bgcolor=color.new(color.navy,20))
+    table.cell(tbl, 4, 0, "EV5d%",   text_color=color.white, text_size=size.small, bgcolor=color.new(color.navy,20))
+    table.cell(tbl, 5, 0, "Conf",    text_color=color.white, text_size=size.small, bgcolor=color.new(color.navy,20))
+    table.cell(tbl, 6, 0, "Tier",    text_color=color.white, text_size=size.small, bgcolor=color.new(color.navy,20))
+
+    for i = 0 to N - 1
+        float  p   = array.get(PROBS,  i)
+        float  k   = array.get(KELLYS, i) * 100
+        float  ues = array.get(UES,    i)
+        float  ev  = array.get(EV5D,   i) * 100
+        bool   cf  = array.get(CONF,   i)
+        string sym = array.get(SYMS,   i)
+
+        color  bg  = p >= 0.80 ? color.new(color.red,    60) :
+                     p >= 0.65 ? color.new(color.orange, 60) :
+                     p >= 0.50 ? color.new(color.yellow, 70) :
+                                 color.new(color.gray,   80)
+
+        string tier = p >= 0.80 ? "A+" :
+                      p >= 0.65 ? "A"  :
+                      p >= 0.50 ? "B"  : "C"
+
+        table.cell(tbl, 0, i+1, sym,                                   text_color=color.white, text_size=size.tiny, bgcolor=bg)
+        table.cell(tbl, 1, i+1, str.tostring(math.round(p*100,1))+"%", text_color=color.white, text_size=size.tiny, bgcolor=bg)
+        table.cell(tbl, 2, i+1, str.tostring(math.round(k,1))+"%",     text_color=color.lime,  text_size=size.tiny, bgcolor=bg)
+        table.cell(tbl, 3, i+1, str.tostring(math.round(ues,0)),       text_color=color.white, text_size=size.tiny, bgcolor=bg)
+        table.cell(tbl, 4, i+1, str.tostring(math.round(ev,2))+"%",    text_color=ev>=0?color.lime:color.red, text_size=size.tiny, bgcolor=bg)
+        table.cell(tbl, 5, i+1, cf ? "OK" : "??",                      text_color=cf?color.lime:color.orange, text_size=size.tiny, bgcolor=bg)
+        table.cell(tbl, 6, i+1, tier,                                  text_color=color.white, text_size=size.tiny, bgcolor=bg)
+
+// ── Per-symbol background + last-bar label ───────────────────────────────
+cur_idx = array.indexof(SYMS, syminfo.ticker)
+
+if cur_idx >= 0
+    float cp = array.get(PROBS,  cur_idx)
+    float ck = array.get(KELLYS, cur_idx)
+
+    color bgc = cp >= 0.80 ? color.new(color.red,    92) :
+                cp >= 0.65 ? color.new(color.orange, 92) :
+                cp >= 0.50 ? color.new(color.yellow, 94) :
+                             color.new(color.white,  100)
+    bgcolor(barstate.islast ? bgc : na, title="ML BG")
+
+    if barstate.islast
+        label.new(
+            bar_index, high * 1.005,
+            text  = "ML:" + str.tostring(math.round(cp*100,1)) + "% K:" + str.tostring(math.round(ck*100,1)) + "%",
+            style = label.style_label_down,
+            color = cp >= 0.65 ? color.new(color.red,20) : color.new(color.blue,30),
+            textcolor = color.white,
+            size  = size.small
+        )
+
+// ── Plots & alerts ──────────────────────────────────────────────────────
+plot(cur_idx >= 0 ? array.get(PROBS, cur_idx) : na,
+     title="ML Probability", color=color.blue, linewidth=2, display=display.none)
+
+alertcondition(
+    cur_idx >= 0 and array.get(PROBS, cur_idx) >= 0.65,
+    title="EGX ML High Prob",
+    message="ML Explosion Prob >= 65% on 2026-06-06"
+)

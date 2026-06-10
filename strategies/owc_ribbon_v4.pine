@@ -1,0 +1,314 @@
+// ============================================================================
+// OWC + Ribbon v4  —  Quality-Over-Quantity Long Strategy
+// ============================================================================
+// Designed from forensic analysis of v3 backtest:
+//   v3 result: 836 trades, 20.8% WR, PF 0.528, -8.35% net
+//
+// v3 failures fixed:
+//   1) PULLBACK fired 836/836 (T1, T3 never triggered)         -> rebuilt entry gates
+//   2) TRAIL RIBBON exited 667 trades at 12.7% WR               -> removed ribbon-flip exit
+//   3) Trades <=5 bars: 530 trades, 7.7% WR, -1160$             -> minimum hold + ATR stop
+//   4) Trades 11-20 bars: 91 trades, 73.6% WR, +257$            -> let winners breathe
+//   5) Commissions ate 802$ on 836 trades                       -> trade-frequency cap
+//   6) No HTF trend filter / long-only in -19.8% market          -> HTF + ribbon-spread gate
+//   7) Saturday WR 12.5%, hours 07/12/20/22 were toxic          -> session/day blacklist
+//   8) MFE 0.30% ~ MAE 0.27% (stops too tight)                   -> ATR-based, swing-low SL
+//
+// Entry types (still long-only as requested):
+//   T1  Trend Start      ribbon green + multi-tf alignment + score >= 5
+//   T2  Quality Pullback price tags MA50 with bullish reversal + score >= 5
+//   T3  Breakout         close > 20-bar high + volume spike + score >= 6
+//
+// Exit logic (3 tiers, no ribbon flip):
+//   TP1 50% at +1R    -> move SL to break-even
+//   TP2 30% at +2R
+//   Runner (20%)      -> Chandelier exit (3x ATR from highest high since entry)
+//   Hard SL           -> 1.5x ATR below entry OR last swing low (wider)
+//   Time stop         -> close if not in profit after 32 bars (8 hours on 15m)
+//
+// Risk management:
+//   1% account risk per trade (not 10% of equity)
+//   Max 2 trades / day
+//   8-bar cooldown after any exit
+//   24-bar cooldown after a loss
+//   Stop for the day after 3 consecutive losses
+// ============================================================================
+
+//@version=6
+strategy("OWC + Ribbon v4 (Quality)", overlay = true,
+     pyramiding = 1,
+     calc_on_every_tick = false,
+     process_orders_on_close = true,
+     initial_capital = 10000,
+     default_qty_type = strategy.percent_of_equity,
+     default_qty_value = 100,             // sized via strategy.entry qty arg below
+     commission_type = strategy.commission.percent,
+     commission_value = 0.05,
+     slippage = 2)
+
+// ─── INPUTS ────────────────────────────────────────────────────────────────
+grpTrend  = "Trend & HTF Filters"
+htfTF     = input.timeframe("240", "HTF Timeframe", group = grpTrend)
+htfEmaLen = input.int(200,   "HTF EMA Length",     group = grpTrend, minval = 50)
+fastEMA   = input.int(50,    "Fast EMA",           group = grpTrend, minval = 10)
+slowEMA   = input.int(100,   "Slow EMA",           group = grpTrend, minval = 20)
+minRibSpd = input.float(0.30, "Min Ribbon Spread %", group = grpTrend, step = 0.05,
+     tooltip = "Big-ribbon must be at least this wide (%) to confirm trend regime")
+
+grpOWC    = "OWC Indicator (Dr-Husam)"
+rsiLen    = input.int(20,    "RSI Length",         group = grpOWC)
+almaLen   = input.int(20,    "ALMA Length",        group = grpOWC)
+ribFast   = input.int(6,     "OWC Ribbon Fast",    group = grpOWC)
+ribSlow   = input.int(9,     "OWC Ribbon Slow",    group = grpOWC)
+
+grpEntry  = "Entry Quality"
+useT1     = input.bool(true,  "T1 Trend Start",    group = grpEntry)
+useT2     = input.bool(true,  "T2 Pullback to MA50",group = grpEntry)
+useT3     = input.bool(true,  "T3 Breakout",       group = grpEntry)
+minScoreT12 = input.int(5,   "Min Score T1/T2 (of 8)", group = grpEntry, minval = 1, maxval = 8)
+minScoreT3  = input.int(6,   "Min Score T3 (of 8)",     group = grpEntry, minval = 1, maxval = 8)
+volMult   = input.float(1.2, "Volume Spike (x avg)", group = grpEntry, step = 0.1)
+breakoutLB = input.int(20,   "Breakout Lookback",  group = grpEntry)
+
+grpExit   = "Exit & Risk"
+atrLen    = input.int(14,    "ATR Length",         group = grpExit)
+atrSLmult = input.float(1.5, "Initial SL (× ATR)", group = grpExit, step = 0.1)
+tp1R      = input.float(1.0, "TP1 R-multiple",     group = grpExit, step = 0.1)
+tp1Pct    = input.int(50,    "TP1 % closed",       group = grpExit, minval = 10, maxval = 90)
+tp2R      = input.float(2.0, "TP2 R-multiple",     group = grpExit, step = 0.1)
+tp2Pct    = input.int(30,    "TP2 % closed",       group = grpExit, minval = 0,  maxval = 80)
+chandMult = input.float(3.0, "Chandelier (× ATR)", group = grpExit, step = 0.1)
+timeStopBars = input.int(32, "Time-stop (bars if flat)", group = grpExit, minval = 8)
+
+grpRisk   = "Money Management"
+riskPct   = input.float(1.0, "Risk per trade (%)", group = grpRisk, step = 0.1)
+maxTrdDay = input.int(2,     "Max trades/day",     group = grpRisk, minval = 1)
+cdAfterExit  = input.int(8,  "Cooldown after exit (bars)", group = grpRisk)
+cdAfterLoss  = input.int(24, "Cooldown after loss (bars)", group = grpRisk)
+maxConsLoss  = input.int(3,  "Max consecutive losses/day", group = grpRisk)
+
+grpFilter = "Session / Day Filters"
+useSessF  = input.bool(true, "Skip toxic hours",   group = grpFilter,
+     tooltip = "From v3 data: hours 07,12,20,22 (UTC+3) were lowest WR")
+skipSat   = input.bool(true, "Skip Saturday",      group = grpFilter)
+
+// ─── CORE INDICATORS ──────────────────────────────────────────────────────
+// Big ribbon (macro)
+bigFast = ta.ema(close, fastEMA)
+bigSlow = ta.ema(close, slowEMA)
+ribSpdPct = math.abs(bigFast - bigSlow) / bigSlow * 100
+bigBull   = bigFast > bigSlow and ribSpdPct >= minRibSpd
+
+// HTF EMA — confirms macro alignment
+htfEma     = request.security(syminfo.tickerid, htfTF, ta.ema(close, htfEmaLen), lookahead = barmerge.lookahead_off)
+htfEmaUp   = ta.rising(htfEma, 1)
+htfTrendOK = close > htfEma and htfEmaUp
+
+// OWC oscillator — RSI weight + ALMA channel
+rsiVal  = ta.rsi(close, rsiLen)
+weight  = (rsiVal - 50) / 50            // -1 .. +1
+weightedSrc = close * (1 + weight * 0.05)
+refAlma     = ta.alma(close, almaLen, 0.85, 6)
+oscAlma     = ta.alma(weightedSrc, almaLen, 0.85, 6)
+oscBull     = oscAlma > refAlma
+refSlopeUp  = ta.rising(refAlma, 1)
+oscBullStr  = oscBull and refSlopeUp and rsiVal > 50
+
+// OWC short ribbon
+owcFast = ta.ema(hlc3, ribFast)
+owcSlow = ta.ema(hlc3, ribSlow)
+ribbonBull   = owcFast > owcSlow
+ribbonGreen  = ribbonBull and owcFast[1] <= owcSlow[1]   // turning event
+
+// Volatility / volume
+atr     = ta.atr(atrLen)
+atrPct  = atr / close * 100
+volAvg  = ta.sma(volume, 20)
+volBull = volume > volAvg * volMult
+
+// ─── QUALITY SCORE (0-8) ──────────────────────────────────────────────────
+// Each true confluence = 1 point. Need 5+ for T1/T2, 6+ for T3.
+sBigBull   = bigBull           ? 1 : 0
+sHtf       = htfTrendOK        ? 1 : 0
+sOscBull   = oscBull           ? 1 : 0
+sRefUp     = refSlopeUp        ? 1 : 0
+sAtrOK     = atrPct > 0.4      ? 1 : 0     // skip dead markets
+sVolOK     = volume > volAvg   ? 1 : 0
+sRsiNotOB  = rsiVal < 75       ? 1 : 0
+sRsiNotOS  = rsiVal > 35       ? 1 : 0
+score = sBigBull + sHtf + sOscBull + sRefUp + sAtrOK + sVolOK + sRsiNotOB + sRsiNotOS
+
+// ─── SESSION / DAY FILTER ─────────────────────────────────────────────────
+toxicHour  = useSessF and (hour == 7 or hour == 12 or hour == 20 or hour == 22)
+toxicDay   = skipSat and dayofweek == dayofweek.saturday
+sessionOK  = not (toxicHour or toxicDay)
+
+// ─── ENTRY CONDITIONS ─────────────────────────────────────────────────────
+// T1 — Trend Start: macro+HTF+OWC all aligned, ribbon flips green
+t1 = useT1 and ribbonGreen and bigBull and htfTrendOK and oscBull and score >= minScoreT12
+
+// T2 — Quality Pullback to MA50: only in confirmed uptrend, with bullish reversal candle
+nearMa50  = low <= bigFast * 1.005 and low >= bigFast * 0.985
+bullRev   = close > open and close > (high + low) / 2 and close > close[1]
+t2 = useT2 and nearMa50 and bullRev and bigBull and htfTrendOK and ribbonBull and oscBull and score >= minScoreT12
+
+// T3 — Breakout: 20-bar high break with volume confirmation + strong osc
+hh20 = ta.highest(high[1], breakoutLB)
+t3 = useT3 and ta.crossover(close, hh20) and bigBull and htfTrendOK and oscBullStr and volBull and score >= minScoreT3
+
+// ─── COOLDOWN & DAILY CAPS ────────────────────────────────────────────────
+var int barsSinceExit  = 9999
+var int barsSinceLoss  = 9999
+var int trdToday       = 0
+var int consLossToday  = 0
+var int prevDay        = -1
+isNewDay = dayofmonth != prevDay
+if isNewDay
+    trdToday      := 0
+    consLossToday := 0
+    prevDay       := dayofmonth
+
+barsSinceExit := barsSinceExit + 1
+barsSinceLoss := barsSinceLoss + 1
+
+cooldownOK = barsSinceExit >= cdAfterExit and barsSinceLoss >= cdAfterLoss
+freqOK     = trdToday < maxTrdDay and consLossToday < maxConsLoss
+
+// ─── POSITION SIZING (true 1% risk) ───────────────────────────────────────
+slDist     = atr * atrSLmult
+riskPerCt  = slDist                               // USD per 1 contract
+qtyByRisk  = (strategy.equity * riskPct / 100) / math.max(riskPerCt, syminfo.mintick * 10)
+
+// ─── ENTRY EXECUTION ──────────────────────────────────────────────────────
+canEnter = strategy.position_size == 0 and sessionOK and cooldownOK and freqOK and (t1 or t2 or t3)
+entryTag = t1 ? "T1-TREND" : t2 ? "T2-PULLBACK" : "T3-BREAKOUT"
+
+if canEnter
+    // Use last 5-bar swing low as alternative SL anchor (wider of the two)
+    swingLo = ta.lowest(low, 5)
+    slPriceATR  = close - slDist
+    slPriceSwg  = swingLo - syminfo.mintick * 5
+    slPrice     = math.min(slPriceATR, slPriceSwg)            // wider stop
+    rDist       = close - slPrice
+    tp1Price    = close + rDist * tp1R
+    tp2Price    = close + rDist * tp2R
+
+    strategy.entry("L", strategy.long, qty = qtyByRisk, comment = entryTag)
+    // Two-tier exit: half off at TP1, runner trails with chandelier; both share initial SL
+    strategy.exit("TP1",  from_entry = "L", qty_percent = tp1Pct, limit = tp1Price, stop = slPrice, comment_profit = "TP1", comment_loss = "SL")
+    strategy.exit("RUN",  from_entry = "L",                                         stop = slPrice, comment_profit = "TP", comment_loss = "SL")
+    trdToday := trdToday + 1
+
+// ─── BREAK-EVEN AFTER TP1 + CHANDELIER TRAIL FOR RUNNER ───────────────────
+var float entryPx   = na
+var float beStop    = na
+var float chandHi   = na
+var float initSL    = na
+var int   barsInTrd = 0
+var bool  tp1Hit    = false
+
+if strategy.position_size > 0 and strategy.position_size[1] == 0
+    entryPx   := strategy.position_avg_price
+    initSL    := close - atr * atrSLmult
+    chandHi   := high
+    barsInTrd := 0
+    tp1Hit    := false
+    beStop    := na
+
+if strategy.position_size > 0
+    barsInTrd := barsInTrd + 1
+    chandHi   := math.max(nz(chandHi, high), high)
+    // detect TP1 hit (price reached entry + 1R)
+    if not tp1Hit and high >= entryPx + (entryPx - initSL) * tp1R
+        tp1Hit := true
+        beStop := entryPx + atr * 0.05            // tiny buffer above breakeven
+
+    chanStop = chandHi - atr * chandMult
+    runnerStop = tp1Hit ? math.max(beStop, chanStop) : initSL
+    runnerLimit = entryPx + (entryPx - initSL) * tp2R
+
+    // Update the SAME "RUN" exit each bar -> Pine treats this as a stop update, not a new order
+    strategy.exit("RUN", from_entry = "L", stop = runnerStop, limit = runnerLimit,
+         comment_profit = tp1Hit ? "TP2" : "TP",
+         comment_loss   = tp1Hit ? "BE/TRAIL" : "SL")
+
+    // Time stop — bail if still flat-to-red after N bars
+    if barsInTrd >= timeStopBars and close <= entryPx
+        strategy.close("L", comment = "TIME")
+
+// ─── EXIT BOOK-KEEPING (cooldowns, streak counter) ───────────────────────
+exitedNow = strategy.position_size == 0 and strategy.position_size[1] != 0
+if exitedNow
+    barsSinceExit := 0
+    lastTrdPnL   = strategy.netprofit - nz(strategy.netprofit[1], 0)
+    if lastTrdPnL < 0
+        barsSinceLoss := 0
+        consLossToday := consLossToday + 1
+    else
+        consLossToday := 0
+
+// ─── VISUAL: ENTRY LABELS ─────────────────────────────────────────────────
+if canEnter
+    lblColor = t1 ? color.new(color.lime, 0) : t2 ? color.new(color.aqua, 0) : color.new(color.orange, 0)
+    label.new(bar_index, low, entryTag,
+         style = label.style_label_up, color = lblColor, textcolor = color.black, size = size.small)
+
+// ─── VISUAL: KEY LEVELS ───────────────────────────────────────────────────
+plot(bigFast, "MA Fast",  color = color.new(color.yellow, 0), linewidth = 2)
+plot(bigSlow, "MA Slow",  color = color.new(color.orange, 0), linewidth = 2)
+plot(htfEma,  "HTF EMA",  color = htfTrendOK ? color.new(color.lime, 0) : color.new(color.red, 0), linewidth = 3)
+plot(strategy.position_size > 0 ? entryPx : na,                "Entry",  color = color.white, style = plot.style_linebr)
+plot(strategy.position_size > 0 ? entryPx + (entryPx-initSL)*tp1R : na, "TP1",    color = color.green, style = plot.style_linebr)
+plot(strategy.position_size > 0 ? entryPx + (entryPx-initSL)*tp2R : na, "TP2",    color = color.green, style = plot.style_linebr)
+plot(strategy.position_size > 0 ? (tp1Hit ? math.max(beStop, chandHi - atr*chandMult) : initSL) : na, "SL/Trail", color = color.red, style = plot.style_linebr)
+
+// ─── INFO TABLE ───────────────────────────────────────────────────────────
+var table info = table.new(position.top_right, 2, 14, border_width = 1)
+if barstate.islast
+    table.cell(info, 0, 0,  "OWC + Ribbon v4",        bgcolor = color.new(color.purple, 30), text_color = color.white)
+    table.cell(info, 1, 0,  "Quality Score: " + str.tostring(score) + "/8",
+         bgcolor = score >= 6 ? color.new(color.green,30) : score >= 5 ? color.new(color.orange,40) : color.new(color.red,40),
+         text_color = color.white)
+    table.cell(info, 0, 1,  "Big Ribbon")
+    table.cell(info, 1, 1,  bigBull ? "BULL " + str.tostring(ribSpdPct, "#.##") + "%" : "FLAT/BEAR " + str.tostring(ribSpdPct, "#.##") + "%",
+         bgcolor = bigBull ? color.new(color.green,40) : color.new(color.red,40), text_color = color.white)
+    table.cell(info, 0, 2,  "HTF (" + htfTF + ")")
+    table.cell(info, 1, 2,  htfTrendOK ? "UP" : "DOWN",
+         bgcolor = htfTrendOK ? color.new(color.green,40) : color.new(color.red,40), text_color = color.white)
+    table.cell(info, 0, 3,  "OWC Ribbon")
+    table.cell(info, 1, 3,  ribbonBull ? "BULL" : "BEAR",
+         bgcolor = ribbonBull ? color.new(color.green,40) : color.new(color.red,40), text_color = color.white)
+    table.cell(info, 0, 4,  "Osc Channel")
+    table.cell(info, 1, 4,  oscBullStr ? "BULL+" : oscBull ? "BULL" : "BEAR",
+         bgcolor = oscBullStr ? color.new(color.lime,30) : oscBull ? color.new(color.green,40) : color.new(color.red,40), text_color = color.white)
+    table.cell(info, 0, 5,  "ATR %")
+    table.cell(info, 1, 5,  str.tostring(atrPct, "#.##") + "%",
+         bgcolor = atrPct > 0.4 ? color.new(color.green,40) : color.new(color.gray,40), text_color = color.white)
+    table.cell(info, 0, 6,  "Volume vs Avg")
+    table.cell(info, 1, 6,  str.tostring(volume / volAvg, "#.##") + "x",
+         bgcolor = volBull ? color.new(color.green,40) : color.new(color.gray,40), text_color = color.white)
+    table.cell(info, 0, 7,  "RSI(" + str.tostring(rsiLen) + ")")
+    table.cell(info, 1, 7,  str.tostring(rsiVal, "#.#"))
+    table.cell(info, 0, 8,  "Session OK")
+    table.cell(info, 1, 8,  sessionOK ? "YES" : "BLOCKED",
+         bgcolor = sessionOK ? color.new(color.green,40) : color.new(color.red,40), text_color = color.white)
+    table.cell(info, 0, 9,  "Trades today")
+    table.cell(info, 1, 9,  str.tostring(trdToday) + "/" + str.tostring(maxTrdDay))
+    table.cell(info, 0, 10, "Cons. losses")
+    table.cell(info, 1, 10, str.tostring(consLossToday) + "/" + str.tostring(maxConsLoss))
+    table.cell(info, 0, 11, "Cooldown")
+    table.cell(info, 1, 11, cooldownOK ? "READY" : "WAIT " + str.tostring(math.max(cdAfterExit - barsSinceExit, cdAfterLoss - barsSinceLoss)) + "b")
+    table.cell(info, 0, 12, "Position")
+    table.cell(info, 1, 12, strategy.position_size > 0 ? "LONG (bar " + str.tostring(barsInTrd) + ")" : "FLAT",
+         bgcolor = strategy.position_size > 0 ? color.new(color.blue,40) : color.new(color.gray,50), text_color = color.white)
+    nextSig = t1 ? "T1 ARMED" : t2 ? "T2 ARMED" : t3 ? "T3 ARMED" : "—"
+    table.cell(info, 0, 13, "Signal")
+    table.cell(info, 1, 13, nextSig,
+         bgcolor = nextSig != "—" ? color.new(color.yellow,30) : color.new(color.gray,50), text_color = color.black)
+
+// ─── ALERTS ───────────────────────────────────────────────────────────────
+alertcondition(canEnter and t1, "T1 Trend Start",   "OWC v4: T1 TREND-START long entry on {{ticker}}")
+alertcondition(canEnter and t2, "T2 Pullback",      "OWC v4: T2 PULLBACK long entry on {{ticker}}")
+alertcondition(canEnter and t3, "T3 Breakout",      "OWC v4: T3 BREAKOUT long entry on {{ticker}}")
+alertcondition(strategy.position_size > 0 and tp1Hit and not tp1Hit[1], "TP1 Hit", "OWC v4: TP1 hit, SL moved to break-even")
+alertcondition(consLossToday >= maxConsLoss, "Daily Stop", "OWC v4: Daily loss limit reached, trading paused")

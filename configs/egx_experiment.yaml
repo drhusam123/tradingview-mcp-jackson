@@ -1,0 +1,79 @@
+# EGX Quant Research Platform — Experiment Configuration
+# Managed by Hydra
+# Usage:
+#   python scripts/python/hydra_runner.py
+#   python scripts/python/hydra_runner.py +experiment=regime_ml
+#   python scripts/python/hydra_runner.py model.global.n_estimators=300 walk_forward.oos_months=6
+
+defaults:
+  - _self_
+
+# ── Data settings ─────────────────────────────────────────────────────────────
+data:
+  db_path: "data/egx_trading.db"
+  start_date: "2022-01-01"
+  is_end: "2025-12-31"
+  oos_start: "2026-01-30"
+  purge_days: 30
+
+# ── Model settings ────────────────────────────────────────────────────────────
+model:
+  global:
+    n_estimators: 200
+    learning_rate: 0.05
+    num_leaves: 20
+    min_child_samples: 15
+    feature_fraction: 0.8
+    reg_alpha: 1.0
+    reg_lambda: 1.0
+  regime_specific:
+    min_samples: 80
+    n_estimators: 200
+    learning_rate: 0.05
+
+# ── Triple Barrier settings ───────────────────────────────────────────────────
+triple_barrier:
+  upper_pct: 0.07
+  lower_pct: 0.04
+  max_holding_days: 10
+
+# ── Portfolio constraints ─────────────────────────────────────────────────────
+portfolio:
+  max_weight: 0.15
+  max_positions: 20
+  min_prob: 0.65
+  commission_pct: 0.015
+  slippage_pct: 0.005
+  risk_free_rate: 0.20
+
+# ── Regime settings ───────────────────────────────────────────────────────────
+regime:
+  n_regimes: 4
+  rolling_window: 20
+  vol_threshold: 2.5
+  trend_threshold: 0.35
+
+# ── Walk-Forward settings ─────────────────────────────────────────────────────
+walk_forward:
+  is_months: 18
+  oos_months: 3
+  step_months: 3
+  min_trades: 5
+
+# ── MLflow settings ───────────────────────────────────────────────────────────
+mlflow:
+  tracking_uri: "mlruns"
+  experiment_name: "EGX-Explosion-ML"
+  register_model: true
+
+# ── Feature store ─────────────────────────────────────────────────────────────
+feature_store:
+  refresh_daily: true
+  drift_threshold: 2.0
+  n_ohlcv_features: 3
+
+# ── Alerts & notifications ────────────────────────────────────────────────────
+alerts:
+  regime_change: true
+  early_warning_threshold: "MEDIUM"
+  min_oos_precision: 0.50

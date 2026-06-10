@@ -289,6 +289,12 @@ async function main() {
   }
   run('node scripts/repair_cross_market_quality.mjs', 'Cross-market deterministic quality repair');
 
+  run(
+    `${PYTHON3} scripts/python/data_quality_gate.py full_audit '{}'`,
+    'Layer-2 data quality gate (mandatory before ML)',
+    { critical: true },
+  );
+
   run('node scripts/rebuild_indicators.mjs', 'Rebuild local indicators', { critical: true });
   if (tvReady) {
     run('node scripts/tv_pine_rotation.mjs', 'Pine analytics rotation (80 sym)');

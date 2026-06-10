@@ -23,3 +23,16 @@ mlruns/
 *.db-shm
 *.db-wal
 egx*.db
+
+# Python build artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+
+# Generated ML artifacts (retrain locally)
+scripts/python/models/ml_trainer/stock_*.txt
+scripts/python/models/ml_trainer/*_backup_*
+scripts/python/outputs/
+scripts/python/.cache/
