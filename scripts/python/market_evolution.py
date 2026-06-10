@@ -915,6 +915,16 @@ def calibrate_regime_models(db):
 # MASTER PIPELINE
 # ══════════════════════════════════════════════════════════════════════════════
 
+def p6_sync_only(db, params=None):
+    """Lightweight P6 closed-loop sync — failures + stock adjustments only."""
+    ensure_schema(db)
+    evolve_stock_profiles(db)
+    return {
+        'p6_failures': ingest_p6_ultra_failures(db, params),
+        'p6_adjustments': apply_p6_stock_adjustments(db, params),
+    }
+
+
 def full_evolution(db, params=None):
     """
     7-stage self-learning evolution pipeline.
@@ -1244,6 +1254,7 @@ def dispatch(cmd, params):
     if cmd == 'hypotheses':           return evolve_hypotheses(db)
     if cmd == 'regime_calibration':   return calibrate_regime_models(db)
     if cmd == 'full_evolution':       return full_evolution(db, params)
+    if cmd == 'p6_sync':              return p6_sync_only(db, params)
     return {'error': f'Unknown command: {cmd}'}
 
 if __name__ == '__main__':

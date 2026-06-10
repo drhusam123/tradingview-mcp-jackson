@@ -83,6 +83,18 @@ try {
 }
 
 try {
+  execSync(`"${NODE}" scripts/egx_loop_audit.mjs`, { cwd: PROJECT_ROOT, stdio: 'inherit', timeout: 60_000 });
+} catch (e) {
+  console.log(`⚠️  Loop audit: ${e.message?.slice(0, 80)}`);
+}
+
+try {
+  execSync(`"${NODE}" scripts/egx_p6_sync.mjs --light`, { cwd: PROJECT_ROOT, stdio: 'inherit', timeout: 300_000 });
+} catch (e) {
+  console.log(`⚠️  P6 sync: ${e.message?.slice(0, 80)}`);
+}
+
+try {
   execSync(`"${NODE}" scripts/egx_full_verify.mjs --skip-tests --skip-cdp`, {
     cwd: PROJECT_ROOT,
     stdio: 'inherit',

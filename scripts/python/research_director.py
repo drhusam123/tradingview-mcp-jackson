@@ -113,6 +113,16 @@ def morning_run(params):
                 fb_params['feedback_queue'] = json.load(f).get('queue', [])
         except Exception:
             pass
+    p6_path = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'p6_research_context.json')
+    if os.path.exists(p6_path):
+        try:
+            with open(p6_path, encoding='utf-8') as f:
+                p6 = json.load(f)
+            fb_params['p6_priorities'] = p6.get('research_priorities', [])
+            fb_params['evolution_hints'] = p6.get('evolution_hints', {})
+            fb_params['p6_gate'] = p6.get('p6_gate', {})
+        except Exception:
+            pass
     qd = _run_script('quant_discovery.py', 'run', fb_params, timeout=180)
     n_qd = qd.get('n_rules', qd.get('rules_saved', 0))
     log.append(f"  → quant_discovery: {n_qd} rules refreshed")

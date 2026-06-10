@@ -137,7 +137,7 @@ export { runPythonAnalysis, pythonFullStats, pythonReturnAnalysis,
          // Phase 15 — Self-Learning Market Evolution
          pythonEvoStatus, pythonEvoExperience, pythonEvoConfidence,
          pythonEvoReinforce, pythonEvoFailures, pythonEvoStocks,
-         pythonEvoHypotheses, pythonEvoRegimes, pythonEvoFull,
+         pythonEvoHypotheses, pythonEvoRegimes, pythonEvoFull, pythonEvoP6Sync,
          // Phase 16 — Autonomous Market Cognition Engine
          pythonCogStatus, pythonCogStockDNA, pythonCogSectorDNA,
          pythonCogExplosions, pythonCogLaws, pythonCogMemory,

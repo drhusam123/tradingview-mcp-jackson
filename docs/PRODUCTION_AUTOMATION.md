@@ -88,6 +88,8 @@ Test: `npm run egx:alert:test` | `npm run egx:alert:test:success`
 | `egx:closed:loop` | Master closed loop (9 stages incl. P6 context) |
 | `egx:opportunity:followup` | Opportunity quality trend alerts |
 | `egx:loop:audit` | Closed-loop artifact freshness + wiring audit |
+| `egx:p6:sync` | Full evolution + cognition consume P6 context |
+| `egx:p6:sync:light` | Lightweight P6 bridge (~15s, post-session) |
 | `egx:quality:gate` | Fast L2 `gate_daily` |
 | `egx:proof:forensic` | ULTRA WR breakdown |
 

@@ -1288,6 +1288,7 @@ export async function pythonEvoStocks()     { return runEvo('stocks',           
 export async function pythonEvoHypotheses() { return runEvo('hypotheses',         {}); }
 export async function pythonEvoRegimes()    { return runEvo('regime_calibration', {}); }
 export async function pythonEvoFull(params = {}) { return runEvo('full_evolution', params); }
+export async function pythonEvoP6Sync(params = {}) { return runEvo('p6_sync', params); }
 
 // ── Phase 16 — Autonomous Market Cognition Engine ────────────────────────────
 const COG_SCRIPT = join(__dirname, '../../scripts/python/market_cognition.py');

@@ -1733,6 +1733,7 @@ def full_cognition(db, params=None):
         'stages_completed':     sum(1 for v in stage_results.values() if 'error' not in v),
         'stages_total':         len(stages),
         'key_findings':         key_findings,
+        'p6_priorities':        stage_results.get('p6_priorities', {}),
         'stock_dna':            stage_results.get('stock_dna', {}),
         'sector_dna':           stage_results.get('sector_dna', {}),
         'explosion_anatomy':    stage_results.get('explosion_anatomy', {}),

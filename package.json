@@ -770,6 +770,8 @@
     "egx:closed:loop": "node scripts/egx_closed_loop.mjs",
     "egx:opportunity:followup": "node scripts/egx_opportunity_followup.mjs",
     "egx:loop:audit": "node scripts/egx_loop_audit.mjs",
+    "egx:p6:sync": "node scripts/egx_p6_sync.mjs",
+    "egx:p6:sync:light": "node scripts/egx_p6_sync.mjs --light",
     "egx:loss:autopsy": "node scripts/egx_loss_autopsy.mjs",
     "egx:p6:status": "node scripts/egx_p6_status.mjs",
     "egx:cache:backfill": "node scripts/egx_backfill_indicator_cache.mjs",

@@ -559,3 +559,15 @@ research_directives PENDING
 ```
 
 لا تُكمل `p6_sample_gap` حتى يتحقق gate — تُكمل `autopsy_*` بعد evolution
+
+### القاعدة #22 — P6 sync بعد كل closed loop (يونيو 2026)
+
+```
+post_session: closed_loop → loop_audit → egx:p6:sync:light
+  → 15 ULTRA losses → failure_reconstruction
+  → stock_behavioral_memory adjusted
+  → directives PENDING → COMPLETED
+```
+
+`egx:p6:sync` = full evolution+cognition | `--light` = P6 bridge فقط (~15s)
+`egx:p6:status` يعرض loop audit + directives + delivered P6
