@@ -13,6 +13,7 @@ import { isTradingDay, cairoDateParts } from './lib/egx_calendar.mjs';
 import { alertNotification, opsSuccessAlert } from './lib/notification_alert.mjs';
 import { latestOhlcvDate } from './lib/delivery_audit.mjs';
 import { buildDeliveryDigest } from './lib/ops_digest.mjs';
+import { writeProofLoopSnapshot } from './lib/proof_loop.mjs';
 
 loadEnv();
 
@@ -56,6 +57,25 @@ if (reconcileExit !== 0) {
   }
 }
 
+const PYTHON = process.env.PYTHON_BIN || process.env.PYTHON3 || '/usr/bin/python3';
+try {
+  execSync(`"${PYTHON}" scripts/python/egx_outcome_tracker.py`, {
+    cwd: PROJECT_ROOT,
+    stdio: 'inherit',
+    timeout: 120_000,
+  });
+} catch (e) {
+  console.log(`⚠️  Outcome tracker: ${e.message?.slice(0, 80)}`);
+}
+
+let proof = null;
+try {
+  proof = writeProofLoopSnapshot();
+  console.log(`📊 ${proof.n_completed} ULTRA completed | WR5 ${proof.win_rate ?? '—'}% | gate ${proof.gate_pass ? 'PASS' : proof.gate_reason}`);
+} catch (e) {
+  console.log(`⚠️  Proof loop: ${e.message?.slice(0, 80)}`);
+}
+
 try {
   execSync(`"${NODE}" scripts/egx_full_verify.mjs --skip-tests --skip-cdp`, {
     cwd: PROJECT_ROOT,
@@ -66,6 +86,7 @@ try {
   process.exit(1);
 }
 
-await opsSuccessAlert('POST_SESSION_OK', buildDeliveryDigest(latestOhlcvDate() || today));
+const digest = { ...buildDeliveryDigest(latestOhlcvDate() || today), proof_loop: proof };
+await opsSuccessAlert('POST_SESSION_OK', digest);
 
 console.log('\n═══ Post-Session OK ═══\n');

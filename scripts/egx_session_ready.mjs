@@ -10,6 +10,8 @@ import { loadEnv, PROJECT_ROOT } from './lib/load_env.mjs';
 import { isTradingDay, cairoDateParts, tradingDayStaleness, nextTradingDay } from './lib/egx_calendar.mjs';
 import { getUpstreamDates, latestOhlcvDate, countActionable, wasAlreadySent } from './lib/delivery_audit.mjs';
 import { alertNotification } from './lib/notification_alert.mjs';
+import { runDailyQualityGate } from './lib/data_quality_gate.mjs';
+import { getProofLoopMetrics, formatProofLoopLine, PROOF_MIN_N } from './lib/proof_loop.mjs';
 
 loadEnv();
 
@@ -69,6 +71,28 @@ if (dup.duplicate) {
 ok('Cron TV sync', /egx-tv-sync.*egx_tv_auto_update/.test(cron));
 ok('Cron Telegram', /egx-telegram.*egx_telegram_cron/.test(cron));
 ok('Cron post-session', /EGX-POST-SESSION-DAILY/.test(cron));
+
+try {
+  const gate = runDailyQualityGate();
+  ok(
+    'Data trust (L2)',
+    !gate.blocked,
+    gate.blocked
+      ? `BLOCKED ${gate.reason}`
+      : `${gate.latest_date} trust=${gate.trust_score} (${gate.trust_status})`,
+    { warn: futureSession },
+  );
+} catch (e) {
+  ok('Data trust (L2)', false, e.message?.slice(0, 80), { warn: futureSession });
+}
+
+const proof = getProofLoopMetrics();
+ok(
+  'Proof loop P6',
+  proof.gate_pass || proof.samples_needed > 0,
+  formatProofLoopLine(proof).replace(/^[^\s]+\s/, ''),
+  { warn: !proof.gate_pass && proof.n_completed < PROOF_MIN_N },
+);
 
 const verifyPath = join(PROJECT_ROOT, 'data/full_verify_last.json');
 if (existsSync(verifyPath)) {

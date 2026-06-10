@@ -47,8 +47,9 @@ SEVERITY_WEIGHTS = {
 # ---------------------------------------------------------------------------
 
 def get_conn():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -1147,10 +1148,154 @@ def build_full(params):
 
 
 # ---------------------------------------------------------------------------
+# Command: gate_daily — fast mandatory pre-ML gate (latest session only)
+# ---------------------------------------------------------------------------
+
+def _bar_violation_counts(o, h, l, c, v):
+    """Return (n_critical, n_high) for a single bar without DB logging."""
+    n_critical = 0
+    n_high = 0
+    if any(p is not None and p < 0 for p in [o, h, l, c]):
+        n_critical += 1
+    integrity_ok = True
+    if h is not None and l is not None:
+        if h < l:
+            integrity_ok = False
+        if o is not None and h < o:
+            integrity_ok = False
+        if c is not None and h < c:
+            integrity_ok = False
+        if o is not None and l > o:
+            integrity_ok = False
+        if c is not None and l > c:
+            integrity_ok = False
+    if not integrity_ok:
+        n_critical += 1
+    if c is not None and c <= 0:
+        n_critical += 1
+    if v is not None and v < 0:
+        n_high += 1
+    return n_critical, n_high
+
+
+def gate_daily(params):
+    """
+    Fast mandatory pre-ML gate — validates latest session bars + staleness.
+    Does NOT scan full OHLCV history (use build_full for weekly deep audit).
+    Returns success=False when pipeline must halt before ML/scoring.
+    """
+    min_trust = float(params.get('min_trust_score', 50))
+    max_open_critical = int(params.get('max_open_critical', 0))
+
+    conn = get_conn()
+    ensure_schema(conn)
+
+    summary = conn.execute(
+        "SELECT MAX(bar_time) AS latest, COUNT(DISTINCT symbol) AS n_syms FROM ohlcv_history"
+    ).fetchone()
+    if not summary or not summary['latest']:
+        conn.close()
+        return {
+            'success': False,
+            'blocked': True,
+            'command': 'gate_daily',
+            'reason': 'NO_OHLCV_DATA',
+        }
+
+    latest_ts = summary['latest']
+    latest_date = unix_to_date(latest_ts)
+    latest_bars = conn.execute(
+        """SELECT symbol, open, high, low, close, volume
+           FROM ohlcv_history WHERE bar_time = ?""",
+        (latest_ts,),
+    ).fetchall()
+
+    n_critical = 0
+    n_high = 0
+    bad_symbols = []
+    for row in latest_bars:
+        c_crit, c_high = _bar_violation_counts(
+            row['open'], row['high'], row['low'], row['close'], row['volume']
+        )
+        if c_crit or c_high:
+            bad_symbols.append(row['symbol'])
+        n_critical += c_crit
+        n_high += c_high
+
+    crit_open = conn.execute(
+        """SELECT COUNT(*) AS n FROM data_quality_log
+           WHERE status='OPEN' AND severity='CRITICAL' AND table_name='ohlcv_history'"""
+    ).fetchone()['n']
+
+    stale_res = check_stale_data({
+        'max_age_days': int(params.get('max_age_days', 5)),
+        'max_trading_days': int(params.get('max_trading_days', 1)),
+    })
+    ohlcv_stale = next(
+        (c for c in stale_res.get('checked', []) if c.get('source') == 'ohlcv_daily'),
+        None,
+    )
+    is_stale = ohlcv_stale and ohlcv_stale.get('status') in ('STALE', 'NO_DATA', 'TABLE_MISSING')
+
+    n_bars = len(latest_bars) or 1
+    trust_score = compute_trust_score(n_critical, n_high, 0, 0, n_bars=n_bars)
+    trust_status = score_to_status(trust_score)
+
+    blocked = (
+        is_stale
+        or n_critical > 0
+        or crit_open > max_open_critical
+        or trust_score < min_trust
+    )
+    reason = None
+    if is_stale:
+        reason = 'STALE_OHLCV'
+    elif n_critical > 0:
+        reason = 'SESSION_INTEGRITY_VIOLATION'
+    elif crit_open > max_open_critical:
+        reason = 'OPEN_CRITICAL_ISSUES'
+    elif trust_score < min_trust:
+        reason = 'LOW_TRUST_SCORE'
+
+    # Upsert trust score for latest session audit
+    now = datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
+    conn.execute(
+        """INSERT INTO data_trust_scores
+               (source, trust_score, last_checked, n_issues_open, n_issues_critical, status)
+           VALUES (?,?,?,?,?,?)
+           ON CONFLICT(source) DO UPDATE SET
+               trust_score=excluded.trust_score,
+               last_checked=excluded.last_checked,
+               n_issues_open=excluded.n_issues_open,
+               n_issues_critical=excluded.n_issues_critical,
+               status=excluded.status""",
+        ('ohlcv_history', trust_score, now, n_critical + n_high, n_critical, trust_status),
+    )
+    conn.commit()
+    conn.close()
+
+    return {
+        'success': not blocked,
+        'blocked': blocked,
+        'command': 'gate_daily',
+        'reason': reason,
+        'latest_date': latest_date,
+        'n_symbols_latest': len(latest_bars),
+        'n_universe': summary['n_syms'],
+        'session_violations': {'critical': n_critical, 'high': n_high, 'bad_symbols': bad_symbols[:10]},
+        'open_critical_issues': crit_open,
+        'trust_score': round(trust_score, 1),
+        'trust_status': trust_status,
+        'stale_check': stale_res,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Command dispatch
 # ---------------------------------------------------------------------------
 
 COMMANDS = {
+    'gate_daily':             gate_daily,
     'check_ohlcv_integrity':  check_ohlcv_integrity,
     'build_zero_volume_gate': build_zero_volume_gate,
     'check_timestamp_gaps':   check_timestamp_gaps,

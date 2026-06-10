@@ -9,6 +9,8 @@ import { join } from 'path';
 import { loadEnv, PROJECT_ROOT } from './lib/load_env.mjs';
 import { buildDeliveryDigest } from './lib/ops_digest.mjs';
 import { nextTradingDay, cairoDateParts } from './lib/egx_calendar.mjs';
+import { getProofLoopMetrics, formatProofLoopLine } from './lib/proof_loop.mjs';
+import { runDailyQualityGate } from './lib/data_quality_gate.mjs';
 
 loadEnv();
 
@@ -23,6 +25,15 @@ const digest = buildDeliveryDigest();
 const nxt = nextTradingDay(cairo.date);
 const ready = readJson('data/prod_ready_last.json');
 const verify = readJson('data/full_verify_last.json');
+const proof = readJson('data/proof_loop_last.json') || getProofLoopMetrics();
+let trustLine = '—';
+try {
+  const g = runDailyQualityGate();
+  trustLine = g.blocked
+    ? `❌ BLOCKED (${g.reason})`
+    : `✅ ${g.latest_date} trust=${g.trust_score} (${g.trust_status})`;
+} catch { /* optional */ }
+const proofLine = formatProofLoopLine(proof);
 
 let gitLine = 'git: unknown';
 try {
@@ -43,6 +54,8 @@ console.log(`
 
   Prod ready:   ${ready?.pass ? '✅ PASS' : ready ? '❌ FAIL' : '—'} ${ready?.at?.slice(0, 19) ?? ''}
   Full verify:  ${verify?.pass ? '✅ PASS' : verify ? '❌ FAIL' : '—'} ${verify?.at?.slice(0, 19) ?? ''}
+  Data trust:   ${trustLine}
+  ${proofLine}
   Git:          ${gitLine}
 
 ── ONE COMMANDS ──

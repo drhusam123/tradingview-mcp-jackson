@@ -23,6 +23,8 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import Database from 'better-sqlite3';
 import { seedHolidayCalendar, tradingDayStaleness } from './lib/egx_calendar.mjs';
+import { runDailyQualityGate } from './lib/data_quality_gate.mjs';
+import { getProofLoopMetrics } from './lib/proof_loop.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DATA_DIR  = join(__dirname, '../data');
@@ -109,6 +111,20 @@ try {
   }
 } catch (e) {
   fail('Data: freshness check', e.message);
+}
+
+// ── 2b. Layer-2 Data Quality Gate ─────────────────────────────────────────────
+wl('\n  ── [L2] Data Quality Gate (gate_daily) ─────────────────────────────');
+try {
+  const gate = runDailyQualityGate();
+  const detail = gate.blocked
+    ? `BLOCKED ${gate.reason} | latest=${gate.latest_date ?? '—'}`
+    : `${gate.latest_date} | ${gate.n_symbols_latest} syms | trust=${gate.trust_score} (${gate.trust_status})`;
+  if (gate.blocked) fail('Data: L2 quality gate', detail);
+  else if (gate.trust_status === 'DEGRADED') warn('Data: L2 quality gate', detail);
+  else pass('Data: L2 quality gate', detail);
+} catch (e) {
+  fail('Data: L2 quality gate', e.message.slice(0, 100));
 }
 
 // ── 3. Layer Resilience ───────────────────────────────────────────────────────
@@ -325,6 +341,18 @@ try {
   db.close();
 } catch (e) {
   fail('Archive: historical access', e.message.slice(0, 80));
+}
+
+// ── P6 Proof Loop (informational) ─────────────────────────────────────────────
+wl('\n  ── [P6] Proof Loop (ULTRA live WR) ─────────────────────────────────');
+try {
+  const proof = getProofLoopMetrics();
+  const detail = `${proof.n_completed}/30 ULTRA | WR5=${proof.win_rate ?? '—'}% | ${proof.gate_pass ? 'BETA GATE PASS' : proof.gate_reason}`;
+  if (proof.gate_pass) pass('Proof: P6 beta gate', detail);
+  else if (proof.n_completed >= 20) warn('Proof: P6 beta gate', detail);
+  else warn('Proof: P6 beta gate', `${detail} — calendar-bound`);
+} catch (e) {
+  warn('Proof: P6 beta gate', e.message.slice(0, 80));
 }
 
 // ─── Summary ─────────────────────────────────────────────────────────────────

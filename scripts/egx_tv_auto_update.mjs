@@ -17,6 +17,8 @@ import { getDB } from '../src/egx/index.js';
 import { callMCPTool } from '../src/egx/tv_bridge.js';
 import { isTradingDay, cairoDateParts } from './lib/egx_calendar.mjs';
 import { alertNotification } from './lib/notification_alert.mjs';
+import { enforceDailyQualityGate } from './lib/data_quality_gate.mjs';
+import { writeProofLoopSnapshot } from './lib/proof_loop.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -289,11 +291,38 @@ async function main() {
   }
   run('node scripts/repair_cross_market_quality.mjs', 'Cross-market deterministic quality repair');
 
-  run(
-    `${PYTHON3} scripts/python/data_quality_gate.py full_audit '{}'`,
-    'Layer-2 data quality gate (mandatory before ML)',
-    { critical: true },
-  );
+  STEP_NO += 1;
+  const gateLabel = 'Layer-2 data quality gate (gate_daily — mandatory before ML)';
+  const gateT0 = Date.now();
+  log(`${DRY_RUN ? '[DRY] ' : ''}${gateLabel}`);
+  if (!DRY_RUN) {
+    try {
+      const gate = enforceDailyQualityGate({}, { exitOnBlock: true });
+      recordStep({
+        label: gateLabel,
+        cmd: 'gate_daily',
+        status: 'OK',
+        durationSec: (Date.now() - gateT0) / 1000,
+        startedAt: new Date().toISOString(),
+        detail: `${gate.latest_date} trust=${gate.trust_score} (${gate.trust_status})`,
+      });
+    } catch (err) {
+      recordStep({
+        label: gateLabel,
+        cmd: 'gate_daily',
+        status: 'FAIL',
+        durationSec: (Date.now() - gateT0) / 1000,
+        error: err.message,
+        startedAt: new Date().toISOString(),
+      });
+      alertNotification('DATA_QUALITY_GATE_BLOCKED', {
+        reason: err.gate?.reason || err.message,
+        latest: err.gate?.latest_date,
+        trust: err.gate?.trust_score,
+      });
+      process.exit(1);
+    }
+  }
 
   run('node scripts/rebuild_indicators.mjs', 'Rebuild local indicators', { critical: true });
   if (tvReady) {
@@ -371,6 +400,12 @@ async function main() {
   }
 
   run('node scripts/egx_validate.mjs --quick', 'Validation gate');
+  try {
+    const proof = writeProofLoopSnapshot();
+    log(`Proof loop: ${proof.n_completed}/${proof.samples_needed + proof.n_completed} ULTRA | WR5=${proof.win_rate ?? '—'}%`);
+  } catch (e) {
+    log(`Proof loop snapshot skipped: ${e.message}`);
+  }
 
   if (NOTIFY) {
     run('node scripts/egx_telegram_daily.mjs', 'Send Telegram daily report');

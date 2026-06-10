@@ -58,6 +58,8 @@ const scripts = [
   'scripts/lib/delivery_audit.mjs',
   'scripts/lib/egx_safety_check.mjs',
   'scripts/lib/ops_digest.mjs',
+  'scripts/lib/data_quality_gate.mjs',
+  'scripts/lib/proof_loop.mjs',
   'egx_rules.json',
 ];
 for (const s of scripts) {

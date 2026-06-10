@@ -8,6 +8,7 @@ Client-facing output must flow through `final_signals.actionable=1` only.
 | Layer | ID | Primary tables | Writer(s) | Reader(s) |
 |-------|-----|----------------|-----------|-----------|
 | Market ingest | L0 | `ohlcv_history` | `daily_update.mjs`, `tv_data_reconcile.mjs` | `rebuild_indicators.mjs`, all analytics |
+| Data validation | L2 | `data_quality_log`, `data_trust_scores` | `data_quality_gate.py gate_daily` (in `egx_tv_auto_update`) | blocks ML if `blocked=true` |
 | Indicator cache | L1 | `indicators_cache` | `rebuild_indicators.mjs` | `scan_today.mjs` (`--cache-only`), `signal_integration.py` |
 | Pine analytics | L2 | `pine_analytics` | `fetch_pine_analytics.mjs` | `signal_integration.py`, `egx_ml_trainer.py` phase11 |
 | Rules scan | L3 | `scans` | `scan_today.mjs` + `scorer.js` | `signal_integration.py` `score_all` |
