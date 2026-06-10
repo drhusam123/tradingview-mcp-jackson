@@ -70,7 +70,7 @@ Test: `npm run egx:alert:test` | `npm run egx:alert:test:success`
 | `egx:verify:all` | + TV CDP + unit tests |
 | `egx:tv:verify` | 19 TV MCP integration checks |
 | `egx:accept` | 11 production acceptance gates |
-| `test:ci` | 46 unit tests |
+| `test:ci` | 47 unit tests |
 | `egx:quality:gate` | Fast L2 `gate_daily` |
 | `egx:proof:forensic` | ULTRA WR breakdown |
 

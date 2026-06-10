@@ -11,11 +11,22 @@
     "optimal_vol_ratio_max": 3.5,
     "max_open_above_entry_pct": 0.5
   },
+  "behavioral_filters": {
+    "block_volatile_client": true,
+    "block_dormant_client": true,
+    "explosive_max_rsi": 70,
+    "volatile_max_rsi": 65,
+    "volatile_min_vol_ratio": 2.5,
+    "high_false_signal_rate_max": 0.65
+  },
   "risk_rules": [
     "Structural SL under retest/breakout low — not ATR-only",
     "Near ATH requires volume >= 2.5x 20d average",
     "Session volume must not drop >60% vs breakout day",
     "Volume 2.5–3x is optimal band (warn above 3.5x)",
-    "Max 3 client signals per day; max 6 open positions"
+    "Max 3 client signals per day; max 6 open positions",
+    "VOLATILE stocks blocked at delivery unless vol 2.5–3.5x and RSI≤65",
+    "EXPLOSIVE + RSI>70 blocked (P6 forensic: 41.7% WR)",
+    "DORMANT and false_signal_rate>65% blocked"
   ]
 }

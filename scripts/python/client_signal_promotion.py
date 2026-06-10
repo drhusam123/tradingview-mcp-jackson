@@ -65,6 +65,27 @@ def _is_hard_veto(reason: str | None) -> bool:
     return any(reason.startswith(p) for p in HARD_VETO_PREFIXES)
 
 
+def _behavioral_client_block(conn: sqlite3.Connection, symbol: str) -> str | None:
+    """Mirror JS safety gate — block client promotion on risky behavioral classes."""
+    if not table_exists(conn, "stock_behavioral_memory"):
+        return None
+    row = conn.execute(
+        "SELECT behavioral_class, false_signal_rate FROM stock_behavioral_memory WHERE symbol=?",
+        (symbol,),
+    ).fetchone()
+    if not row:
+        return None
+    bclass = (row["behavioral_class"] or "UNKNOWN").upper()
+    fsr = float(row["false_signal_rate"] or 0)
+    if bclass == "DORMANT":
+        return "behavioral_dormant"
+    if bclass == "VOLATILE":
+        return "behavioral_volatile"
+    if fsr > 0.65:
+        return "high_false_signal_rate"
+    return None
+
+
 def run(params: dict | None = None) -> dict:
     params = params or {}
     conn = connect()
@@ -141,6 +162,10 @@ def run(params: dict | None = None) -> dict:
             (r["symbol"], trade_date),
         ).fetchone()
         if arb and int(arb["veto_triggered"] or 0) == 1:
+            continue
+
+        beh_block = _behavioral_client_block(conn, r["symbol"])
+        if beh_block:
             continue
 
         note = f"promoted:{tier}:opp={opp:.1f},ues={ues:.1f},ml={ml:.1f},was={veto}"

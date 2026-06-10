@@ -23,6 +23,14 @@ const DEFAULT_RULES = {
     optimal_vol_ratio_max: 3.5,
     max_open_above_entry_pct: 0.5,
   },
+  behavioral_filters: {
+    block_volatile_client: true,
+    block_dormant_client: true,
+    explosive_max_rsi: 70,
+    volatile_max_rsi: 65,
+    volatile_min_vol_ratio: 2.5,
+    high_false_signal_rate_max: 0.65,
+  },
 };
 
 export function loadEgxRules() {
@@ -41,6 +49,17 @@ function dbReadonly() {
   return d;
 }
 
+function parseBreakdown(sig) {
+  if (!sig?.source_breakdown) return {};
+  try {
+    return typeof sig.source_breakdown === 'string'
+      ? JSON.parse(sig.source_breakdown)
+      : sig.source_breakdown;
+  } catch {
+    return {};
+  }
+}
+
 function signalContext(d, symbol, signalDate) {
   const sig = d.prepare(`
     SELECT symbol, setup_type, score, entry_price, entry_high, stop_loss,
@@ -55,6 +74,20 @@ function signalContext(d, symbol, signalDate) {
     WHERE symbol=? AND bar_date=?
     ORDER BY bar_date DESC LIMIT 1
   `).get(symbol, signalDate);
+
+  let behavior = null;
+  try {
+    behavior = d.prepare(`
+      SELECT behavioral_class, false_signal_rate
+      FROM stock_behavioral_memory WHERE symbol=?
+    `).get(symbol);
+  } catch { /* table optional */ }
+  if (!behavior) {
+    const bd = parseBreakdown(sig);
+    if (bd?.behavioral_class) {
+      behavior = { behavioral_class: bd.behavioral_class, false_signal_rate: bd.false_signal_rate ?? null };
+    }
+  }
 
   const vols = d.prepare(`
     SELECT date(bar_time, 'unixepoch') AS d, volume
@@ -75,7 +108,7 @@ function signalContext(d, symbol, signalDate) {
     WHERE symbol=? ORDER BY bar_time DESC LIMIT 1
   `).get(symbol);
 
-  return { sig, ind, volDecayPct, lastClose: lastClose?.close ?? null };
+  return { sig, ind, behavior, volDecayPct, lastClose: lastClose?.close ?? null };
 }
 
 function cond(name, required, actual, threshold, pass) {
@@ -88,7 +121,7 @@ function cond(name, required, actual, threshold, pass) {
   };
 }
 
-function evaluateOne(symbol, signalDate, rules, filters) {
+function evaluateOne(symbol, signalDate, rules, filters, behavioralFilters = {}) {
   const d = dbReadonly();
   if (!d) {
     return {
@@ -171,12 +204,52 @@ function evaluateOne(symbol, signalDate, rules, filters) {
     if (conditions.entry_zone_open.result === 'FAIL') failed.push('entry_zone_open');
   }
 
+  const bclass = (ctx.behavior?.behavioral_class || parseBreakdown(ctx.sig).behavioral_class || 'UNKNOWN').toUpperCase();
+  const rsi = ctx.ind?.rsi14 ?? null;
+  const fsr = ctx.behavior?.false_signal_rate ?? null;
+  const bf = behavioralFilters;
+
+  if (bf.block_dormant_client !== false && bclass === 'DORMANT') {
+    conditions.behavioral_dormant = cond('behavioral_dormant', true, bclass, 'not DORMANT', false);
+    failed.push('behavioral_dormant');
+  }
+
+  const fsrMax = bf.high_false_signal_rate_max ?? 0.65;
+  if (fsr != null && fsr > fsrMax) {
+    conditions.false_signal_rate = cond('false_signal_rate', true, fsr, `max ${fsrMax}`, false);
+    failed.push('false_signal_rate');
+  }
+
+  const explosiveMaxRsi = bf.explosive_max_rsi ?? 70;
+  if (bclass === 'EXPLOSIVE' && rsi != null && rsi > explosiveMaxRsi) {
+    conditions.explosive_rsi = cond('explosive_rsi', true, rsi, `max ${explosiveMaxRsi}`, false);
+    failed.push('explosive_rsi');
+  }
+
+  if (bf.block_volatile_client !== false && bclass === 'VOLATILE') {
+    const volMin = bf.volatile_min_vol_ratio ?? 2.5;
+    const volMax = filters.optimal_vol_ratio_max ?? 3.5;
+    const volatileMaxRsi = bf.volatile_max_rsi ?? 65;
+    const volOk = vol != null && vol >= volMin && vol <= volMax;
+    const rsiOk = rsi == null || rsi <= volatileMaxRsi;
+    const passVolatile = volOk && rsiOk;
+    conditions.behavioral_volatile = cond(
+      'behavioral_volatile',
+      true,
+      `${bclass} vol=${vol ?? '—'} rsi=${rsi ?? '—'}`,
+      `vol ${volMin}–${volMax}x & rsi≤${volatileMaxRsi}`,
+      passVolatile,
+    );
+    if (!passVolatile) failed.push('behavioral_volatile');
+  }
+
   return {
     timestamp: new Date().toISOString(),
     market: 'EGX',
     symbol,
     signal_date: signalDate,
     setup_type: ctx.sig?.setup_type ?? null,
+    behavioral_class: bclass,
     score: ctx.sig?.score ?? null,
     decision: failed.length ? 'BLOCKED' : 'PASS',
     failed_conditions: failed,
@@ -199,6 +272,7 @@ function evaluateOne(symbol, signalDate, rules, filters) {
 export function runEgxSafetyCheck(signalDate, opts = {}) {
   const rules = loadEgxRules();
   const filters = rules.lessons_filters || {};
+  const behavioralFilters = rules.behavioral_filters || {};
   const maxSignals = parseInt(
     process.env.EGX_MAX_SIGNALS_PER_DAY || String(rules.max_signals_per_day || 3),
     10,
@@ -233,7 +307,7 @@ export function runEgxSafetyCheck(signalDate, opts = {}) {
   const ranked = [...act.symbols];
   for (let i = 0; i < act.symbols.length; i++) {
     const sym = act.symbols[i];
-    const dec = evaluateOne(sym, signalDate, rules, filters);
+    const dec = evaluateOne(sym, signalDate, rules, filters, behavioralFilters);
     if (i >= maxSignals) {
       dec.decision = 'BLOCKED';
       dec.failed_conditions.push('max_signals_per_day');

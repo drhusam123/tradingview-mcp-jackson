@@ -110,4 +110,37 @@ describe('notification pipeline', () => {
     assert.equal(dec.decision, 'BLOCKED');
     assert.ok(dec.failed_conditions.includes('near_ath_volume'));
   });
+
+  it('Test H — VOLATILE blocked at delivery without optimal vol band', () => {
+    const d = new Database(DB);
+    const testDate = `2099-09-${String((Date.now() % 27) + 1).padStart(2, '0')}`;
+    const sym = `VOL${Date.now() % 100000}`;
+    d.prepare(`
+      INSERT OR REPLACE INTO final_signals
+      (trade_date, symbol, setup_type, actionable, veto_reason, source_breakdown,
+       entry_price, entry_high, stop_loss, t1_target, r_ratio, score)
+      VALUES (?, ?, 'Power Breakout', 1, NULL, ?, 10, 10.2, 9.5, 11, 2.5, 85)
+    `).run(testDate, sym, JSON.stringify({ quality_gate_passed: true, behavioral_class: 'VOLATILE' }));
+    d.prepare(`
+      INSERT OR REPLACE INTO indicators_cache (symbol, bar_date, vol_ratio_20, rsi14, close_position)
+      VALUES (?, ?, 1.8, 55, 0.4)
+    `).run(sym, testDate);
+    d.prepare(`
+      INSERT OR REPLACE INTO stock_behavioral_memory (symbol, behavioral_class, false_signal_rate)
+      VALUES (?, 'VOLATILE', 0.4)
+    `).run(sym);
+    d.close();
+
+    const safety = runEgxSafetyCheck(testDate, { veto: true });
+    const dec = safety.decisions.find(x => x.symbol === sym);
+    assert.ok(dec, 'decision row for volatile symbol');
+    assert.equal(dec.decision, 'BLOCKED');
+    assert.ok(dec.failed_conditions.includes('behavioral_volatile'));
+
+    const cleanup = new Database(DB);
+    cleanup.prepare('DELETE FROM final_signals WHERE trade_date=? AND symbol=?').run(testDate, sym);
+    cleanup.prepare('DELETE FROM indicators_cache WHERE symbol=? AND bar_date=?').run(sym, testDate);
+    cleanup.prepare('DELETE FROM stock_behavioral_memory WHERE symbol=?').run(sym);
+    cleanup.close();
+  });
 });
