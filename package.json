@@ -316,6 +316,7 @@
     "egx:alert:test:success": "node scripts/egx_alert_test.mjs --success",
     "egx:ops:digest": "node scripts/egx_ops_digest.mjs",
     "egx:handoff": "node scripts/egx_handoff.mjs",
+    "egx:git:sync": "node scripts/egx_git_sync.mjs",
     "egx:env:sync": "node scripts/sync_env_defaults.mjs",
     "egx:tv:reconcile": "node scripts/tv_data_reconcile.mjs",
     "egx:tv:macro:reconcile": "node scripts/tv_macro_reconcile.mjs",

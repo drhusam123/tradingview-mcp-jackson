@@ -3,6 +3,7 @@
  * Production handoff summary — one screen for Dr. Husam.
  * Usage: node scripts/egx_handoff.mjs
  */
+import { execSync } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { loadEnv, PROJECT_ROOT } from './lib/load_env.mjs';
@@ -23,6 +24,12 @@ const nxt = nextTradingDay(cairo.date);
 const ready = readJson('data/prod_ready_last.json');
 const verify = readJson('data/full_verify_last.json');
 
+let gitLine = 'git: unknown';
+try {
+  const sb = execSync('git status -sb', { cwd: PROJECT_ROOT, encoding: 'utf8' }).trim().split('\n')[0];
+  gitLine = sb.replace('## ', '');
+} catch { /* */ }
+
 console.log(`
 ╔══════════════════════════════════════════════════════════════╗
 ║  EGX PRODUCTION — HANDOFF SUMMARY                            ║
@@ -36,6 +43,7 @@ console.log(`
 
   Prod ready:   ${ready?.pass ? '✅ PASS' : ready ? '❌ FAIL' : '—'} ${ready?.at?.slice(0, 19) ?? ''}
   Full verify:  ${verify?.pass ? '✅ PASS' : verify ? '❌ FAIL' : '—'} ${verify?.at?.slice(0, 19) ?? ''}
+  Git:          ${gitLine}
 
 ── ONE COMMANDS ──
   npm run egx:prod:ready          # 7-step gate
@@ -50,4 +58,7 @@ console.log(`
   Ops alerts: EGX_ALERT_TELEGRAM=1 | EGX_OPS_SUCCESS_ALERT=1
 
   No manual action required.
+
+  Push to GitHub (optional backup):
+    npm run egx:git:sync -- --push
 `);
