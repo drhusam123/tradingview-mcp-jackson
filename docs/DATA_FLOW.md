@@ -75,7 +75,8 @@ night_lab.py / research_director.py
 ```bash
 npm run egx:daily              # full EOD pipeline
 npm run egx:migrate            # apply DB migrations
-npm run test:ci                # CI unit tests
+npm test                       # offline suite (JS + Python, no TV)
+npm run test:live              # E2E vs live TradingView CDP
 npm run egx:validate -- --quick
 ```
 

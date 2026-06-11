@@ -4,7 +4,6 @@
  * Runs after closed loop or post-session to apply P6-tuned discovery.
  */
 import { execFileSync } from 'child_process';
-
 const NODE = process.execPath;
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -13,7 +12,9 @@ import { latestReadySignalDate } from './lib/delivery_audit.mjs';
 import { runDiscoveryQualityLoop } from './lib/discovery_quality_loop.mjs';
 import { mergeStructuralLawsIntoRuntime } from './lib/structural_laws_bridge.mjs';
 import { writeFileSync, mkdirSync } from 'fs';
-import { PROJECT_ROOT } from './lib/load_env.mjs';
+import { loadEnv, PROJECT_ROOT } from './lib/load_env.mjs';
+
+loadEnv();
 import { parsePythonJson } from './lib/parse_python_json.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -85,6 +86,14 @@ stage('discovery_fabric', () => {
   } catch (e) {
     return { ok: false, error: e.message?.slice(0, 120) };
   }
+});
+
+stage('ml_upstream_align', () => {
+  const meta = PY('scripts/python/ml_advanced.py', 'meta_score', signalDate);
+  execFileSync(NODE, [
+    join(ROOT, 'scripts/egx_explosion_ml.mjs'), 'predict', '--date', signalDate, '--top-n', '30',
+  ], { cwd: ROOT, encoding: 'utf8', timeout: 300_000, stdio: 'pipe' });
+  return { meta_date: meta?.date ?? signalDate, meta_scored: meta?.n_scored ?? 0 };
 });
 
 const opp = stage('opportunity_score_v2', () =>

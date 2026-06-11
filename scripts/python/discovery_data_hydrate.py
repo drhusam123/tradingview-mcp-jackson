@@ -49,7 +49,7 @@ LAYER_MAP = {
 HYDRATE_CMDS = [
     ("cross_market_regime", ["node", "scripts/egx_cross_market.mjs", "macro"], 120),
     ("indicators_cache", ["node", "scripts/rebuild_indicators.mjs"], 600),
-    ("pine_analytics", ["node", "scripts/fetch_pine_analytics.mjs", "session"], 300),
+    ("pine_analytics", ["node", "scripts/fetch_pine_analytics.mjs", "session"], 600),
     ("scans", ["node", "scripts/scan_today.mjs", "--db-only"], 300),
 ]
 

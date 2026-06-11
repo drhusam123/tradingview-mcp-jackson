@@ -91,7 +91,7 @@ if (!SKIP_REFRESH) {
 run('discovery_verify', `"${NODE}" scripts/egx_discovery_verify.mjs`, { timeout: 300_000 });
 
 if (!SKIP_TESTS) {
-  run('test_ci', 'npm run test:ci', { timeout: 120_000 });
+  run('test_offline', 'npm test', { timeout: 180_000 });
 }
 
 const stats = readStats();

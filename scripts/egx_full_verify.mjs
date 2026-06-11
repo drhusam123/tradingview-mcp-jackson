@@ -71,7 +71,7 @@ run('Delivery reconcile', `"${NODE}" scripts/egx_notify_reconcile.mjs`, { option
 run('Decision bot (safety)', `"${NODE}" scripts/egx_decision_bot.mjs --verify`, { optional: true });
 
 if (!SKIP_TESTS) {
-  run('Unit tests (test:ci)', 'npm run test:ci');
+  run('Offline tests (npm test)', 'npm test');
 }
 
 const fail = steps.filter(s => !s.ok).length;

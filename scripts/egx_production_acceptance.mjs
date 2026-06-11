@@ -86,10 +86,18 @@ try {
     internalSend.error || 'unexpectedly allowed'
   );
 
-  const clientPayload = '🎯 أفضل فرص التداول\nلا توجد إشارات قابلة للتنفيذ لهذا اليوم.';
+  const clientPayload = [
+    '📊 <b>نظام EGX الذكي</b>',
+    '⏸ <b>لا فرص تنفيذية اليوم</b> — لا توجد إشارة نهائية مؤكدة لنفس التاريخ',
+    '<i>للمعلومات فقط • ليس توصية استثمارية</i>',
+  ].join('\n');
   const cal = latest ? tradingDayStaleness(latest, freshnessReferenceDate()) : null;
   const staleSessions = cal ? Number(cal.staleness_trading_days ?? 0) : 0;
-  const clientQa = validateTelegramPayload(clientPayload, { clientDelivery: true });
+  const clientQa = validateTelegramPayload(clientPayload, {
+    clientDelivery: true,
+    reportDate: latest || freshnessReferenceDate(),
+    finalActionableCount: Number(finalStats.actionable ?? 0),
+  });
   const staleExpected = staleSessions > 0;
   record(
     staleExpected ? !clientQa.ok : clientQa.ok,

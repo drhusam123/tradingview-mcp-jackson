@@ -39,7 +39,7 @@ if (!existsSync(join(ROOT, 'data/egx_trading.db'))) {
 step('Schema migrations', `"${NODE}" scripts/migrations/migrate.mjs --check`);
 
 if (!SKIP_TESTS) {
-  step('CI unit tests', 'npm run test:ci');
+  step('Offline tests', 'npm test');
 }
 
 step('Quick validation', `"${NODE}" scripts/egx_validate.mjs --quick`, { optional: true });

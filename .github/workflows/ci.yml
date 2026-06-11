@@ -21,8 +21,8 @@ jobs:
       - name: Install Node dependencies
         run: npm ci || npm install
 
-      - name: Run CI unit tests
-        run: npm run test:ci
+      - name: Run offline test suite
+        run: npm test
 
       - name: Python syntax check (scripts/python)
         run: |

@@ -80,7 +80,10 @@ Test: `npm run egx:alert:test` | `npm run egx:alert:test:success`
 | `egx:verify:all` | + TV CDP + unit tests |
 | `egx:tv:verify` | 19 TV MCP integration checks |
 | `egx:accept` | 11 production acceptance gates |
-| `test:ci` | 53 unit tests |
+| `npm test` | Offline suite: `test:ci` (91 JS) + `test:python` |
+| `egx:e2e:complete` | Master E2E: automate → closed loop → verify → go-live |
+| `test:live` | Full E2E vs live TradingView CDP |
+| `tv:smoke` | Quick CDP health check (clean exit) |
 | `egx:learning:loop` | forensic + counterfactual + delivery laws |
 | `egx:loss:autopsy` | ULTRA loss pattern autopsy |
 | `egx:cache:backfill` | Historical indicators_cache gaps |

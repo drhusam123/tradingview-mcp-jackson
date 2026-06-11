@@ -32,13 +32,15 @@ If you're unsure whether a feature fits, open an issue to discuss before submitt
 
 ```bash
 npm install
-npm test          # 29 offline tests (no TradingView needed)
-tv status         # verify CDP connection (TradingView must be running)
+npm test              # offline suite: test:ci (91) + test:python (~5s, no TV)
+npm run test:live     # full E2E vs live TradingView CDP (slow; TV required)
+npm run tv:smoke      # quick CDP health check with clean exit
+tv status             # verify CDP connection (TradingView must be running)
 ```
 
 ## Pull Requests
 
 - Keep changes focused — one feature or fix per PR
 - Add tests for new functionality where possible
-- Ensure `npm test` passes (29/29)
-- Test against a live TradingView Desktop instance before submitting
+- Ensure `npm test` passes (offline suite)
+- Run `npm run test:live` when changing MCP/CDP tools (TradingView must be running)

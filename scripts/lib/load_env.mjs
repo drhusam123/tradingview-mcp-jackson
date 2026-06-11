@@ -43,6 +43,20 @@ export function loadEnv() {
   } else if (!process.env.PYTHON_BIN && !process.env.PYTHON3) {
     process.env.PYTHON_BIN = '/usr/bin/python3';
   }
+  // lightgbm on macOS needs libomp (brew install libomp)
+  const libompPaths = [
+    '/opt/homebrew/opt/libomp/lib',
+    '/usr/local/opt/libomp/lib',
+  ];
+  for (const p of libompPaths) {
+    if (existsSync(join(p, 'libomp.dylib'))) {
+      const cur = process.env.DYLD_LIBRARY_PATH || '';
+      if (!cur.includes(p)) {
+        process.env.DYLD_LIBRARY_PATH = cur ? `${p}:${cur}` : p;
+      }
+      break;
+    }
+  }
   return true;
 }
 
