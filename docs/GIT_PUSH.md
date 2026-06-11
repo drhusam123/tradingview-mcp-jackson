@@ -1,49 +1,55 @@
-# Git Push — LewisWJackson
+# Git Push — drhusam123 (حسابك)
 
-The remote is `https://github.com/LewisWJackson/tradingview-mcp-jackson.git`.
+المشروع **يعمل بالكامل محلياً** على جهازك. GitHub **اختياري** — نسخة احتياطية وسجل تغييرات.
 
-If push fails with `403 denied to drhusam123`:
+## الريموتات
 
-You are logged in as **drhusam123** but the repo belongs to **LewisWJackson**.
+| Remote | الغرض |
+|--------|--------|
+| `drhusam` | **ريبوك أنت** — `drhusam123/tradingview-mcp-jackson` ← ادفع هنا |
+| `origin` | ريبو قديم/أصلي (`LewisWJackson/...`) — **لست مالكه، تجاهله** |
 
-**Option A — switch to LewisWJackson (recommended):**
+## Push (جاهز للصق)
 
 ```bash
-gh auth logout
-gh auth login
-# GitHub.com → HTTPS → Yes → Browser → login as LewisWJackson
-
-gh auth status   # must show: Logged in as LewisWJackson
 cd /Users/dr.husam/tradingview-mcp-jackson
-git push origin main
-```
-
-**Option B — add drhusam123 as collaborator:**
-
-On GitHub: LewisWJackson/tradingview-mcp-jackson → Settings → Collaborators → add `drhusam123` with Write access. Then:
-
-```bash
-git push origin main
-```
-
-**Option C — push to your fork:**
-
-```bash
-gh repo fork LewisWJackson/tradingview-mcp-jackson --clone=false
-git remote add drhusam https://github.com/drhusam123/tradingview-mcp-jackson.git
 git push drhusam main
 ```
 
-Alternative (SSH):
+أو:
 
 ```bash
-git remote set-url origin git@github.com:LewisWJackson/tradingview-mcp-jackson.git
-ssh -T git@github.com   # must show LewisWJackson
-git push origin main
+npm run egx:git:push
 ```
 
-One-liner after auth:
+## إذا فشل الـ auth
 
 ```bash
-npm run egx:go:live    # includes push attempt
+gh auth login
+# GitHub.com → HTTPS → Browser → drhusam123
+
+gh auth status
+git push drhusam main
+```
+
+## هل أحتاج GitHub؟
+
+**لا** لتشغيل EGX يومياً:
+
+- البيانات في `data/`
+- Cron على جهازك
+- TradingView محلي
+- Telegram من `.env`
+
+**نعم** (اختياري) إذا أردت:
+
+- نسخة احتياطية لو تعطل الجهاز
+- سجل commits (من غيّر ماذا ومتى)
+- CI على GitHub Actions (اختبارات عند push)
+- فتح المشروع من جهاز ثانٍ
+
+## تغيير الريموت الافتراضي
+
+```bash
+export EGX_GIT_REMOTE=drhusam   # في .env أو ~/.zshrc
 ```

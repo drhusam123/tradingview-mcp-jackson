@@ -12,6 +12,7 @@ import { nextTradingDay, cairoDateParts } from './lib/egx_calendar.mjs';
 import { syncDeliveredOutcomes } from './lib/delivered_outcomes.mjs';
 import { auditClosedLoops } from './lib/loop_audit.mjs';
 import { countDirectiveStats } from './lib/directive_resolver.mjs';
+import { pushCommand, resolvePushRemote } from './lib/git_remote.mjs';
 
 loadEnv();
 
@@ -148,27 +149,30 @@ if (!SKIP_CRON) {
 let pushResult = { skipped: true };
 if (!SKIP_PUSH) {
   try {
-    console.log('\n▶  Git push (origin main)');
+    const remote = resolvePushRemote();
+    const cmd = pushCommand('main');
+    console.log(`\n▶  Git push (${cmd})`);
     const status = execSync('git status -sb', { cwd: PROJECT_ROOT, encoding: 'utf8' }).trim();
     const ahead = status.match(/ahead (\d+)/)?.[1] ?? '?';
     console.log(`   Branch: ${status.split('\n')[0]} (${ahead} commits ahead)`);
-    execSync('git push origin main', {
+    execSync(cmd, {
       cwd: PROJECT_ROOT,
       stdio: 'inherit',
       timeout: 300_000,
     });
-    pushResult = { ok: true, ahead };
+    pushResult = { ok: true, ahead, remote };
     steps.push({ name: 'git_push', ok: true, result: pushResult });
   } catch (e) {
+    const cmd = pushCommand('main');
     pushResult = {
       ok: false,
       error: e.message?.slice(0, 200),
-      fix: 'Run: gh auth login  (account: LewisWJackson)  then: git push origin main',
+      fix: `Run: gh auth login  (account: drhusam123)  then: ${cmd}`,
     };
     steps.push({ name: 'git_push', ok: false, error: pushResult.error, optional: true });
     console.log(`\n⚠️  Git push failed — manual step required:`);
     console.log('   gh auth login');
-    console.log('   git push origin main');
+    console.log(`   ${cmd}`);
   }
 }
 
