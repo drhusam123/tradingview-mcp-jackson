@@ -91,6 +91,8 @@ Test: `npm run egx:alert:test` | `npm run egx:alert:test:success`
 | `egx:p6:sync` | Full evolution + cognition consume P6 context |
 | `egx:p6:sync:light` | Lightweight P6 bridge (~15s, post-session) |
 | `egx:monitoring` | P6 + loop audit + `monitoring_snapshot.json` |
+| `egx:go:live` | P6 session plan + Telegram dry-run + cron + git push |
+| `egx:go:live:local` | Same without git push |
 | `egx:quality:gate` | Fast L2 `gate_daily` |
 | `egx:proof:forensic` | ULTRA WR breakdown |
 

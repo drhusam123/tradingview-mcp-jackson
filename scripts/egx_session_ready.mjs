@@ -12,6 +12,7 @@ import { getUpstreamDates, latestOhlcvDate, countActionable, wasAlreadySent } fr
 import { alertNotification } from './lib/notification_alert.mjs';
 import { runDailyQualityGate } from './lib/data_quality_gate.mjs';
 import { getProofLoopMetrics, formatProofLoopLine, PROOF_MIN_N } from './lib/proof_loop.mjs';
+import { syncDeliveredOutcomes } from './lib/delivered_outcomes.mjs';
 
 loadEnv();
 
@@ -88,12 +89,28 @@ try {
 }
 
 const proof = getProofLoopMetrics();
+const proofDel = getProofLoopMetrics({ deliveredOnly: true });
 ok(
   'Proof loop P6',
   proof.gate_pass || proof.samples_needed > 0,
   formatProofLoopLine(proof).replace(/^[^\s]+\s/, ''),
   { warn: !proof.gate_pass && proof.n_completed < PROOF_MIN_N },
 );
+ok(
+  'P6 delivered track',
+  true,
+  `${proofDel.n_completed} delivered ULTRA filled≥5 @ ${proofDel.win_rate ?? '—'}% (need ${proof.samples_needed} sessions)`,
+  { warn: proofDel.n_completed === 0 },
+);
+
+ok('Telegram configured', Boolean(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID));
+
+try {
+  const sync = syncDeliveredOutcomes({ lookbackDays: 120 });
+  ok('client_delivered sync', sync.ok, `${sync.ultra_delivered ?? 0}/${sync.ultra_total_filled ?? 0} ULTRA marked`);
+} catch (e) {
+  ok('client_delivered sync', false, e.message?.slice(0, 60));
+}
 
 const verifyPath = join(PROJECT_ROOT, 'data/full_verify_last.json');
 if (SKIP_VERIFY_CHECK) {

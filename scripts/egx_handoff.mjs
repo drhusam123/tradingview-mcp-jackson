@@ -96,6 +96,8 @@ ${oppTrendLine}
   npm run egx:opportunity:followup # opp quality trend alerts
   npm run egx:loop:audit          # closed-loop health check
   npm run egx:p6:sync             # evolution+cognition consume P6 context
+  npm run egx:go:live:local       # P6 plan + telegram dry-run + cron install
+  npm run egx:go:live             # + git push (needs gh auth LewisWJackson)
 
 ── DOCS ──
   docs/PRODUCTION_AUTOMATION.md

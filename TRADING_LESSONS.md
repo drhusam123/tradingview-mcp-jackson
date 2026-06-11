@@ -573,3 +573,14 @@ post_session: closed_loop → loop_audit → egx:p6:sync:light
 `egx:p6:status` يعرض loop audit + directives + delivered P6
 `egx:monitoring` = نفس p6_status + `monitoring_snapshot.json`
 cognition يحتاج `numpy` — `load_env` يختار Python تلقائياً
+
+### القاعدة #23 — Go-Live التشغيلي (يونيو 2026)
+
+```
+npm run egx:go:live:local  → p6_session_plan + telegram dry-run + cron (53 jobs)
+npm run egx:go:live        → + git push (gh auth login as LewisWJackson)
+```
+
+P6 delivered = ULTRA فقط + client_delivered=1 — يوم NARE/HIGH لا يُحسب لبوابة delivered
+4 جلسات متبقية: انظر data/p6_session_plan.json
+Git push: docs/GIT_PUSH.md
