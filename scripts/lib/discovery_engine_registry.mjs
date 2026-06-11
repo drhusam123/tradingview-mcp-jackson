@@ -106,6 +106,24 @@ export const DISCOVERY_ENGINES = {
     feeds: ['quant_rules'],
     triggers: ['INVESTIGATE_PATTERN', 'DISCOVERY_QUALITY_LOW'],
   },
+  regime_conditional_sweep: {
+    id: 'regime_conditional_sweep',
+    layer: 'research',
+    cadence_hours: 168,
+    npm: 'egx:discovery:regime:sweep',
+    outputs: ['regime_conditional_sweep_last.json', 'regime_sweep_results'],
+    feeds: ['quant_rules', 'opportunity_v2'],
+    triggers: ['DISCOVERY_QUALITY_LOW', 'INVESTIGATE_PATTERN'],
+  },
+  hypothesis_sandbox_bridge: {
+    id: 'hypothesis_sandbox_bridge',
+    layer: 'weekly',
+    cadence_hours: 168,
+    npm: 'egx:discovery:hypothesis:bridge',
+    outputs: ['hypothesis_sandbox_bridge_last.json'],
+    feeds: ['quant_rules', 'discovery_feedback'],
+    triggers: ['INVESTIGATE_PATTERN', 'UPRANK_BEHAVIORAL'],
+  },
 };
 
 const MANIFEST_PATH = join(PROJECT_ROOT, 'data/discovery_engine_manifest.json');

@@ -119,6 +119,34 @@ stage('counterfactual_atom_miner', () => {
   return { boost_atoms: counterfactualAtoms?.boost_atoms?.length ?? 0 };
 });
 
+stage('regime_conditional_sweep', () => {
+  try {
+    execSync(`"${NODE}" scripts/egx_regime_conditional_sweep.mjs`, {
+      cwd: PROJECT_ROOT,
+      encoding: 'utf8',
+      timeout: 600_000,
+      stdio: 'pipe',
+    });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, skipped: true, error: e.message?.slice(0, 120) };
+  }
+});
+
+stage('hypothesis_sandbox_bridge', () => {
+  try {
+    const out = execSync(`"${PYTHON3}" scripts/python/hypothesis_sandbox_bridge.py '{}'`, {
+      cwd: PROJECT_ROOT,
+      encoding: 'utf8',
+      timeout: 120_000,
+    });
+    const parsed = JSON.parse(out.trim());
+    return { n_promoted: parsed.n_promoted ?? 0 };
+  } catch (e) {
+    return { ok: false, skipped: true, error: e.message?.slice(0, 120) };
+  }
+});
+
 const discovery = stage('discovery_feedback', () => buildDiscoveryFeedback({
   forensic,
   autopsy: learning?.loss_autopsy,
@@ -215,6 +243,10 @@ const report = {
     'closed_loop → p6_research_context.json → evolution + cognition',
     'directives PENDING → engines → COMPLETED (directive_resolver)',
     'closed_loop → discovery_refresh → promotion_audit (PROMOTION_GAP closed)',
+    'tv_microstructure → tv_discovery_features → opportunity_score_v2',
+    'counterfactual_atom_miner → quant_discovery seeds + opp boosts',
+    'regime_conditional_sweep → regime_sweep_results + quant seeds',
+    'hypothesis_sandbox_bridge → discovery_feedback + quant seeds',
     'discovery_engine_manifest → perpetual orchestrator (cadence + triggers)',
   ],
 };

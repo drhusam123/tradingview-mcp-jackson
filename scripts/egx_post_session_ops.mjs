@@ -95,6 +95,12 @@ try {
 }
 
 try {
+  execSync(`"${NODE}" scripts/egx_p6_delivered_orchestrator.mjs`, { cwd: PROJECT_ROOT, stdio: 'inherit', timeout: 60_000 });
+} catch (e) {
+  console.log(`⚠️  P6 delivered orchestrator: ${e.message?.slice(0, 80)}`);
+}
+
+try {
   execSync(`"${NODE}" scripts/egx_full_verify.mjs --skip-tests --skip-cdp`, {
     cwd: PROJECT_ROOT,
     stdio: 'inherit',

@@ -375,6 +375,17 @@ async function main() {
   run(`${PYTHON3} scripts/python/signal_integration.py score_all '${scoreParams}'`, 'Final signal scoring', { critical: true });
   run(`${PYTHON3} scripts/python/cognitive_arbitration.py arbitrate_all '{}'`, 'Cognitive arbitration (Phase 34)');
   run(`${PYTHON3} scripts/python/signal_integration.py apply_arbitration_veto '${scoreParams}'`, 'Apply arbitration veto to final_signals');
+  const tvMicroMode = tvReady ? '--local-fallback' : '--local-only';
+  run(
+    `node scripts/tv_microstructure_engine.mjs ${tvMicroMode} --max-symbols 30`,
+    'TV microstructure → tv_discovery_features',
+    { critical: false, timeoutMs: 900_000 },
+  );
+  run(
+    `${PYTHON3} scripts/python/counterfactual_atom_miner.py`,
+    'Counterfactual atom seeds (learning loop → opp boosts)',
+    { critical: false },
+  );
   run(
     `${PYTHON3} scripts/python/opportunity_score_v2.py run '${discoveryParamsJson}'`,
     'Opportunity Score v2 (P6-tuned, post-score)',

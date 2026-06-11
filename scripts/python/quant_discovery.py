@@ -226,6 +226,32 @@ def build_examples(data, min_history=60, horizon=5):
     return examples
 
 
+def load_regime_sweep_seeds(params: dict | None = None) -> dict:
+    params = params or {}
+    if params.get("regime_sweep"):
+        return params["regime_sweep"]
+    path = ROOT / "data" / "regime_conditional_sweep_last.json"
+    if path.exists():
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {}
+
+
+def load_hypothesis_sandbox_seeds(params: dict | None = None) -> dict:
+    params = params or {}
+    if params.get("hypothesis_sandbox"):
+        return params["hypothesis_sandbox"]
+    path = ROOT / "data" / "hypothesis_sandbox_bridge_last.json"
+    if path.exists():
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {}
+
+
 def load_counterfactual_seeds(params: dict | None = None) -> dict:
     params = params or {}
     if params.get("counterfactual_atoms"):
@@ -372,9 +398,18 @@ def run_discovery(params):
     }
 
     cf_seeds = load_counterfactual_seeds(params)
+    regime_seeds = load_regime_sweep_seeds(params)
+    sandbox_seeds = load_hypothesis_sandbox_seeds(params)
     penalize_atoms = set(cf_seeds.get("penalize_atoms") or [])
     priority_atoms = list(cf_seeds.get("priority_atoms") or cf_seeds.get("boost_atoms") or [])
     seed_pairs = list(cf_seeds.get("seed_pairs") or [])
+    for extra in (regime_seeds, sandbox_seeds):
+        for a in extra.get("priority_atoms") or []:
+            if a not in priority_atoms:
+                priority_atoms.append(a)
+        for p in extra.get("seed_pairs") or []:
+            if p not in seed_pairs:
+                seed_pairs.append(p)
 
     atom_defs = atoms()
     atom_map = {name: fn for name, fn in atom_defs}

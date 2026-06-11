@@ -62,6 +62,14 @@ const scripts = [
   'scripts/lib/proof_loop.mjs',
   'scripts/lib/counterfactual_safety.mjs',
   'scripts/egx_learning_loop.mjs',
+  'scripts/egx_discovery_refresh.mjs',
+  'scripts/egx_discovery_perpetual.mjs',
+  'scripts/egx_discovery_promotion_audit.mjs',
+  'scripts/egx_discovery_verify.mjs',
+  'scripts/tv_microstructure_engine.mjs',
+  'scripts/python/tv_discovery_features.py',
+  'scripts/python/counterfactual_atom_miner.py',
+  'scripts/lib/discovery_engine_registry.mjs',
   'egx_rules.json',
 ];
 for (const s of scripts) {
@@ -97,6 +105,10 @@ if (!CI_MODE) {
   ok('Cron post-session ops', /EGX-POST-SESSION-DAILY/.test(cron));
   ok('Cron session ready', /EGX-SESSION-READY-DAILY/.test(cron));
   ok('Cron log check', /EGX-CRON-LOG-CHECK-DAILY/.test(cron));
+  ok('Cron TV microstructure', /EGX-TV-MICRO-D/.test(cron));
+  ok('Cron discovery perpetual', /EGX-DISCOVERY-PERPETUAL-W/.test(cron));
+  ok('Cron discovery audit weekly', /EGX-DISCOVERY-AUDIT-W/.test(cron));
+  ok('Cron DMIDS weekly rescore', /EGX-DMIDS-WEEKLY/.test(cron));
 } else {
   ok('install_cron.mjs', existsSync(join(PROJECT_ROOT, 'scripts/install_cron.mjs')));
 }
