@@ -196,18 +196,67 @@ def read_intelligence_scores(db, symbol):
     return None
 
 
+_LIQUIDITY_TIER_NORMALIZE = {
+    'TIER1': 'DEEP', 'TIER2': 'MID', 'TIER3': 'SHALLOW', 'TIER4': 'THIN',
+    'DEEP': 'DEEP', 'MID': 'MID', 'LIQUID': 'MID', 'MODERATE': 'SHALLOW',
+    'SHALLOW': 'SHALLOW', 'THIN': 'THIN', 'ILLIQUID': 'ILLIQUID',
+    'A': 'DEEP', 'B': 'MID', 'C': 'SHALLOW', 'D': 'THIN', 'E': 'ILLIQUID',
+}
+
+
+def _normalize_liquidity_tier(raw: str | None) -> str:
+    key = str(raw or 'ILLIQUID').upper().strip()
+    return _LIQUIDITY_TIER_NORMALIZE.get(key, 'ILLIQUID')
+
+
 def read_liquidity_profile(db, symbol):
-    """Phase 27: liquidity_profiles."""
+    """Latest liquidity tier — liquidity_profile → symbol_liquidity_profile → legacy."""
+    tier_raw = None
+    adv = 0.0
     try:
         row = db.execute(
-            "SELECT tier, avg_daily_volume FROM liquidity_profiles WHERE symbol=? LIMIT 1",
-            (symbol,)
+            """
+            SELECT liquidity_tier, advt_30d
+            FROM liquidity_profile
+            WHERE symbol=?
+            ORDER BY computed_date DESC LIMIT 1
+            """,
+            (symbol,),
         ).fetchone()
         if row:
-            return {'tier': row['tier'] or 'ILLIQUID', 'avg_daily_volume': float(row['avg_daily_volume'] or 0)}
+            tier_raw = row[0]
+            adv = float(row[1] or 0)
     except Exception:
         pass
-    return {'tier': 'ILLIQUID', 'avg_daily_volume': 0.0}
+    if not tier_raw:
+        try:
+            row = db.execute(
+                """
+                SELECT liquidity_tier, tier, avg_daily_volume
+                FROM symbol_liquidity_profile
+                WHERE symbol=?
+                LIMIT 1
+                """,
+                (symbol,),
+            ).fetchone()
+            if row:
+                tier_raw = row[0] or row[1]
+                adv = float(row[2] or 0)
+        except Exception:
+            pass
+    if not tier_raw:
+        try:
+            row = db.execute(
+                "SELECT tier, avg_daily_volume FROM liquidity_profiles WHERE symbol=? LIMIT 1",
+                (symbol,),
+            ).fetchone()
+            if row:
+                tier_raw = row[0]
+                adv = float(row[1] or 0)
+        except Exception:
+            pass
+    tier = _normalize_liquidity_tier(tier_raw)
+    return {'tier': tier, 'avg_daily_volume': adv, 'raw_tier': tier_raw}
 
 
 def read_failure_intelligence(db, symbol):

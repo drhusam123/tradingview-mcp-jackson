@@ -70,6 +70,7 @@ HARD_VETO_PREFIXES = (
 
 def connect() -> sqlite3.Connection:
     conn = sqlite3.connect(str(DB_PATH), timeout=60)
+    conn.execute("PRAGMA busy_timeout=60000")
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -276,17 +277,29 @@ def run(params: dict | None = None) -> dict:
     if not table_exists(conn, "opportunity_score_v2"):
         return {"success": True, "trade_date": trade_date, "promoted": 0, "reason": "no opportunity table"}
 
+    try:
+        from discovery_promotion_policy import (
+            effective_scan_score,
+            is_opp_stage_promotable,
+            veto_allows_discovery_override,
+            promotion_skip_reason,
+        )
+    except ImportError:
+        effective_scan_score = lambda r: float(r["source_rules"] or 0)
+        is_opp_stage_promotable = lambda s: True
+        veto_allows_discovery_override = lambda v, r: False
+        promotion_skip_reason = None
+
     tuning = _load_promotion_tuning(params)
     min_opp = float(params.get("min_opportunity", tuning["min_opportunity"]))
     min_ues = float(params.get("min_ues", tuning["min_ues"]))
     min_scan = float(params.get("min_scan", tuning["min_scan"]))
     min_ml = float(params.get("min_ml", tuning["min_ml"]))
-    allowed_stages = {"ULTRA", "STRONG", "ACCUMULATION"}
 
     rows = conn.execute(
         """
         SELECT fs.*, o.opportunity_score, o.stage AS opp_stage,
-               o.structure_score, o.risk_score
+               o.structure_score, o.risk_score, o.flags_json
         FROM final_signals fs
         LEFT JOIN opportunity_score_v2 o
           ON o.symbol = fs.symbol AND o.trade_date = fs.trade_date
@@ -297,16 +310,20 @@ def run(params: dict | None = None) -> dict:
     ).fetchall()
 
     promoted = []
+    skipped = []
     for r in rows:
         veto = r["veto_reason"] or ""
         if _is_hard_veto(veto):
+            skipped.append({"symbol": r["symbol"], "reason": f"hard_veto:{veto}"})
             continue
-        if veto and not _is_soft_veto(veto):
+        discovery_override = veto_allows_discovery_override(veto, r)
+        if veto and not _is_soft_veto(veto) and not discovery_override:
+            skipped.append({"symbol": r["symbol"], "reason": f"veto:{veto}"})
             continue
 
         opp = float(r["opportunity_score"] or 0)
         ues = float(r["score"] or 0)
-        scan = float(r["source_rules"] or 0)
+        scan = effective_scan_score(r)
         ml = float(r["source_ml"] or 0)
         stage = (r["opp_stage"] or "").upper()
 
@@ -315,11 +332,23 @@ def run(params: dict | None = None) -> dict:
             tier = "ULTRA"
         elif ues >= 72 and ml >= 65 and opp >= 75:
             tier = "HIGH"
+        elif opp >= 78 and scan >= 65 and ues >= 70:
+            tier = "HIGH"  # discovery-led promotion path
         if tier == "ULTRA" and not _p6_ultra_promotion_allowed():
             tier = "HIGH"
+        if promotion_skip_reason:
+            skip = promotion_skip_reason(
+                r, min_opp=min_opp, min_ues=min_ues, min_scan=min_scan, min_ml=min_ml,
+                tier=tier, veto=veto if not discovery_override else None,
+            )
+            if skip:
+                skipped.append({"symbol": r["symbol"], "reason": skip, "opp": opp, "ues": ues})
+                continue
         elif opp < min_opp or ues < min_ues or scan < min_scan or ml < min_ml:
+            skipped.append({"symbol": r["symbol"], "reason": "thresholds", "opp": opp, "ues": ues, "scan": scan})
             continue
-        if stage and stage not in allowed_stages and tier == "MEDIUM":
+        if stage and not is_opp_stage_promotable(stage) and tier == "MEDIUM":
+            skipped.append({"symbol": r["symbol"], "reason": f"stage:{stage}"})
             continue
 
         entry = r["entry_price"]
@@ -334,14 +363,26 @@ def run(params: dict | None = None) -> dict:
 
         arb = conn.execute(
             """
-            SELECT veto_triggered FROM arbitration_decisions
+            SELECT veto_triggered, veto_reason FROM arbitration_decisions
             WHERE symbol=? AND date=?
-            ORDER BY created_at DESC LIMIT 1
+            ORDER BY computed_at DESC LIMIT 1
             """,
             (r["symbol"], trade_date),
         ).fetchone()
         if arb and int(arb["veto_triggered"] or 0) == 1:
-            continue
+            arb_veto = arb["veto_reason"] or ""
+            try:
+                from discovery_promotion_policy import arbitration_allows_discovery_override
+                arb_ok = arbitration_allows_discovery_override(arb_veto, r)
+            except ImportError:
+                arb_ok = False
+            if not arb_ok:
+                skipped.append({
+                    "symbol": r["symbol"],
+                    "reason": f"arbitration_veto:{arb_veto}",
+                    "opp": opp,
+                })
+                continue
 
         safety_block = _delivery_safety_block(
             conn, r["symbol"], trade_date, r["setup_type"]
@@ -349,14 +390,22 @@ def run(params: dict | None = None) -> dict:
         if safety_block:
             continue
 
-        note = f"promoted:{tier}:opp={opp:.1f},ues={ues:.1f},ml={ml:.1f},was={veto}"
+        note = f"promoted:{tier}:opp={opp:.1f},ues={ues:.1f},ml={ml:.1f},scan={scan:.1f},was={veto or 'none'}"
+        if discovery_override and veto:
+            note += ";discovery_override"
         breakdown = r["source_breakdown"] or "{}"
         try:
             import json as _json
             bd = _json.loads(breakdown) if breakdown else {}
         except Exception:
             bd = {}
-        bd["promotion"] = {"source": "client_signal_promotion", "tier": tier, "note": note}
+        bd["promotion"] = {
+            "source": "client_signal_promotion",
+            "tier": tier,
+            "note": note,
+            "discovery_override": bool(discovery_override and veto),
+            "opp_stage": stage,
+        }
         # Telegram formatter requires quality_gate_passed=true in source_breakdown
         bd["quality_gate_passed"] = True
         if bd.get("gate_reason"):
@@ -398,6 +447,8 @@ def run(params: dict | None = None) -> dict:
             "min_ml": min_ml,
             "adjustments": tuning.get("adjustments", []),
         },
+        "skipped_sample": skipped[:15],
+        "n_skipped": len(skipped),
     }
 
 

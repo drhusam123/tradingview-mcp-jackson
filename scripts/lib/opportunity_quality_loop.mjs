@@ -39,6 +39,13 @@ export function runOpportunityQualityLoop(signalDate) {
     WHERE signal_date = ? AND send_success = 1 AND dry_run = 0 AND deliverable = 1
   `).all(signalDate).map(r => r.symbol);
 
+  const vetoBySymbol = new Map(
+    db.prepare(`
+      SELECT symbol, veto_reason, score
+      FROM final_signals WHERE trade_date = ?
+    `).all(signalDate).map(r => [r.symbol, { veto: r.veto_reason, ues: r.score }]),
+  );
+
   db.close();
 
   const safety = runEgxSafetyCheck(signalDate, { veto: true });
@@ -46,15 +53,20 @@ export function runOpportunityQualityLoop(signalDate) {
   const actionableSet = new Set(actionable.map(r => r.symbol));
   const deliveredSet = new Set(delivered);
 
-  const pipeline = topOpp.map(o => ({
-    symbol: o.symbol,
-    opportunity_score: o.opportunity_score,
-    stage: o.stage,
-    actionable: actionableSet.has(o.symbol),
-    delivered: deliveredSet.has(o.symbol),
-    safety_blocked: blockedSet.has(o.symbol),
-    missed_high_opp: o.opportunity_score >= 75 && !actionableSet.has(o.symbol),
-  }));
+  const pipeline = topOpp.map(o => {
+    const fs = vetoBySymbol.get(o.symbol) || {};
+    return {
+      symbol: o.symbol,
+      opportunity_score: o.opportunity_score,
+      stage: o.stage,
+      ues_score: fs.ues ?? null,
+      veto_reason: fs.veto ?? null,
+      actionable: actionableSet.has(o.symbol),
+      delivered: deliveredSet.has(o.symbol),
+      safety_blocked: blockedSet.has(o.symbol),
+      missed_high_opp: o.opportunity_score >= 75 && !actionableSet.has(o.symbol),
+    };
+  });
 
   const highOppDelivered = pipeline.filter(p => p.delivered && p.opportunity_score >= 75);
   const highOppBlocked = pipeline.filter(p => p.safety_blocked && p.opportunity_score >= 75);

@@ -19,7 +19,7 @@ import { execSync } from 'child_process';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { loadEnv, PROJECT_ROOT } from './lib/load_env.mjs';
-import { latestOhlcvDate } from './lib/delivery_audit.mjs';
+import { latestReadySignalDate } from './lib/delivery_audit.mjs';
 import { getProofLoopMetrics, writeProofLoopSnapshot, PROOF_MIN_N, PROOF_MIN_WR } from './lib/proof_loop.mjs';
 import { syncDeliveredOutcomes } from './lib/delivered_outcomes.mjs';
 import { mergeRuntimeRules } from './lib/runtime_rules_merge.mjs';
@@ -37,7 +37,7 @@ loadEnv();
 const NODE = process.execPath;
 const AS_JSON = process.argv.includes('--json');
 const dateArg = process.argv.find((a, i) => process.argv[i - 1] === '--date');
-const signalDate = dateArg || latestOhlcvDate() || cairoDateParts().date;
+const signalDate = dateArg || latestReadySignalDate() || cairoDateParts().date;
 
 const stages = [];
 
@@ -131,6 +131,32 @@ const p6Context = stage('p6_research_context', () => {
   return writeP6ResearchContext(ctx);
 });
 
+let discoveryRefresh = null;
+stage('discovery_refresh', () => {
+  const out = execSync(`"${NODE}" scripts/egx_discovery_refresh.mjs`, {
+    cwd: PROJECT_ROOT,
+    encoding: 'utf8',
+    timeout: 900_000,
+  });
+  try {
+    discoveryRefresh = JSON.parse(readFileSync(join(PROJECT_ROOT, 'data/discovery_refresh_last.json'), 'utf8'));
+  } catch { discoveryRefresh = { note: 'refresh ran' }; }
+  return { promoted: discoveryRefresh?.promotion?.promoted ?? null };
+});
+
+stage('promotion_audit', () => {
+  const out = execSync(`"${NODE}" scripts/egx_discovery_promotion_audit.mjs`, {
+    cwd: PROJECT_ROOT,
+    encoding: 'utf8',
+    timeout: 120_000,
+  });
+  try {
+    return JSON.parse(out.trim().split('\n').pop());
+  } catch {
+    return { ok: true };
+  }
+});
+
 const report = {
   at: new Date().toISOString(),
   cairo_date: cairoDateParts().date,
@@ -155,6 +181,7 @@ const report = {
   discovery_feedback: discovery?.n_items ?? 0,
   opportunity_followup: oppFollowup,
   p6_research_context: p6Context,
+  discovery_refresh: discoveryRefresh,
   directives_resolved: resolved?.completed ?? 0,
   loops_closed: [
     'delivery_audit → recommendation_outcomes.client_delivered',
@@ -170,6 +197,8 @@ const report = {
     'opportunity_history → opportunity_followup → directives',
     'closed_loop → p6_research_context.json → evolution + cognition',
     'directives PENDING → engines → COMPLETED (directive_resolver)',
+    'closed_loop → discovery_refresh → promotion_audit (PROMOTION_GAP closed)',
+    'discovery_engine_manifest → perpetual orchestrator (cadence + triggers)',
   ],
 };
 

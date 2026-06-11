@@ -109,7 +109,40 @@ if (oppPy.includes('LOWER_THIRD_CLOSE') && oppPy.includes('VOL_SWEET_SPOT')) {
   fail('opp_lessons_boost', 'Opportunity v2 missing TRADING_LESSONS boosts');
 }
 
-// 12. Directive stats
+// 12. Promotion policy bridge (opp v2 stages + arbitration override)
+const promoPolicy = readText('scripts/python/discovery_promotion_policy.py');
+if (promoPolicy.includes('OPP_V2_PROMOTABLE_STAGES') && promoPolicy.includes('arbitration_allows_discovery_override')) {
+  pass('promotion_policy_bridge', 'discovery_promotion_policy closes PROMOTION_GAP');
+} else {
+  fail('promotion_policy_bridge', 'discovery_promotion_policy.py incomplete');
+}
+
+// 13. Arbitration liquidity SSOT (was reading missing liquidity_profiles table)
+const arbPy = readText('scripts/python/cognitive_arbitration.py');
+if (arbPy.includes('liquidity_profile') && arbPy.includes('_normalize_liquidity_tier')) {
+  pass('arbitration_liquidity_ssot', 'cognitive_arbitration reads liquidity_profile');
+} else {
+  fail('arbitration_liquidity_ssot', 'Arbitration still using stale liquidity source');
+}
+
+// 14. Discovery refresh includes arbitration before promotion
+const refresh = readText('scripts/egx_discovery_refresh.mjs');
+if (refresh.includes('cognitive_arbitration') && refresh.includes('apply_arbitration_veto') && refresh.includes('latestReadySignalDate')) {
+  pass('refresh_arbitration_order', 'discovery refresh: score → arbitrate → promote');
+} else {
+  fail('refresh_arbitration_order', 'Discovery refresh missing arbitration step');
+}
+
+// 15. Perpetual orchestrator + engine registry
+const registry = readText('scripts/lib/discovery_engine_registry.mjs');
+const perpetual = readText('scripts/egx_discovery_perpetual.mjs');
+if (registry.includes('DISCOVERY_ENGINES') && perpetual.includes('planDiscoveryRun')) {
+  pass('perpetual_orchestrator', 'discovery engine registry + perpetual loop wired');
+} else {
+  fail('perpetual_orchestrator', 'Perpetual discovery orchestrator missing');
+}
+
+// 16. Directive stats
 const dirs = countDirectiveStats();
 pass('directive_stats', `pending=${dirs.pending} completed=${dirs.completed}`);
 

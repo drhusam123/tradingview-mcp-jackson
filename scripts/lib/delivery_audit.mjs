@@ -215,6 +215,16 @@ export function latestOhlcvDate() {
   return getUpstreamDates().ohlcv;
 }
 
+/** Latest date where OHLCV + scans + ML are all ready (avoids partial-session upstream_not_ready). */
+export function latestReadySignalDate() {
+  const { ohlcv, scan, ml_pred } = getUpstreamDates();
+  if (!ohlcv) return null;
+  let date = ohlcv;
+  if (scan && scan < date) date = scan;
+  if (ml_pred && ml_pred < date) date = ml_pred;
+  return date;
+}
+
 export function latestSignalDate() {
   if (!existsSync(DB_PATH)) return null;
   const d = new Database(DB_PATH, { readonly: true });

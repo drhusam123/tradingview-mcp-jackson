@@ -7,7 +7,7 @@ import { execFileSync } from 'child_process';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { buildDiscoveryParams } from './lib/discovery_context.mjs';
-import { latestOhlcvDate } from './lib/delivery_audit.mjs';
+import { latestReadySignalDate } from './lib/delivery_audit.mjs';
 import { runDiscoveryQualityLoop } from './lib/discovery_quality_loop.mjs';
 import { mergeStructuralLawsIntoRuntime } from './lib/structural_laws_bridge.mjs';
 import { writeFileSync, mkdirSync } from 'fs';
@@ -26,7 +26,7 @@ const PY = (script, ...args) => {
   return parsePythonJson(out);
 };
 
-const signalDate = latestOhlcvDate();
+const signalDate = latestReadySignalDate();
 if (!signalDate) {
   console.error(JSON.stringify({ success: false, error: 'NO_OHLCV_DATE' }));
   process.exit(1);
@@ -61,6 +61,11 @@ console.log(`  ✅ Opp v2: ${opp.symbols_scored} scored | qualified+ ${opp.quali
 const score = stage('score_all', () =>
   PY('scripts/python/signal_integration.py', 'score_all', scoreParams));
 console.log(`  ✅ UES: scored=${score.n_scored ?? '?'} high=${score.n_high ?? '?'}`);
+
+stage('cognitive_arbitration', () =>
+  PY('scripts/python/cognitive_arbitration.py', 'arbitrate_all', '{}'));
+stage('apply_arbitration_veto', () =>
+  PY('scripts/python/signal_integration.py', 'apply_arbitration_veto', scoreParams));
 
 const promo = stage('client_signal_promotion', () =>
   PY('scripts/python/client_signal_promotion.py', promoParams));

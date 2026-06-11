@@ -152,9 +152,25 @@ def load_explosion_readiness(db):
 
 
 def load_liquidity_profiles(db):
-    """Return {symbol: {tier, avg_daily_volume}}."""
+    """Return {symbol: {tier, avg_daily_volume}} from liquidity_profile SSOT."""
     result = {}
-    rows = safe_fetchall(db, "SELECT symbol, tier, avg_daily_volume FROM liquidity_profiles")
+    rows = safe_fetchall(
+        db,
+        """
+        SELECT lp.symbol, lp.liquidity_tier AS tier, lp.advt_30d AS avg_daily_volume
+        FROM liquidity_profile lp
+        JOIN (
+            SELECT symbol, MAX(computed_date) AS d
+            FROM liquidity_profile GROUP BY symbol
+        ) x ON x.symbol = lp.symbol AND x.d = lp.computed_date
+        """,
+    )
+    if not rows:
+        rows = safe_fetchall(
+            db,
+            "SELECT symbol, COALESCE(liquidity_tier, tier) AS tier, avg_daily_volume "
+            "FROM symbol_liquidity_profile",
+        )
     for r in rows:
         result[r["symbol"]] = {
             "tier": (r.get("tier") or "ILLIQUID").upper(),

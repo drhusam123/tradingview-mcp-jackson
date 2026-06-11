@@ -194,7 +194,8 @@ def load_promotion_tuning(
         if item.get("type") == "PROMOTION_GAP":
             tuning["min_opportunity"] -= 3.0
             tuning["min_ues"] -= 2.0
-            tuning["min_scan"] -= 1.0
+            tuning["min_scan"] -= 8.0
+            tuning["min_ml"] -= 2.0
             tuning["adjustments"].append(item.get("rationale") or "PROMOTION_GAP")
 
     for alert in (followup or {}).get("alerts") or []:
