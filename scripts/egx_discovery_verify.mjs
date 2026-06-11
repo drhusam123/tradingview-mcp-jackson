@@ -53,6 +53,11 @@ const requiredFiles = [
   'scripts/python/regime_conditional_sweep.py',
   'scripts/python/hypothesis_sandbox_bridge.py',
   'scripts/egx_p6_delivered_orchestrator.mjs',
+  'scripts/egx_discovery_fabric.mjs',
+  'scripts/python/discovery_fabric_merge.py',
+  'scripts/python/discovery_backtest_gate.py',
+  'scripts/python/discovery_domain_miners.py',
+  'scripts/python/discovery_manifest_loader.py',
 ];
 
 for (const f of requiredFiles) {
@@ -74,6 +79,7 @@ ok('refresh_tv_stage', refresh.includes('tv_microstructure'));
 ok('refresh_cf_atoms', refresh.includes('counterfactual_atom_miner'));
 ok('refresh_arbitrate', refresh.includes('cognitive_arbitration'));
 ok('refresh_promotion', refresh.includes('client_signal_promotion'));
+ok('refresh_fabric', refresh.includes('discovery_fabric'));
 
 const closed = readFileSync(join(PROJECT_ROOT, 'scripts/egx_closed_loop.mjs'), 'utf8');
 ok('closed_loop_refresh', closed.includes('discovery_refresh'));
@@ -97,6 +103,9 @@ const artifacts = [
   'data/discovery_engine_manifest.json',
   'data/regime_conditional_sweep_last.json',
   'data/hypothesis_sandbox_bridge_last.json',
+  'data/discovery_ml_manifest.json',
+  'data/discovery_fabric_last.json',
+  'data/discovery_data_catalog.json',
 ];
 for (const a of artifacts) {
   const age = ageHours(a);
@@ -183,6 +192,23 @@ try {
   ok('py_hypothesis_bridge_test', true);
 } catch {
   ok('py_hypothesis_bridge_test', false);
+}
+try {
+  execSync('python3 tests/discovery_fabric.test.py', { cwd: PROJECT_ROOT, stdio: 'pipe' });
+  ok('py_discovery_fabric_test', true);
+} catch {
+  ok('py_discovery_fabric_test', false);
+}
+
+if (existsSync(DB_PATH) && signalDate) {
+  const db2 = new Database(DB_PATH, { readonly: true });
+  const regN = db2.prepare('SELECT COUNT(*) n FROM discovery_atom_registry').get()?.n ?? 0;
+  const valN = db2.prepare("SELECT COUNT(*) n FROM discovery_atom_registry WHERE status='validated'").get()?.n ?? 0;
+  db2.close();
+  ok('db_atom_registry', regN > 0, `${regN} total | ${valN} validated`);
+  const manifest = readJson('data/discovery_ml_manifest.json');
+  ok('manifest_priority_atoms', (manifest?.priority_atoms?.length ?? 0) >= 0,
+    `${manifest?.priority_atoms?.length ?? 0} priority`);
 }
 
 const nFail = checks.filter(c => !c.ok).length;

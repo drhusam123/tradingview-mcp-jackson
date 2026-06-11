@@ -40,6 +40,9 @@ export function auditClosedLoops({ maxAgeHours = 168 } = {}) {
     { file: 'data/regime_conditional_sweep_last.json', label: 'regime_sweep' },
     { file: 'data/hypothesis_sandbox_bridge_last.json', label: 'hypothesis_bridge' },
     { file: 'data/p6_delivered_orchestrator_last.json', label: 'p6_delivered_orchestrator' },
+    { file: 'data/discovery_fabric_last.json', label: 'discovery_fabric' },
+    { file: 'data/discovery_ml_manifest.json', label: 'discovery_ml_manifest' },
+    { file: 'data/discovery_data_catalog.json', label: 'discovery_data_catalog' },
     { file: 'data/egx_rules_runtime.json', label: 'runtime_rules' },
     { file: 'data/learning_loop_last.json', label: 'learning_loop' },
     { file: 'data/proof_loop_last.json', label: 'proof_loop' },
@@ -77,6 +80,7 @@ export function auditClosedLoops({ maxAgeHours = 168 } = {}) {
     { id: 'loop_perpetual_orchestrator', needle: 'perpetual orchestrator' },
     { id: 'loop_regime_sweep', needle: 'regime_conditional_sweep' },
     { id: 'loop_hypothesis_bridge', needle: 'hypothesis_sandbox_bridge' },
+    { id: 'loop_discovery_fabric', needle: 'discovery_fabric' },
     { id: 'loop_runtime_rules', needle: 'egx_rules_runtime' },
     { id: 'loop_directive_resolver', needle: 'directive_resolver' },
   ];

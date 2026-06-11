@@ -133,6 +133,20 @@ stage('regime_conditional_sweep', () => {
   }
 });
 
+stage('discovery_fabric', () => {
+  try {
+    execSync(`"${NODE}" scripts/egx_discovery_fabric.mjs`, {
+      cwd: PROJECT_ROOT,
+      encoding: 'utf8',
+      timeout: 900_000,
+      stdio: 'pipe',
+    });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, skipped: true, error: e.message?.slice(0, 120) };
+  }
+});
+
 stage('hypothesis_sandbox_bridge', () => {
   try {
     const out = execSync(`"${PYTHON3}" scripts/python/hypothesis_sandbox_bridge.py '{}'`, {
@@ -247,6 +261,7 @@ const report = {
     'counterfactual_atom_miner → quant_discovery seeds + opp boosts',
     'regime_conditional_sweep → regime_sweep_results + quant seeds',
     'hypothesis_sandbox_bridge → discovery_feedback + quant seeds',
+    'discovery_fabric → discovery_atom_registry → discovery_ml_manifest → quant/ML',
     'discovery_engine_manifest → perpetual orchestrator (cadence + triggers)',
   ],
 };

@@ -73,6 +73,20 @@ stage('tv_microstructure', () => {
 stage('counterfactual_atoms', () =>
   PY('scripts/python/counterfactual_atom_miner.py', JSON.stringify({ date: signalDate })));
 
+stage('discovery_fabric', () => {
+  try {
+    execFileSync(NODE, [join(ROOT, 'scripts/egx_discovery_fabric.mjs')], {
+      cwd: ROOT,
+      encoding: 'utf8',
+      timeout: 900_000,
+      stdio: 'pipe',
+    });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message?.slice(0, 120) };
+  }
+});
+
 const opp = stage('opportunity_score_v2', () =>
   PY('scripts/python/opportunity_score_v2.py', 'run', paramsJson));
 console.log(`  ✅ Opp v2: ${opp.symbols_scored} scored | qualified+ ${opp.qualified_plus ?? '?'}`);

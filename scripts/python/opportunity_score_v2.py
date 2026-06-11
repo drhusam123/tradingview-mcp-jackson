@@ -702,14 +702,28 @@ def ensure_table(db: sqlite3.Connection) -> None:
 
 
 def _load_opp_tuning(params: Dict[str, Any]) -> Dict[str, Any]:
+    tuning: Dict[str, Any] = {"failure_penalty_boost": 0.0, "downrank_classes": [], "reasons": []}
     try:
         from discovery_feedback_loader import load_feedback_queue, load_opportunity_tuning
 
         queue = params.get("feedback_queue") or load_feedback_queue()
         followup = params.get("opportunity_followup")
-        return load_opportunity_tuning(queue, followup)
+        tuning = load_opportunity_tuning(queue, followup)
     except Exception:
-        return {"failure_penalty_boost": 0.0, "downrank_classes": [], "reasons": []}
+        pass
+    try:
+        from discovery_manifest_loader import load_ml_manifest
+
+        manifest = params.get("discovery_ml_manifest") or load_ml_manifest(params)
+        tuning["fabric_priority_atoms"] = list(manifest.get("priority_atoms") or [])
+        tuning["fabric_penalize_atoms"] = list(manifest.get("penalize_atoms") or [])
+        tuning["hard_negative_symbols"] = set(manifest.get("hard_negative_symbols") or [])
+        if manifest.get("universe_gate"):
+            tuning["universe_gate"] = manifest["universe_gate"]
+    except Exception:
+        tuning.setdefault("fabric_priority_atoms", [])
+        tuning.setdefault("hard_negative_symbols", set())
+    return tuning
 
 
 def run(params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -734,8 +748,11 @@ def run(params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     rets = [ret(rows, 20) for s, rows in by_symbol.items() if not s.startswith("EGX") and len(rows) >= 80]
     universe_market_ret20 = median([x for x in rets if x is not None]) if rets else 0.0
 
+    hn_syms = opp_tuning.get("hard_negative_symbols") or set()
     rows_out = []
     for symbol, rows in by_symbol.items():
+        if symbol in hn_syms:
+            continue
         item = score_symbol(
             symbol,
             rows,
@@ -811,12 +828,15 @@ def run(params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         for s in ("QUALIFIED_DISCOVERY", "ACTIONABLE_CANDIDATE", "NEAR_BREAKOUT")
     )
     avg_opp = mean([r["opportunity_score"] for r in rows_out]) if rows_out else 0.0
+    tuning_out = dict(opp_tuning)
+    if isinstance(tuning_out.get("hard_negative_symbols"), set):
+        tuning_out["hard_negative_symbols"] = sorted(tuning_out["hard_negative_symbols"])
     result = {
         "success": True,
         "trade_date": trade_date,
         "symbols_scored": len(rows_out),
         "market_regime_score": round(market_score, 2),
-        "opp_tuning": opp_tuning,
+        "opp_tuning": tuning_out,
         "stage_counts": stage_counts,
         "qualified_plus": qualified_plus,
         "avg_opportunity_score": round(avg_opp, 2),

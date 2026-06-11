@@ -1200,6 +1200,14 @@ def build_training_data(conn, train_end='2026-02-28'):
 
     print(f"[ML] Building training data (IS end: {train_end})...", flush=True)
 
+    try:
+        from discovery_manifest_loader import hard_negative_symbols as _hn_syms
+        fabric_block_syms = _hn_syms()
+    except Exception:
+        fabric_block_syms = set()
+    if fabric_block_syms:
+        print(f"[ML]   Discovery fabric hard-negative symbols: {len(fabric_block_syms)}", flush=True)
+
     # ── Load consolidation events so we can exclude corrupt training rows ─────
     consolidation_events = _get_consolidation_events(conn, lookback_days=730)
     corrupt_syms = set(consolidation_events.keys())
@@ -1230,6 +1238,7 @@ def build_training_data(conn, train_end='2026-02-28'):
     pos_rows = [
         r for r in pos_rows
         if not _is_corrupt_training_row(r['symbol'], r['explosion_date'], consolidation_events)
+        and r['symbol'] not in fabric_block_syms
     ]
     print(f"[ML]   Positives available: {len(pos_rows)} "
           f"(excluded {pos_skipped_corrupt} near consolidation events)", flush=True)
@@ -1264,6 +1273,7 @@ def build_training_data(conn, train_end='2026-02-28'):
         n for n in neg_candidates
         if not _is_corrupt_training_row(n['symbol'], n['bar_date'], consolidation_events,
                                         pre_window=90, post_window=90)
+        and n['symbol'] not in fabric_block_syms
     ]
     print(f"[ML]   Negative candidates sampled: {len(neg_candidates)} "
           f"(corrupt symbols excluded)", flush=True)

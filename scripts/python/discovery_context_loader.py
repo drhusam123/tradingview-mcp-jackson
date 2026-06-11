@@ -77,6 +77,8 @@ def load_discovery_params(signal_date: str | None = None) -> dict:
 
     strict = dq_score is not None and float(dq_score) < 52
 
+    manifest = _read_json("discovery_ml_manifest.json") or {}
+
     return {
         "feedback_queue": queue,
         "p6_priorities": (p6 or {}).get("research_priorities") or [],
@@ -87,4 +89,5 @@ def load_discovery_params(signal_date: str | None = None) -> dict:
         "signal_date": signal_date or (p6 or {}).get("signal_date"),
         "strict_quality": strict,
         "discovery_quality_score": dq_score,
+        "discovery_ml_manifest": manifest,
     }

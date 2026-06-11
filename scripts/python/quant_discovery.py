@@ -226,6 +226,20 @@ def build_examples(data, min_history=60, horizon=5):
     return examples
 
 
+try:
+    from discovery_manifest_loader import load_registry_seeds as _fabric_seeds
+except ImportError:
+    _fabric_seeds = lambda p=None: {}
+
+
+def load_fabric_seeds(params: dict | None = None) -> dict:
+    """L11 unified manifest — preferred over legacy JSON files."""
+    seeds = _fabric_seeds(params)
+    if seeds.get("priority_atoms") or seeds.get("penalize_atoms"):
+        return seeds
+    return {}
+
+
 def load_regime_sweep_seeds(params: dict | None = None) -> dict:
     params = params or {}
     if params.get("regime_sweep"):
@@ -397,13 +411,15 @@ def run_discovery(params):
         "expectancy": mean([x["realized"] for x in oos_all]),
     }
 
-    cf_seeds = load_counterfactual_seeds(params)
-    regime_seeds = load_regime_sweep_seeds(params)
-    sandbox_seeds = load_hypothesis_sandbox_seeds(params)
-    penalize_atoms = set(cf_seeds.get("penalize_atoms") or [])
-    priority_atoms = list(cf_seeds.get("priority_atoms") or cf_seeds.get("boost_atoms") or [])
-    seed_pairs = list(cf_seeds.get("seed_pairs") or [])
-    for extra in (regime_seeds, sandbox_seeds):
+    fabric = load_fabric_seeds(params)
+    cf_seeds = load_counterfactual_seeds(params) if not fabric else {}
+    regime_seeds = load_regime_sweep_seeds(params) if not fabric else {}
+    sandbox_seeds = load_hypothesis_sandbox_seeds(params) if not fabric else {}
+    base = fabric or cf_seeds
+    penalize_atoms = set(base.get("penalize_atoms") or [])
+    priority_atoms = list(base.get("priority_atoms") or base.get("boost_atoms") or [])
+    seed_pairs = list(base.get("seed_pairs") or [])
+    for extra in (fabric, regime_seeds, sandbox_seeds, cf_seeds):
         for a in extra.get("priority_atoms") or []:
             if a not in priority_atoms:
                 priority_atoms.append(a)

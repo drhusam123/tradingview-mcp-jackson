@@ -124,6 +124,15 @@ export const DISCOVERY_ENGINES = {
     feeds: ['quant_rules', 'discovery_feedback'],
     triggers: ['INVESTIGATE_PATTERN', 'UPRANK_BEHAVIORAL'],
   },
+  discovery_fabric: {
+    id: 'discovery_fabric',
+    layer: 'daily',
+    cadence_hours: 24,
+    npm: 'egx:discovery:fabric',
+    outputs: ['discovery_atom_registry', 'discovery_ml_manifest.json'],
+    feeds: ['quant_rules', 'opportunity_v2', 'egx_ml_trainer'],
+    triggers: ['DISCOVERY_QUALITY_LOW', 'INVESTIGATE_PATTERN', 'PROMOTION_GAP'],
+  },
 };
 
 const MANIFEST_PATH = join(PROJECT_ROOT, 'data/discovery_engine_manifest.json');

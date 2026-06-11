@@ -59,6 +59,12 @@ export function buildDiscoveryParams({ signalDate = null, includeDirectives = tr
   const dqScore = discoveryQuality?.discovery_quality_score ?? p6?.discovery_quality?.score;
   const strictQuality = dqScore != null && dqScore < 52;
 
+  let discoveryMlManifest = null;
+  const manifestPath = join(PROJECT_ROOT, 'data/discovery_ml_manifest.json');
+  if (existsSync(manifestPath)) {
+    try { discoveryMlManifest = JSON.parse(readFileSync(manifestPath, 'utf8')); } catch { /* */ }
+  }
+
   const params = {
     feedback_queue: queue,
     p6_priorities: p6?.research_priorities || [],
@@ -69,6 +75,7 @@ export function buildDiscoveryParams({ signalDate = null, includeDirectives = tr
     signal_date: signalDate || p6?.signal_date || null,
     strict_quality: strictQuality,
     discovery_quality_score: dqScore ?? null,
+    discovery_ml_manifest: discoveryMlManifest,
   };
 
   return {

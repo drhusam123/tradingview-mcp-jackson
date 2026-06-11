@@ -517,6 +517,17 @@ def phase1_build_features():
     t0 = time.time()
     print(json.dumps({"phase": "1", "step": "start", "desc": "بناء 60+ مميز لكل سهم"}), flush=True)
 
+    fabric_cols = []
+    try:
+        from discovery_manifest_loader import load_ml_manifest
+        _fab = load_ml_manifest()
+        fabric_cols = list(_fab.get("feature_store_cols") or [])
+        if fabric_cols or _fab.get("priority_atoms"):
+            print(f"[P1][Fabric] feature_cols={len(fabric_cols)} "
+                  f"priority_atoms={len(_fab.get('priority_atoms') or [])}", flush=True)
+    except Exception:
+        pass
+
     conn = get_db()
     ensure_tables(conn)
 
@@ -683,6 +694,15 @@ def phase1_build_features():
                             'v2', 'computed',
                             computed_at
                         ))
+                # Discovery Fabric — persist validated ml_feature_col aliases when computable
+                for fname in fabric_cols:
+                    if fname in row_f.index:
+                        records.append((
+                            date_str, sym, fname,
+                            float(row_f[fname]),
+                            'v2', 'discovery_fabric',
+                            computed_at
+                        ))
 
             conn.executemany("""
                 INSERT OR REPLACE INTO feature_store
@@ -837,6 +857,16 @@ def phase2_explosion_ensemble():
     optuna.logging.set_verbosity(optuna.logging.WARNING)
     t0 = time.time()
     print(json.dumps({"phase": "2", "step": "start", "desc": "Explosion Ensemble: LightGBM+XGB+RF+Optuna"}), flush=True)
+
+    try:
+        from discovery_manifest_loader import load_ml_manifest
+        _fab = load_ml_manifest()
+        if _fab.get("priority_atoms"):
+            print(f"[P2][Fabric] priority_atoms={len(_fab['priority_atoms'])} "
+                  f"penalize={len(_fab.get('penalize_atoms') or [])} "
+                  f"hard_neg_syms={len(_fab.get('hard_negative_symbols') or [])}", flush=True)
+    except Exception:
+        pass
 
     import datetime as _dt
     # Ph 31 — Dynamic train_end: use 30 days ago so model always trains on recent data
@@ -1703,6 +1733,20 @@ def phase5_triple_barrier():
     print(json.dumps({"phase":"5","step":"start","desc":"Triple Barrier Meta-Labeling"}), flush=True)
     today_str = datetime.date.today().isoformat()
 
+    penalize_vol_hi = False
+    discovery_boost = False
+    try:
+        from discovery_manifest_loader import load_ml_manifest
+        _fab = load_ml_manifest()
+        penalize = set(_fab.get("penalize_atoms") or [])
+        priority = set(_fab.get("priority_atoms") or [])
+        penalize_vol_hi = "vol_gt5" in penalize or "vol_gt3" in penalize
+        discovery_boost = "lower_third_close" in priority or "vol_2_5_3" in priority
+        print(f"[P5][Fabric] penalize={len(penalize)} priority={len(priority)} "
+              f"vol_filter={penalize_vol_hi} lower_third_boost={discovery_boost}", flush=True)
+    except Exception:
+        pass
+
     conn = get_db()
 
     # Load OHLCV for top liquid symbols
@@ -1749,11 +1793,25 @@ def phase5_triple_barrier():
             # Feature: base explosion model prediction + RSI + BB
             vm20 = np.mean(np.array([sf(rows[k]['volume']) for k in range(max(0,i-20),i)]) + 1e-10) if i >= 20 else 1.0
             vol_r = sf(rows[i]['volume']) / (vm20 + 1e-10)
+            if penalize_vol_hi and vol_r >= 5.0:
+                continue
             rsi_approx = 50.0
             bb_w = atr_ma[i] / (c[i] + 1e-10) * 4
+            bar_rng = max(h[i] - lo[i], 1e-9)
+            close_pos = (c[i] - lo[i]) / bar_rng
+            lower_third = 1.0 if close_pos <= 0.33 else 0.0
+            vol_sweet = 1.0 if 2.5 <= vol_r <= 3.0 else 0.0
 
-            all_features.append([vol_r, bb_w, rsi_approx, float(c[i]/max(c[max(0,i-10):i+1])), float(atr_ma[i]/(c[i]+1e-10))])
-            all_labels.append(int(label == 1))  # binary: barrier UP hit
+            all_features.append([
+                vol_r, bb_w, rsi_approx,
+                float(c[i] / max(c[max(0, i - 10):i + 1])),
+                float(atr_ma[i] / (c[i] + 1e-10)),
+                lower_third, vol_sweet,
+            ])
+            lbl = int(label == 1)
+            if discovery_boost and lower_third and vol_sweet:
+                lbl = 1 if label != -1 else 0
+            all_labels.append(lbl)
 
     if len(all_features) < 100:
         conn.close()
@@ -1773,7 +1831,8 @@ def phase5_triple_barrier():
         'num_threads': N_JOBS, 'scale_pos_weight': scale_pos,
         'learning_rate':0.05,'num_leaves':24,'min_data_in_leaf':15,
     }
-    fname = ['vol_ratio','bb_width','rsi','price_rank10d','atr_pct']
+    fname = ['vol_ratio', 'bb_width', 'rsi', 'price_rank10d', 'atr_pct',
+             'lower_third_close', 'vol_2_5_3']
     ds = lgb.Dataset(X_tr, label=y_tr, feature_name=fname, free_raw_data=True)
     dv = lgb.Dataset(X_os, label=y_os, feature_name=fname, free_raw_data=True)
     m = lgb.train(params, ds, num_boost_round=300,

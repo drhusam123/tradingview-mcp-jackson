@@ -1325,6 +1325,89 @@ def _print_historical_report(results: Dict[str, Any]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Discovery Fabric — validate_atoms endpoint
+# ---------------------------------------------------------------------------
+
+def validate_discovery_atoms(
+    db_path: Optional[Path] = None,
+    atom_ids: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Run OOS atom validation (delegates to discovery_backtest_gate helpers)."""
+    sys.path.insert(0, str(_ROOT / "scripts" / "python"))
+    from discovery_backtest_gate import (  # noqa: WPS433
+        eval_atom_on_oos,
+        passes_gate,
+        MIN_N,
+    )
+    from quant_discovery import load_bars, build_examples, atoms  # noqa: WPS433
+
+    db_path = db_path or DB_PATH
+    conn = sqlite3.connect(db_path, timeout=120)
+    conn.row_factory = sqlite3.Row
+
+    if atom_ids:
+        placeholders = ",".join("?" * len(atom_ids))
+        proposed = conn.execute(
+            f"SELECT atom_id, hard_negative, regime_filter FROM discovery_atom_registry "
+            f"WHERE atom_id IN ({placeholders})",
+            atom_ids,
+        ).fetchall()
+    else:
+        proposed = conn.execute(
+            "SELECT atom_id, hard_negative, regime_filter FROM discovery_atom_registry "
+            "WHERE status IN ('proposed', 'validated', 'rejected')"
+        ).fetchall()
+
+    data = load_bars(conn)
+    examples = build_examples(data, horizon=5)
+    dates = sorted({x["date"] for x in examples})
+    split_date = dates[int(len(dates) * 0.75)] if dates else "2025-01-01"
+    atom_map = {name: fn for name, fn in atoms()}
+
+    results_atoms = []
+    n_val, n_rej = 0, 0
+    for row in proposed:
+        aid = row["atom_id"]
+        fn = atom_map.get(aid)
+        if not fn:
+            results_atoms.append({"atom_id": aid, "status": "skipped", "reason": "no_evaluator"})
+            continue
+        metrics = eval_atom_on_oos(aid, examples, split_date, atom_map)
+        if not metrics:
+            status = "rejected"
+            n_rej += 1
+            results_atoms.append({
+                "atom_id": aid, "status": status, "reason": f"n<{MIN_N}",
+            })
+            continue
+        ok = passes_gate(metrics, row["hard_negative"])
+        status = "validated" if ok else "rejected"
+        if ok:
+            n_val += 1
+        else:
+            n_rej += 1
+        results_atoms.append({
+            "atom_id": aid,
+            "status": status,
+            "backtest_wr": metrics["backtest_wr"],
+            "backtest_n": metrics["backtest_n"],
+            "backtest_lift": metrics["backtest_lift"],
+            "backtest_pf": metrics["backtest_pf"],
+            "baseline_wr": metrics["baseline_wr"],
+        })
+
+    conn.close()
+    return {
+        "success": True,
+        "n_validated": n_val,
+        "n_rejected": n_rej,
+        "split_date": split_date,
+        "n_examples": len(examples),
+        "atoms": results_atoms,
+    }
+
+
+# ---------------------------------------------------------------------------
 # CLI entry point
 # ---------------------------------------------------------------------------
 
@@ -1376,6 +1459,15 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="Override hold duration in days (default: per signal_type; SHORT_SWING=9)")
     hist_p.add_argument("--slippage", type=float, default=0.003)
     hist_p.add_argument("--commission", type=float, default=0.001)
+
+    # validate_atoms — Discovery Fabric gate (OOS WR/lift per atom)
+    va_p = sub.add_parser("validate_atoms", help="Validate discovery atoms via OOS backtest gate")
+    va_p.add_argument("--db", type=str, default=None, help="Override DB path")
+    va_p.add_argument(
+        "--atoms", type=str, default=None,
+        help="Comma-separated atom_ids (default: all proposed in registry)",
+    )
+    va_p.add_argument("--json", action="store_true", dest="output_json", help="Output JSON")
 
     # walkforward subcommand
     wf_p = sub.add_parser("walkforward", help="Walk-forward 4-window analysis")
@@ -1434,6 +1526,18 @@ def main() -> None:
             print(json.dumps(results, ensure_ascii=False, indent=2, default=str))
         else:
             _print_historical_report(results)
+
+    elif args.command == "validate_atoms":
+        results = validate_discovery_atoms(
+            db_path=db_path,
+            atom_ids=[a.strip() for a in args.atoms.split(",")] if args.atoms else None,
+        )
+        if args.output_json:
+            print(json.dumps(results, ensure_ascii=False, indent=2, default=str))
+        else:
+            print(f"Validated: {results.get('n_validated', 0)} | Rejected: {results.get('n_rejected', 0)}")
+            for r in results.get("atoms") or []:
+                print(f"  {r['atom_id']}: {r['status']} WR={r.get('backtest_wr')} n={r.get('backtest_n')}")
 
     elif args.command == "walkforward":
         windows = walk_forward_real(
