@@ -51,6 +51,7 @@
     "egx:discovery:regime:sweep": "node scripts/egx_regime_conditional_sweep.mjs",
     "egx:discovery:hypothesis:bridge": "node scripts/egx_hypothesis_sandbox_bridge.mjs",
     "egx:discovery:fabric": "node scripts/egx_discovery_fabric.mjs",
+    "egx:discovery:automate": "node scripts/egx_discovery_automate.mjs",
     "egx:discovery:validate-atoms": "python3 scripts/python/backtest_engine.py validate_atoms --json",
     "egx:p6:delivered:orchestrator": "node scripts/egx_p6_delivered_orchestrator.mjs",
     "egx:discovery:strategy:sweep": "node scripts/egx_discovery.mjs --section sweep",

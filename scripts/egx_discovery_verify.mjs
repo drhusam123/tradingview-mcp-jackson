@@ -70,6 +70,7 @@ ok('cron_tv_micro_marker', cronSrc.includes('EGX-TV-MICRO-D'));
 ok('cron_perpetual_marker', cronSrc.includes('EGX-DISCOVERY-PERPETUAL-W'));
 ok('cron_regime_sweep', cronSrc.includes('EGX-REGIME-SWEEP-W'));
 ok('cron_hypothesis_bridge', cronSrc.includes('EGX-HYPOTHESIS-BRIDGE-W'));
+ok('cron_discovery_fabric', cronSrc.includes('EGX-DISCOVERY-FABRIC-D'));
 ok('cron_discovery_audit', cronSrc.includes('EGX-DISCOVERY-AUDIT-W'));
 ok('cron_dmids_rescore', cronSrc.includes('egx_discover.mjs') && cronSrc.includes('--rescore'));
 
@@ -162,6 +163,8 @@ const cronChecks = [
   ['EGX-POST-SESSION-DAILY', 'cron_installed_post_session'],
   ['EGX-REGIME-SWEEP-W', 'cron_installed_regime_sweep'],
   ['EGX-HYPOTHESIS-BRIDGE-W', 'cron_installed_hypothesis_bridge'],
+  ['EGX-DISCOVERY-FABRIC-D', 'cron_installed_discovery_fabric'],
+  ['EGX-DISCOVERY-FABRIC-W', 'cron_installed_discovery_fabric_weekly'],
 ];
 for (const [marker, id] of cronChecks) {
   const installed = cron.includes(marker);

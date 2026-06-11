@@ -133,6 +133,9 @@ if (!SKIP_CRON) {
       'EGX-POST-SESSION-DAILY',
       'EGX-DAILY-AUTOMATION',
       'EGX-LEARNING-LOOP-WEEKLY',
+      'EGX-DISCOVERY-FABRIC-D',
+      'EGX-TV-MICRO-D',
+      'EGX-DISCOVERY-PERPETUAL-W',
     ];
     const found = markers.filter(m => cron.includes(m));
     return { markers_found: found, total_lines: cron.split('\n').filter(l => l.includes('EGX-')).length };
