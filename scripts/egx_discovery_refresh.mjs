@@ -12,29 +12,10 @@ import { runDiscoveryQualityLoop } from './lib/discovery_quality_loop.mjs';
 import { mergeStructuralLawsIntoRuntime } from './lib/structural_laws_bridge.mjs';
 import { writeFileSync, mkdirSync } from 'fs';
 import { PROJECT_ROOT } from './lib/load_env.mjs';
+import { parsePythonJson } from './lib/parse_python_json.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PYTHON3 = process.env.PYTHON_BIN || process.env.PYTHON3 || 'python3';
-function parsePythonJson(out) {
-  const text = out.trim();
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start >= 0 && end > start) {
-    try {
-      return JSON.parse(text.slice(start, end + 1));
-    } catch { /* fall through */ }
-  }
-  const lines = text.split('\n').reverse();
-  for (const line of lines) {
-    const t = line.trim();
-    if (t.startsWith('{') || t.startsWith('[')) {
-      try {
-        return JSON.parse(t);
-      } catch { /* continue */ }
-    }
-  }
-  throw new Error(`No JSON in python output: ${text.slice(-300)}`);
-}
 
 const PY = (script, ...args) => {
   const out = execFileSync(PYTHON3, [join(ROOT, script), ...args], {

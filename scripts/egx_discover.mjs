@@ -20,6 +20,7 @@ import { buildDiscoveryParams, discoveryContextSummary } from './lib/discovery_c
 import { resolveDiscoveryDirectives } from './lib/directive_resolver.mjs';
 import { mergeStructuralLawsIntoRuntime } from './lib/structural_laws_bridge.mjs';
 import { runDiscoveryQualityLoop } from './lib/discovery_quality_loop.mjs';
+import { parsePythonJson } from './lib/parse_python_json.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DATA_DIR  = join(__dirname, '../data');
@@ -159,12 +160,12 @@ if (RESCORE && opportunity?.success) {
     const tradeDate = opportunity.trade_date;
     const scoreParams = JSON.stringify({ date: tradeDate });
     const promoParams = JSON.stringify({ date: tradeDate, ...discoveryParams });
-    rescore = JSON.parse(execFileSync(PYTHON3, [scoreScript, 'score_all', scoreParams], {
+    rescore = parsePythonJson(execFileSync(PYTHON3, [scoreScript, 'score_all', scoreParams], {
       cwd: join(__dirname, '..'),
       encoding: 'utf8',
       timeout: 1000 * 60 * 15,
     }));
-    const promo = JSON.parse(execFileSync(PYTHON3, [promoScript, promoParams], {
+    const promo = parsePythonJson(execFileSync(PYTHON3, [promoScript, promoParams], {
       cwd: join(__dirname, '..'),
       encoding: 'utf8',
       timeout: 1000 * 60 * 5,
