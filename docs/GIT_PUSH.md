@@ -13,6 +13,7 @@
 
 ```bash
 npm test
+npm run egx:data:audit
 npm run egx:architecture:audit
 npm run egx:discovery:verify
 npm run egx:loop:audit

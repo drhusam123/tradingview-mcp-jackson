@@ -766,22 +766,44 @@ export function saveOHLCV(symbol, bars) {
   return insertMany(bars);
 }
 
+function ohlcvReadTable(db) {
+  const view = db.prepare(
+    "SELECT 1 AS ok FROM sqlite_master WHERE type='view' AND name='ohlcv_history_execution'",
+  ).get();
+  return view ? 'ohlcv_history_execution' : 'ohlcv_history';
+}
+
 /**
- * استرجاع البيانات التاريخية لسهم
+ * استرجاع البيانات التاريخية لسهم (يفضّل ohlcv_history_execution عند توفرها)
  * @param {string} symbol
  * @param {number} [limit=500]  - عدد الشمعات (من الأحدث للأقدم)
+ * @param {{ sinceDate?: string, execution?: boolean }} [opts]
  * @returns {Array}
  */
-export function getOHLCV(symbol, limit = 500) {
+export function getOHLCV(symbol, limit = 500, opts = {}) {
   const db = getDB();
-  const rows = db.prepare(`
+  const useExecution = opts.execution !== false;
+  const table = useExecution ? ohlcvReadTable(db) : 'ohlcv_history';
+  const sinceDate = opts.sinceDate ?? null;
+  let sql = `
     SELECT bar_time as time, open, high, low, close, volume
-    FROM ohlcv_history
+    FROM ${table}
     WHERE symbol = ?
-    ORDER BY bar_time DESC
-    LIMIT ?
-  `).all(symbol, limit);
+  `;
+  const params = [symbol];
+  if (sinceDate) {
+    sql += ` AND date(bar_time, 'unixepoch') >= ?`;
+    params.push(sinceDate);
+  }
+  sql += ` ORDER BY bar_time DESC LIMIT ?`;
+  params.push(limit);
+  const rows = db.prepare(sql).all(...params);
   return rows.reverse();
+}
+
+/** Same as getOHLCV but always reads production execution view when present. */
+export function getOHLCVExecution(symbol, limit = 500, sinceDate = null) {
+  return getOHLCV(symbol, limit, { execution: true, sinceDate });
 }
 
 /**

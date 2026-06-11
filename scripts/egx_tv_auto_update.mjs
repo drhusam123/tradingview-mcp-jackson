@@ -327,6 +327,7 @@ async function main() {
   }
 
   run('node scripts/rebuild_indicators.mjs', 'Rebuild local indicators', { critical: true });
+  run(`${PYTHON3} scripts/python/duckdb_layer.py --force --quiet`, 'Parquet OHLCV/analytics export', { critical: false });
   if (!DRY_RUN) {
     const cacheGate = checkIndicatorCacheCoverage(signalDate);
     log(`indicator cache: ${cacheGate.symbols_on_date}/${cacheGate.min_required} on ${signalDate}`);

@@ -9,7 +9,7 @@ export const LAYER_GRAPH = [
     anchors: ['ohlcv_history', 'stock_universe'],
     upstream: [],
     downstream: ['L1', 'L2', 'L3'],
-    producers: ['egx_tv_auto_update', 'rebuild_indicators'],
+    producers: ['egx_tv_auto_update', 'daily_update.mjs', 'tv_universe_sync.mjs', 'tv_data_reconcile.mjs'],
   },
   {
     id: 'L1',

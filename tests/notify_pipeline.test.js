@@ -20,6 +20,7 @@ function cleanupTestDb(...pairs) {
   for (const [sql, ...args] of pairs) d.prepare(sql).run(...args);
   d.prepare("DELETE FROM final_signals WHERE trade_date LIKE '2099-%'").run();
   d.prepare("DELETE FROM notification_delivery_audit WHERE signal_date LIKE '2099-%'").run();
+  d.prepare("DELETE FROM indicators_cache WHERE bar_date LIKE '2099-%'").run();
   d.close();
 }
 

@@ -18,11 +18,14 @@ function tableStats(db, table) {
   try {
     const n = db.prepare(`SELECT COUNT(*) AS n FROM [${table}]`).get()?.n ?? 0;
     let latest = null;
-    for (const col of ['trade_date', 'date', 'scan_date', 'pred_date', 'signal_date', 'computed_at', 'created_at']) {
+    for (const col of ['trade_date', 'date', 'scan_date', 'pred_date', 'signal_date', 'bar_time', 'bar_date', 'last_fetch', 'computed_at', 'created_at']) {
       try {
         const r = db.prepare(`SELECT MAX([${col}]) AS d FROM [${table}]`).get()?.d;
         if (r) {
-          latest = String(r).slice(0, 10);
+          const s = String(r);
+          latest = /^\d{9,}$/.test(s)
+            ? new Date(Number(s) * 1000).toISOString().slice(0, 10)
+            : s.slice(0, 10);
           break;
         }
       } catch { /* */ }

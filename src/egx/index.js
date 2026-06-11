@@ -8,7 +8,7 @@
 export { scoreSetup, rankStocks, SETUP_TYPES, FILTERS }       from './scorer.js';
 export { getDB, saveScan, saveTrade, savePostMortem,
          updateSetupPerformance, getStats, getBestSetups,
-         saveOHLCV, getOHLCV, upsertStockUniverse, getHistoryStats,
+         saveOHLCV, getOHLCV, getOHLCVExecution, upsertStockUniverse, getHistoryStats,
          saveRulePerformance, getRulePerformance, getAllRulesPerformance,
          saveFinancialData, getFinancialData, getUndervaluedStocks,
          addNote, searchNotes,

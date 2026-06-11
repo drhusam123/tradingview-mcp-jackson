@@ -51,7 +51,7 @@ async function main() {
     process.stdout.write(`\r${progressBar(pct)} ${String(i+1).padStart(3)}/${targets.length}  ${sym.padEnd(7)} `);
 
     try {
-      const bars = getOHLCV(sym, BARS_LIMIT);
+      const bars = getOHLCV(sym, BARS_LIMIT, { execution: true, sinceDate: SINCE_DATE || undefined });
       const payload = buildIndicatorPayload(bars);
       if (!payload) { results.skip++; continue; }
 

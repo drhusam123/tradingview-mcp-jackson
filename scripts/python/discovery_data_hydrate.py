@@ -47,11 +47,18 @@ LAYER_MAP = {
 }
 
 HYDRATE_CMDS = [
+    ("stock_universe", ["node", "scripts/tv_universe_sync.mjs"], 300),
+    ("ohlcv_history", ["node", "scripts/daily_update.mjs", "--force"], 14400),
     ("cross_market_regime", ["node", "scripts/egx_cross_market.mjs", "macro"], 120),
     ("indicators_cache", ["node", "scripts/rebuild_indicators.mjs"], 600),
     ("pine_analytics", ["node", "scripts/fetch_pine_analytics.mjs", "session"], 600),
     ("scans", ["node", "scripts/scan_today.mjs", "--db-only"], 300),
 ]
+
+LATEST_COLS = (
+    "date", "trade_date", "scan_date", "signal_date", "bar_time", "bar_date",
+    "last_fetch", "pred_date", "computed_at", "created_at",
+)
 
 
 def _layer_for_table(name: str) -> str:
@@ -64,6 +71,35 @@ def _layer_for_table(name: str) -> str:
     return "OTHER"
 
 
+def _normalize_latest(val) -> str | None:
+    if val is None:
+        return None
+    s = str(val).strip()
+    if not s:
+        return None
+    if s.isdigit() and len(s) >= 10:
+        try:
+            from datetime import datetime as _dt
+            return _dt.utcfromtimestamp(int(s)).strftime("%Y-%m-%d")
+        except (ValueError, OSError):
+            pass
+    return s[:32]
+
+
+def _ohlcv_stale(db) -> bool:
+    try:
+        row = db.execute(
+            "SELECT MAX(date(bar_time,'unixepoch')) FROM ohlcv_history"
+        ).fetchone()
+        latest = row[0] if row else None
+        if not latest:
+            return True
+        from datetime import date, timedelta
+        return latest < (date.today() - timedelta(days=3)).isoformat()
+    except sqlite3.OperationalError:
+        return True
+
+
 def enumerate_tables(db) -> list[dict]:
     rows = db.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
@@ -73,14 +109,22 @@ def enumerate_tables(db) -> list[dict]:
         try:
             n = db.execute(f"SELECT COUNT(*) FROM [{name}]").fetchone()[0]
             latest = None
-            for col in ("date", "trade_date", "scan_date", "signal_date", "bar_time", "computed_at", "created_at"):
+            for col in LATEST_COLS:
                 try:
                     r = db.execute(f"SELECT MAX([{col}]) FROM [{name}]").fetchone()[0]
                     if r:
-                        latest = str(r)[:32]
+                        latest = _normalize_latest(r)
                         break
                 except sqlite3.OperationalError:
                     continue
+            if latest is None and name == "ohlcv_history":
+                try:
+                    r = db.execute(
+                        "SELECT MAX(date(bar_time,'unixepoch')) FROM ohlcv_history"
+                    ).fetchone()[0]
+                    latest = _normalize_latest(r)
+                except sqlite3.OperationalError:
+                    pass
             out.append({
                 "table": name,
                 "layer": _layer_for_table(name),
@@ -98,13 +142,33 @@ def run_hydrate_commands(params: dict) -> list[dict]:
         return []
     results = []
     targets = set(params.get("targets") or [])
+    refresh_l0 = params.get("refresh_l0", False)
+    db = sqlite3.connect(DB_PATH, timeout=30) if DB_PATH.exists() else None
+    ohlcv_stale = _ohlcv_stale(db) if db else True
+    if db:
+        db.close()
     for label, cmd, timeout in HYDRATE_CMDS:
         if targets and label not in targets:
             continue
+        if label == "ohlcv_history" and not refresh_l0 and not ohlcv_stale:
+            results.append({"target": label, "ok": True, "skipped": True, "reason": "fresh"})
+            continue
+        if label == "stock_universe" and not refresh_l0 and not ohlcv_stale:
+            results.append({"target": label, "ok": True, "skipped": True, "reason": "ohlcv_fresh"})
+            continue
         try:
-            subprocess.run(cmd, cwd=ROOT, timeout=timeout, check=False,
-                           capture_output=True, text=True)
-            results.append({"target": label, "ok": True, "cmd": " ".join(cmd)})
+            proc = subprocess.run(
+                cmd, cwd=ROOT, timeout=timeout, check=False,
+                capture_output=True, text=True,
+            )
+            ok = proc.returncode == 0
+            results.append({
+                "target": label,
+                "ok": ok,
+                "exit_code": proc.returncode,
+                "cmd": " ".join(cmd),
+                "stderr": (proc.stderr or "")[-200:] if not ok else None,
+            })
         except Exception as e:
             results.append({"target": label, "ok": False, "error": str(e)[:120]})
     return results

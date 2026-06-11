@@ -3,7 +3,7 @@
  */
 import { evaluate, evaluateAsync, getClient, getChartApi, getChartCollection } from '../connection.js';
 import { waitForChartReady } from '../wait.js';
-import { getQuote } from './data.js';
+import { getQuote, getOhlcv } from './data.js';
 import { writeFileSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -49,17 +49,9 @@ export async function batchRun({ symbols, timeframes, action, delay_ms, ohlcv_co
           actionResult = { file_path: filePath };
         } else if (action === 'quote_get') {
           actionResult = await getQuote({});
-        } else if (action === 'get_ohlcv' && apiPath) {
+        } else if (action === 'get_ohlcv') {
           const limit = Math.min(ohlcv_count || 100, 500);
-          actionResult = await evaluateAsync(`
-            new Promise(function(resolve, reject) {
-              ${apiPath}.exportData({ includeTime: true, includeSeries: true, includeStudies: false })
-                .then(function(result) {
-                  var bars = (result.data || []).slice(-${limit});
-                  resolve({ bar_count: bars.length, last_bar: bars[bars.length - 1] || null });
-                }).catch(reject);
-            })
-          `);
+          actionResult = await getOhlcv({ count: limit });
         } else if (action === 'get_strategy_results') {
           await new Promise(r => setTimeout(r, 1000));
           actionResult = await evaluate(`
