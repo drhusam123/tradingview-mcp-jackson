@@ -19,7 +19,7 @@
 import { setSymbol, setTimeframe } from '../src/core/chart.js';
 import { getOhlcv }                from '../src/core/data.js';
 import { getDB, saveOHLCVTimeframe,
-         getTimeframeCoverage, EGX_UNIVERSE } from '../src/egx/index.js';
+         getTimeframeCoverage, EGX_UNIVERSE, EGX_UNIVERSE_CORE } from '../src/egx/index.js';
 import { waitForChartReady }       from '../src/wait.js';
 import { toTvSymbol }              from '../src/egx/tv_symbols.js';
 
@@ -27,22 +27,22 @@ const args     = process.argv.slice(2);
 const DO_60    = !args.includes('--15only');
 const DO_15    = !args.includes('--60only');
 const RESUME   = args.includes('--resume');
+const CORE_ONLY = args.includes('--core-only');
 const SINGLE   = (() => { const i = args.indexOf('--symbol'); return i >= 0 ? args[i+1] : null; })();
 const DELAY_MS = process.env.DELAY_MS ? +process.env.DELAY_MS : 2000;
 const MAX_BARS = 500;
 
-// Prioritize liquid symbols first (intraday matters more for them)
-const LIQUID_FIRST = [
-  'COMI', 'EGIE', 'EAST', 'HRHO', 'SWDY', 'MNHD', 'PHDC', 'OTMT',
-  'CLHO', 'EGTS', 'ABUK', 'ATQA', 'ESRS', 'MFPC', 'AFDI', 'EKHW',
-  'ORWE', 'NASR', 'HELI', 'PHAR', 'MPCI', 'ADCI', 'EGCH', 'BIDI',
-];
+// Core liquid symbols — must exist in EGX_UNIVERSE (delisted symbols removed)
+const LIQUID_FIRST = EGX_UNIVERSE_CORE.filter(s => EGX_UNIVERSE.includes(s));
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 function bar(pct, w=26) { const f=Math.round(pct/100*w); return '[' + '█'.repeat(f) + '░'.repeat(w-f) + ']'; }
 
-const ALL_RAW = SINGLE ? [SINGLE] : [...new Set(EGX_UNIVERSE)];
-// Sort: liquid first, then rest
+const ALL_RAW = SINGLE
+  ? [SINGLE]
+  : CORE_ONLY
+    ? [...new Set(LIQUID_FIRST)]
+    : [...new Set(EGX_UNIVERSE)];
 const ALL_SYMBOLS = [
   ...LIQUID_FIRST.filter(s => ALL_RAW.includes(s)),
   ...ALL_RAW.filter(s => !LIQUID_FIRST.includes(s)),

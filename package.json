@@ -58,6 +58,7 @@
     "egx:data:audit": "node scripts/egx_data_layer_audit.mjs",
     "egx:ohlcv:daily": "node scripts/daily_update.mjs",
     "egx:parquet:export": "python3 scripts/python/duckdb_layer.py --force",
+    "egx:intraday:fetch": "node scripts/fetch_egx_intraday.mjs --core-only --resume",
     "egx:purge:test-fixtures": "node scripts/purge_test_fixtures.mjs",
     "egx:manual:finish": "bash scripts/manual_finish.sh all",
     "egx:discovery:hydrate": "python3 scripts/python/discovery_data_hydrate.py",

@@ -6,10 +6,11 @@ export const LAYER_GRAPH = [
   {
     id: 'L0',
     name: 'Market data',
-    anchors: ['ohlcv_history', 'stock_universe'],
+    anchors: ['ohlcv_history', 'stock_universe', 'ohlcv_60min', 'ohlcv_15min'],
     upstream: [],
     downstream: ['L1', 'L2', 'L3'],
-    producers: ['egx_tv_auto_update', 'daily_update.mjs', 'tv_universe_sync.mjs', 'tv_data_reconcile.mjs'],
+    producers: ['egx_tv_auto_update', 'daily_update.mjs', 'tv_universe_sync.mjs', 'tv_data_reconcile.mjs', 'fetch_egx_intraday.mjs'],
+    optionalAnchors: ['ohlcv_60min', 'ohlcv_15min'],
   },
   {
     id: 'L1',

@@ -51,6 +51,7 @@ const LAUNCH = has('--launch');
 const NOTIFY = has('--notify');
 const LIVE_ALERTS = has('--live-alerts');
 const DEEP = has('--deep');
+const INTRADAY = has('--intraday') || DEEP;
 const PINE = has('--pine') || (LAUNCH && !has('--no-pine'));
 const DRAWINGS = has('--drawings');
 const TECH = has('--tech') || (LAUNCH && !has('--no-tech'));
@@ -284,6 +285,13 @@ async function main() {
   if (DEEP && tvReady) {
     run('node scripts/fetch_egx_deep_history.mjs --weekly', 'Weekly OHLCV sync');
     run('node scripts/fetch_egx_deep_history.mjs --monthly', 'Monthly OHLCV sync');
+  }
+
+  if (INTRADAY && tvReady) {
+    run('node scripts/fetch_egx_intraday.mjs --core-only --resume', 'Intraday 60/15min (core universe)', {
+      critical: false,
+      timeoutMs: 1000 * 60 * 90,
+    });
   }
 
   if (tvReady) {

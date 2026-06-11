@@ -58,7 +58,14 @@ function runAudit() {
   ok('l1_indicators_cache', icN > 1000 && icTest === 0,
     `${icN} rows | latest=${icLatest ?? 'none'} test_rows=${icTest}`);
 
+  const intra60 = db.prepare('SELECT COUNT(*) n, COUNT(DISTINCT symbol) sym FROM ohlcv_60min').get();
+  const intra15 = db.prepare('SELECT COUNT(*) n, COUNT(DISTINCT symbol) sym FROM ohlcv_15min').get();
   db.close();
+
+  ok('l0_intraday_60min', (intra60?.n ?? 0) > 0 || (intra60?.sym ?? 0) === 0,
+    `bars=${intra60?.n ?? 0} symbols=${intra60?.sym ?? 0} (optional — run egx:intraday:fetch)`);
+  ok('l0_intraday_15min', (intra15?.n ?? 0) > 0 || (intra15?.sym ?? 0) === 0,
+    `bars=${intra15?.n ?? 0} symbols=${intra15?.sym ?? 0}`);
 
   if (signalDate) {
     const cacheGate = checkIndicatorCacheCoverage(signalDate);

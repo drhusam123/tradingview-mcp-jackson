@@ -51,8 +51,11 @@ function runAudit() {
       const s = tableStats(db, t);
       anchorStats.push({ table: t, ...s });
     }
-    const withData = anchorStats.filter(a => a.has_data);
-    const minRequired = layer.optional ? 0 : Math.ceil(layer.anchors.length / 2);
+    const optionalSet = new Set(layer.optionalAnchors || []);
+    const requiredAnchors = anchorStats.filter(a => !optionalSet.has(a.table));
+    const optionalAnchors = anchorStats.filter(a => optionalSet.has(a.table));
+    const withData = requiredAnchors.filter(a => a.has_data);
+    const minRequired = layer.optional ? 0 : Math.ceil(requiredAnchors.length / 2) || 1;
     const ok = layer.optional
       ? anchorStats.some(a => a.exists)
       : withData.length >= minRequired;
