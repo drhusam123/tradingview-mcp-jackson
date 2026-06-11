@@ -12,6 +12,7 @@
 import Database from 'better-sqlite3';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { latestFinalSignalDate } from './lib/final_signals_query.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DB = join(__dirname, '../data/egx_trading.db');
@@ -23,7 +24,7 @@ function section(title) {
 }
 
 const db = new Database(DB, { readonly: true });
-const tradeDate = dateArg || db.prepare('SELECT MAX(trade_date) d FROM final_signals').get()?.d;
+const tradeDate = dateArg || latestFinalSignalDate(db);
 
 if (!tradeDate) {
   console.error('No final_signals data');

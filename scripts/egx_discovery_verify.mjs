@@ -58,6 +58,10 @@ const requiredFiles = [
   'scripts/python/discovery_backtest_gate.py',
   'scripts/python/discovery_domain_miners.py',
   'scripts/python/discovery_manifest_loader.py',
+  'scripts/lib/architecture_layers.mjs',
+  'scripts/egx_architecture_audit.mjs',
+  'scripts/lib/final_signals_query.mjs',
+  'scripts/python/discovery_constants.py',
 ];
 
 for (const f of requiredFiles) {
@@ -212,6 +216,24 @@ if (existsSync(DB_PATH) && signalDate) {
   const manifest = readJson('data/discovery_ml_manifest.json');
   ok('manifest_priority_atoms', (manifest?.priority_atoms?.length ?? 0) >= 0,
     `${manifest?.priority_atoms?.length ?? 0} priority`);
+}
+
+let archReport = readJson('data/architecture_audit_last.json');
+const archAge = ageHours('data/architecture_audit_last.json');
+if (!archReport || archReport.pass !== true || archAge == null || archAge > 24) {
+  try {
+    execSync('node scripts/egx_architecture_audit.mjs', {
+      cwd: PROJECT_ROOT, stdio: 'pipe', timeout: 60_000,
+    });
+    archReport = readJson('data/architecture_audit_last.json');
+  } catch (e) {
+    ok('architecture_layers', false, `audit failed: ${String(e.message || e).slice(0, 120)}`);
+    archReport = null;
+  }
+}
+if (archReport) {
+  ok('architecture_layers', archReport.pass === true,
+    `${archReport.layers_ok ?? '?'}/${archReport.layers_total ?? '?'} layers | failed=${(archReport.failed ?? []).join(',') || 'none'}`);
 }
 
 const nFail = checks.filter(c => !c.ok).length;

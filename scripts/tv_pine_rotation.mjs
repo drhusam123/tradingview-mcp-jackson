@@ -7,6 +7,7 @@ import { execSync } from 'child_process';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { getDB } from '../src/egx/index.js';
+import { FINAL_SIGNALS_MAX_DATE_SUBQUERY } from './lib/final_signals_query.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -15,7 +16,7 @@ const PER_DAY = 80;
 function pickRotationSymbols(db) {
   const actionable = db.prepare(`
     SELECT symbol FROM final_signals
-    WHERE trade_date = (SELECT MAX(trade_date) FROM final_signals)
+    WHERE trade_date = ${FINAL_SIGNALS_MAX_DATE_SUBQUERY}
       AND actionable = 1
     ORDER BY score DESC LIMIT 20
   `).all().map(r => r.symbol);

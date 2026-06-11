@@ -13,6 +13,16 @@ export function latestFinalSignalDate(db) {
   ).get()?.d ?? null;
 }
 
+export function latestActionableSignalDate(db) {
+  return db.prepare(
+    `SELECT MAX(trade_date) AS d FROM final_signals
+     WHERE actionable=1 AND ${FINAL_SIGNALS_DATE_WHERE}`,
+  ).get()?.d ?? null;
+}
+
+export const FINAL_SIGNALS_MAX_DATE_SUBQUERY =
+  `(SELECT MAX(trade_date) FROM final_signals WHERE ${FINAL_SIGNALS_DATE_WHERE})`;
+
 export function finalActionableCountForDate(reportDate, dbPath = DB_PATH) {
   if (!existsSync(dbPath) || !reportDate) return 0;
   if (String(reportDate).startsWith('2099-')) return 0;

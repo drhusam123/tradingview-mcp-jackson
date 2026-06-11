@@ -60,7 +60,7 @@ function dbStats() {
     ohlcv: q("SELECT COUNT(DISTINCT symbol) sym, MAX(date) latest FROM ohlcv"),
     scans: q('SELECT COUNT(*) n, MAX(scan_date) latest FROM scans'),
     explosion: q('SELECT MAX(pred_date) latest, ROUND(AVG(prob_pct),1) avg_ml FROM explosion_predictions WHERE pred_date=(SELECT MAX(pred_date) FROM explosion_predictions)'),
-    actionable: q('SELECT COUNT(*) n, MAX(trade_date) latest FROM final_signals WHERE actionable=1'),
+    actionable: q("SELECT COUNT(*) n, MAX(trade_date) latest FROM final_signals WHERE actionable=1 AND trade_date NOT LIKE '2099-%'"),
     quant: q('SELECT COUNT(*) n, MAX(discovered_at) latest FROM quant_discovery_rules'),
     opportunity: q('SELECT COUNT(*) n, MAX(trade_date) latest FROM opportunity_score_v2'),
     mladv_meta: q('SELECT COUNT(*) n, MAX(date) latest FROM meta_label_scores'),

@@ -25,6 +25,9 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 ROOT = Path(__file__).resolve().parents[2]
 DB_PATH = ROOT / "data" / "egx_trading.db"
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from discovery_constants import FINAL_SIGNALS_PROD_WHERE  # noqa: E402
+
 # TRADING_LESSONS v3 historical quality symbols
 QUALITY_SYMBOLS_V3 = frozenset({
     "MOSC", "UTOP", "TORA", "ADRI", "AMES", "KWIN", "SNFI",
@@ -194,7 +197,9 @@ def latest_rows(db: sqlite3.Connection, table: str, date_col: str, key_col: str 
 def latest_final_signals(db: sqlite3.Connection) -> Dict[str, sqlite3.Row]:
     if not table_exists(db, "final_signals"):
         return {}
-    d = db.execute("SELECT MAX(trade_date) AS d FROM final_signals").fetchone()["d"]
+    d = db.execute(
+        f"SELECT MAX(trade_date) AS d FROM final_signals WHERE {FINAL_SIGNALS_PROD_WHERE}"
+    ).fetchone()["d"]
     if not d:
         return {}
     rows = db.execute("SELECT * FROM final_signals WHERE trade_date=?", (d,)).fetchall()

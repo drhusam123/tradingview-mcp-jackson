@@ -163,6 +163,9 @@ export function resolveClosedLoopDirectives({
   oppFollowup = null,
   discoveryQuality = null,
   discoveryRefresh = true,
+  hypothesisOk = false,
+  featureExpansionOk = false,
+  p6ContextOk = false,
 } = {}) {
   const targets = [];
   const notes = [];
@@ -171,9 +174,9 @@ export function resolveClosedLoopDirectives({
     targets.push('counterfactual_wr_lift');
     notes.push(`runtime overlay: ${runtime.applied_laws.length} laws`);
   }
-  if (learning?.counterfactual?.boost_atoms?.length) {
-    targets.push('opp_missed_high', 'opp_missed_trend');
-    notes.push('counterfactual atoms merged into discovery manifest');
+  if (learning?.counterfactual?.boost_atoms?.length || learning?.counterfactual?.projected_wr) {
+    targets.push('opp_missed_high', 'opp_missed_trend', 'counterfactual_win_collateral');
+    notes.push('counterfactual atoms/WR consumed in closed loop');
   }
   if (discoveryRefresh) {
     targets.push(
@@ -189,6 +192,21 @@ export function resolveClosedLoopDirectives({
   if (discoveryQuality?.grade && discoveryQuality.discovery_quality_score >= 70) {
     targets.push('discovery_quality_low');
     notes.push(`discovery quality ${discoveryQuality.discovery_quality_score}% (${discoveryQuality.grade})`);
+  }
+  if (hypothesisOk) {
+    targets.push('hypothesis_candidates');
+    notes.push('hypothesis sandbox bridge merged into discovery feedback');
+  }
+  if (featureExpansionOk || runtime?.applied_laws?.length) {
+    targets.push('universal_laws_p16');
+    notes.push('structural/runtime laws merged in closed loop');
+  }
+  if (p6ContextOk || learning?.proof_loop || learning?.directives?.length) {
+    targets.push('p6_wr_below_gate', 'p6_sample_gap');
+    notes.push('P6 research context + proof loop consumed');
+  }
+  if (discoveryRefresh) {
+    targets.push('test_directive_ci');
   }
   for (const d of discoveryQuality?.directives || []) {
     if (d.id) targets.push(d.id);

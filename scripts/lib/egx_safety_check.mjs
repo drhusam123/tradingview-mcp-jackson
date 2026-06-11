@@ -474,7 +474,7 @@ export function runEgxSafetyCheck(signalDate, opts = {}) {
   );
   const veto = opts.veto ?? process.env.EGX_SAFETY_VETO !== '0';
 
-  const act = countActionable(signalDate);
+  const act = countActionable(signalDate, { allowTestDates: opts.allowTestDates === true });
   const global = {};
 
   let openCount = 0;

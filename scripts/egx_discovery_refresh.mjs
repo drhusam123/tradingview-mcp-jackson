@@ -2,6 +2,10 @@
 /**
  * Discovery refresh — opp map + score + promotion (no full DMIDS).
  * Runs after closed loop or post-session to apply P6-tuned discovery.
+ *
+ * Layer pipeline (see scripts/lib/architecture_layers.mjs REFRESH_PIPELINE):
+ * L2 tv_micro → L8 counterfactual → L11 fabric → L4 ml_align → L7 opp_v2
+ * → L5 score_all → L6 arbitration → L5 promotion → L7 quality
  */
 import { execFileSync } from 'child_process';
 const NODE = process.execPath;

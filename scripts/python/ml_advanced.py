@@ -622,7 +622,10 @@ def cmd_shadow_update(date=None):
         out(res)
         return res
     if date is None:
-        date = conn.execute("SELECT MAX(trade_date) d FROM final_signals").fetchone()['d']
+        from discovery_constants import FINAL_SIGNALS_PROD_WHERE
+        date = conn.execute(
+            f"SELECT MAX(trade_date) d FROM final_signals WHERE {FINAL_SIGNALS_PROD_WHERE}"
+        ).fetchone()['d']
     n = _shadow_update_one(conn, date)
     conn.commit()
     res = {'cmd': 'shadow_update', 'date': date, 'n_inserted': n}

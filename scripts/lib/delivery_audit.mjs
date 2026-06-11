@@ -6,6 +6,7 @@ import Database from 'better-sqlite3';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { FINAL_SIGNALS_DATE_WHERE, latestActionableSignalDate } from './final_signals_query.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '../..');
@@ -154,14 +155,18 @@ export function getUpstreamDates() {
   return { scan: maxScan, ml_pred: maxPred, meta: maxMeta, ohlcv: maxOhlcv };
 }
 
-export function countActionable(signalDate) {
+export function countActionable(signalDate, { allowTestDates = false } = {}) {
   if (!existsSync(DB_PATH)) return { db: 0, deliverable: 0, symbols: [], rows: [] };
+  const isTestDate = String(signalDate).startsWith('2099-');
+  if (isTestDate && !allowTestDates) return { db: 0, deliverable: 0, symbols: [], rows: [] };
   normalizeDeliverableSignals(signalDate);
   const d = new Database(DB_PATH, { readonly: true });
+  const dateFilter = allowTestDates && isTestDate ? '1=1' : FINAL_SIGNALS_DATE_WHERE;
   const rows = d.prepare(`
     SELECT symbol, source_breakdown, entry_price, stop_loss, t1_target, t2_target, score, confidence
     FROM final_signals
     WHERE trade_date=? AND actionable=1 AND veto_reason IS NULL
+      AND ${dateFilter}
   `).all(signalDate);
   d.close();
   const symbols = [];
@@ -215,22 +220,23 @@ export function latestOhlcvDate() {
   return getUpstreamDates().ohlcv;
 }
 
-/** Latest date where OHLCV + scans + ML are all ready (avoids partial-session upstream_not_ready). */
+/** Latest date where OHLCV + scans + ML + meta are all ready (avoids partial-session upstream_not_ready). */
 export function latestReadySignalDate() {
-  const { ohlcv, scan, ml_pred } = getUpstreamDates();
+  const { ohlcv, scan, ml_pred, meta } = getUpstreamDates();
   if (!ohlcv) return null;
   let date = ohlcv;
   if (scan && scan < date) date = scan;
   if (ml_pred && ml_pred < date) date = ml_pred;
+  if (meta && meta < date) date = meta;
   return date;
 }
 
 export function latestSignalDate() {
   if (!existsSync(DB_PATH)) return null;
   const d = new Database(DB_PATH, { readonly: true });
-  const row = d.prepare('SELECT MAX(trade_date) AS d FROM final_signals WHERE actionable=1').get();
+  const row = latestActionableSignalDate(d);
   d.close();
-  return row?.d ?? null;
+  return row ?? null;
 }
 
 export function wasAlreadySent(signalDate) {

@@ -9,6 +9,15 @@
 | `drhusam` | **ريبوك أنت** — `drhusam123/tradingview-mcp-jackson` ← ادفع هنا |
 | `origin` | ريبو قديم/أصلي (`LewisWJackson/...`) — **لست مالكه، تجاهله** |
 
+## أوامر التحقق قبل الـ push
+
+```bash
+npm test
+npm run egx:architecture:audit
+npm run egx:discovery:verify
+npm run egx:loop:audit
+```
+
 ## Push (جاهز للصق)
 
 ```bash

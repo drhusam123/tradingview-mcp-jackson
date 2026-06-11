@@ -147,7 +147,7 @@ stage('discovery_fabric', () => {
   }
 });
 
-stage('hypothesis_sandbox_bridge', () => {
+const hypothesisBridge = stage('hypothesis_sandbox_bridge', () => {
   try {
     const out = execSync(`"${PYTHON3}" scripts/python/hypothesis_sandbox_bridge.py '{}'`, {
       cwd: PROJECT_ROOT,
@@ -155,7 +155,7 @@ stage('hypothesis_sandbox_bridge', () => {
       timeout: 120_000,
     });
     const parsed = JSON.parse(out.trim());
-    return { n_promoted: parsed.n_promoted ?? 0 };
+    return { ok: true, n_promoted: parsed.n_promoted ?? 0 };
   } catch (e) {
     return { ok: false, skipped: true, error: e.message?.slice(0, 120) };
   }
@@ -176,6 +176,9 @@ const resolved = stage('directive_resolve', () => resolveClosedLoopDirectives({
   oppFollowup,
   discoveryQuality,
   discoveryRefresh: true,
+  hypothesisOk: hypothesisBridge?.ok !== false,
+  featureExpansionOk: Boolean(runtime?.applied_laws?.length),
+  p6ContextOk: false,
 }));
 const p6Context = stage('p6_research_context', () => {
   const ctx = buildP6ResearchContext({

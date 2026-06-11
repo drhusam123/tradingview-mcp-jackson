@@ -91,6 +91,13 @@ if (!SKIP_AUTOMATE) {
   });
 }
 
+run('architecture_audit', () => {
+  execSync(`${NODE} scripts/egx_architecture_audit.mjs`, {
+    cwd: PROJECT_ROOT, stdio: 'inherit', timeout: 60_000,
+  });
+  return { ok: true };
+});
+
 run('production_acceptance', () => {
   execSync(`${NODE} scripts/egx_production_acceptance.mjs`, {
     cwd: PROJECT_ROOT, stdio: 'inherit', timeout: 120_000,

@@ -5,6 +5,7 @@
 import { getDB } from '../src/egx/index.js';
 import { callMCPTool } from '../src/egx/tv_bridge.js';
 import { toTvSymbol } from '../src/egx/tv_symbols.js';
+import { latestFinalSignalDate } from './lib/final_signals_query.mjs';
 
 const args = process.argv.slice(2);
 const getArg = (name, fallback = null) => {
@@ -15,7 +16,7 @@ const limit = Number(getArg('--limit', '8'));
 const dateArg = getArg('--date', null);
 
 function latestSignalDate(db) {
-  return db.prepare('SELECT MAX(trade_date) AS d FROM final_signals').get()?.d;
+  return latestFinalSignalDate(db);
 }
 
 function actionable(db, date) {

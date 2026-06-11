@@ -268,8 +268,9 @@ def run(params: dict | None = None) -> dict:
     conn = connect()
     trade_date = params.get("date")
     if not trade_date:
+        from discovery_constants import FINAL_SIGNALS_PROD_WHERE
         trade_date = conn.execute(
-            "SELECT MAX(trade_date) FROM final_signals"
+            f"SELECT MAX(trade_date) FROM final_signals WHERE {FINAL_SIGNALS_PROD_WHERE}"
         ).fetchone()[0]
     if not trade_date:
         return {"success": False, "error": "no final_signals rows"}
