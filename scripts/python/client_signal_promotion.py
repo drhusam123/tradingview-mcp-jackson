@@ -245,6 +245,23 @@ def _delivery_safety_block(
     return None
 
 
+def _load_promotion_tuning(params: dict) -> dict:
+    try:
+        from discovery_feedback_loader import load_feedback_queue, load_promotion_tuning
+
+        queue = params.get("feedback_queue") or load_feedback_queue()
+        followup = params.get("opportunity_followup")
+        return load_promotion_tuning(queue, followup)
+    except Exception:
+        return {
+            "min_opportunity": 75.0,
+            "min_ues": 70.0,
+            "min_scan": 58.0,
+            "min_ml": 55.0,
+            "adjustments": [],
+        }
+
+
 def run(params: dict | None = None) -> dict:
     params = params or {}
     conn = connect()
@@ -259,10 +276,11 @@ def run(params: dict | None = None) -> dict:
     if not table_exists(conn, "opportunity_score_v2"):
         return {"success": True, "trade_date": trade_date, "promoted": 0, "reason": "no opportunity table"}
 
-    min_opp = float(params.get("min_opportunity", 75.0))
-    min_ues = float(params.get("min_ues", 70.0))
-    min_scan = float(params.get("min_scan", 58.0))
-    min_ml = float(params.get("min_ml", 55.0))
+    tuning = _load_promotion_tuning(params)
+    min_opp = float(params.get("min_opportunity", tuning["min_opportunity"]))
+    min_ues = float(params.get("min_ues", tuning["min_ues"]))
+    min_scan = float(params.get("min_scan", tuning["min_scan"]))
+    min_ml = float(params.get("min_ml", tuning["min_ml"]))
     allowed_stages = {"ULTRA", "STRONG", "ACCUMULATION"}
 
     rows = conn.execute(
@@ -373,6 +391,13 @@ def run(params: dict | None = None) -> dict:
         "trade_date": trade_date,
         "promoted": len(promoted),
         "symbols": promoted[:20],
+        "promotion_tuning": {
+            "min_opportunity": min_opp,
+            "min_ues": min_ues,
+            "min_scan": min_scan,
+            "min_ml": min_ml,
+            "adjustments": tuning.get("adjustments", []),
+        },
     }
 
 

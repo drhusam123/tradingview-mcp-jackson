@@ -28,6 +28,7 @@ import { runOpportunityQualityLoop } from './lib/opportunity_quality_loop.mjs';
 import { buildDiscoveryFeedback } from './lib/discovery_feedback.mjs';
 import { buildP6ResearchContext, writeP6ResearchContext } from './lib/p6_research_context.mjs';
 import { analyzeOpportunityTrend } from './lib/opportunity_followup.mjs';
+import { runDiscoveryQualityLoop } from './lib/discovery_quality_loop.mjs';
 import { resolveClosedLoopDirectives } from './lib/directive_resolver.mjs';
 import { cairoDateParts } from './lib/egx_calendar.mjs';
 
@@ -93,17 +94,23 @@ stage('learning_loop', () => {
 const runtime = stage('runtime_rules_merge', () => mergeRuntimeRules({ learningReport: learning }));
 
 const opportunity = stage('opportunity_quality', () => runOpportunityQualityLoop(signalDate));
+const discoveryQuality = stage('discovery_quality', () => runDiscoveryQualityLoop(signalDate));
 const oppFollowup = stage('opportunity_followup', () => analyzeOpportunityTrend());
 const allDirectives = [
   ...(learning?.directives || []),
   ...(opportunity?.directives || []),
+  ...(discoveryQuality?.directives || []),
   ...(oppFollowup?.directives || []),
 ];
 const ingested = stage('p6_directives_ingest', () => ingestP6Directives(allDirectives));
 const discovery = stage('discovery_feedback', () => buildDiscoveryFeedback({
   forensic,
   autopsy: learning?.loss_autopsy,
-  opportunity,
+  opportunity: {
+    ...opportunity,
+    discovery_quality_score: discoveryQuality?.discovery_quality_score,
+    discovery_grade: discoveryQuality?.grade,
+  },
 }));
 const resolved = stage('directive_resolve', () => resolveClosedLoopDirectives({
   learning,
@@ -117,6 +124,7 @@ const p6Context = stage('p6_research_context', () => {
     forensic,
     discovery,
     opportunity,
+    discoveryQuality,
     oppFollowup,
     ingested,
   });
@@ -143,6 +151,7 @@ const report = {
   runtime_rules: { applied: runtime?.applied_laws?.length ?? 0, at: runtime?.at },
   directives_ingested: ingested?.ingested ?? 0,
   opportunity_quality: opportunity,
+  discovery_quality: discoveryQuality,
   discovery_feedback: discovery?.n_items ?? 0,
   opportunity_followup: oppFollowup,
   p6_research_context: p6Context,
@@ -156,6 +165,8 @@ const report = {
     'forensic/autopsy → discovery_feedback → quant_discovery + score_all',
     'telegram_cron → syncDeliveredOutcomes after live send',
     'opportunity_quality → opportunity_quality_history.json',
+    'discovery_quality_gate → discovery_quality_history.json',
+    'discovery_quality_low → DISCOVERY_QUALITY_LOW feedback → tighter quant gates',
     'opportunity_history → opportunity_followup → directives',
     'closed_loop → p6_research_context.json → evolution + cognition',
     'directives PENDING → engines → COMPLETED (directive_resolver)',

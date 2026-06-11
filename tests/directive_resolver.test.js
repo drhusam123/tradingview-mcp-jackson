@@ -6,6 +6,7 @@ import {
   countDirectiveStats,
   resolveEvolutionDirectives,
   resolveClosedLoopDirectives,
+  resolveDiscoveryDirectives,
 } from '../scripts/lib/directive_resolver.mjs';
 import { DB_PATH } from '../scripts/lib/delivery_audit.mjs';
 
@@ -35,6 +36,19 @@ describe('directive resolver', () => {
     const r = resolveClosedLoopDirectives({
       learning: { counterfactual: { wr_delta: 5 } },
       runtime: { applied_laws: [{ id: 'x' }] },
+    });
+    assert.equal(r.ok, true);
+  });
+
+  it('resolveDiscoveryDirectives uses opp followup alert mapping', () => {
+    const r = resolveDiscoveryDirectives({
+      quantOk: true,
+      oppOk: true,
+      oppFollowup: {
+        alerts: [{ code: 'MISSED_HIGH_OPP_RISING' }],
+        directives: [{ id: 'opp_missed_trend' }],
+      },
+      feedback: { queue: [{ type: 'PROMOTION_GAP', target: 'client_signal_promotion' }] },
     });
     assert.equal(r.ok, true);
   });

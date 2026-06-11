@@ -16,8 +16,10 @@ import { writeFileSync, readFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { execFileSync } from 'child_process';
-import { loadDiscoveryFeedback, readPendingResearchDirectives } from './lib/load_discovery_feedback.mjs';
+import { buildDiscoveryParams, discoveryContextSummary } from './lib/discovery_context.mjs';
 import { resolveDiscoveryDirectives } from './lib/directive_resolver.mjs';
+import { mergeStructuralLawsIntoRuntime } from './lib/structural_laws_bridge.mjs';
+import { runDiscoveryQualityLoop } from './lib/discovery_quality_loop.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DATA_DIR  = join(__dirname, '../data');
@@ -27,6 +29,8 @@ const OPP_SCRIPT   = join(__dirname, 'python', 'opportunity_score_v2.py');
 
 const NOTIFY = process.argv.includes('--notify');
 const QUICK  = process.argv.includes('--quick');
+const RESCORE = process.argv.includes('--rescore');
+const PYTHON3 = process.env.PYTHON_BIN || process.env.PYTHON3 || 'python3';
 
 const wl  = (s='') => process.stdout.write(s+'\n');
 const sep = (n=65)  => wl('═'.repeat(n));
@@ -53,21 +57,16 @@ if (result.error) {
   process.exit(1);
 }
 
-const feedback = loadDiscoveryFeedback();
-const p6Directives = readPendingResearchDirectives(8);
-let oppFollowup = null;
-try {
-  const oppPath = join(DATA_DIR, 'opportunity_followup_last.json');
-  if (existsSync(oppPath)) oppFollowup = JSON.parse(readFileSync(oppPath, 'utf8'));
-} catch { /* optional */ }
+const discoveryCtx = buildDiscoveryParams({ includeDirectives: true });
+const { feedback, p6, oppFollowup, directives: p6Directives, params: discoveryParams } = discoveryCtx;
+const ctxSummary = discoveryContextSummary(discoveryCtx);
+wl(`  🔁 Discovery context: feedback=${ctxSummary.feedback_items} | p6=${ctxSummary.p6_signal_date || 'n/a'} | directives=${ctxSummary.pending_directives} | opp_alerts=${ctxSummary.opp_alerts}`);
 if (feedback.n_items) {
-  wl(`  🔁 P6 feedback: ${feedback.n_items} items (closed loop → discovery)`);
   feedback.queue.slice(0, 4).forEach(item => {
     wl(`     • [${item.type}] ${item.target} — ${item.rationale}`);
   });
 }
 if (p6Directives.length) {
-  wl(`  📋 Pending research_directives: ${p6Directives.length}`);
   p6Directives.slice(0, 3).forEach(d => {
     wl(`     • ${d.target} (p=${d.priority})`);
   });
@@ -75,16 +74,16 @@ if (p6Directives.length) {
 if (oppFollowup?.alerts?.length) {
   wl(`  📈 Opp followup: ${oppFollowup.alerts.length} alert(s) — ${oppFollowup.alerts[0].code}`);
 }
+if (p6?.p6_gate && !p6.p6_gate.gate_pass) {
+  wl(`  🎯 P6 gate: ${p6.p6_gate.n_completed}/${p6.p6_gate.min_n} @ ${p6.p6_gate.win_rate}% WR — quant prioritizes counterfactual atoms`);
+}
 
 let quant = null;
 if (!QUICK) {
   wl('  🧪 Quant discovery — mining OOS entry rules...');
-  const quantParams = JSON.stringify({
-    feedback_queue: feedback.queue,
-    p6_directives: p6Directives.map(d => d.target),
-  });
+  const quantParams = JSON.stringify(discoveryParams);
   try {
-    quant = JSON.parse(execFileSync('python3', [QUANT_SCRIPT, 'run', quantParams], {
+    quant = JSON.parse(execFileSync(PYTHON3, [QUANT_SCRIPT, 'run', quantParams], {
       cwd: join(__dirname, '..'),
       encoding: 'utf8',
       timeout: 1000 * 60 * 20,
@@ -106,7 +105,8 @@ if (!QUICK) {
 let opportunity = null;
 wl('  🎯 Opportunity v2 — ranking market/sector/liquidity discovery map...');
 try {
-  opportunity = JSON.parse(execFileSync('python3', [OPP_SCRIPT, 'run'], {
+  const oppParams = JSON.stringify(discoveryParams);
+  opportunity = JSON.parse(execFileSync(PYTHON3, [OPP_SCRIPT, 'run', oppParams], {
     cwd: join(__dirname, '..'),
     encoding: 'utf8',
     timeout: 1000 * 60 * 10,
@@ -138,9 +138,57 @@ if (!QUICK) {
 }
 wl(`  📄 Report: ${rr.report_file || '?'}`);
 
+let structural = null;
+if (!QUICK && (ku.laws_generated || 0) > 0) {
+  try {
+    structural = mergeStructuralLawsIntoRuntime({ minSupportPct: 30 });
+    if (structural?.n_merged) {
+      wl(`  ⚖️  Structural laws → runtime overlay: ${structural.n_merged} UP laws merged`);
+    }
+  } catch (e) {
+    wl(`  ⚠️ Structural laws bridge: ${e.message}`);
+  }
+}
+
+let rescore = null;
+if (RESCORE && opportunity?.success) {
+  wl('  🔄 Rescore — opportunity-aware score_all after weekly discovery...');
+  try {
+    const scoreScript = join(__dirname, 'python', 'signal_integration.py');
+    const promoScript = join(__dirname, 'python', 'client_signal_promotion.py');
+    const tradeDate = opportunity.trade_date;
+    const scoreParams = JSON.stringify({ date: tradeDate });
+    const promoParams = JSON.stringify({ date: tradeDate, ...discoveryParams });
+    rescore = JSON.parse(execFileSync(PYTHON3, [scoreScript, 'score_all', scoreParams], {
+      cwd: join(__dirname, '..'),
+      encoding: 'utf8',
+      timeout: 1000 * 60 * 15,
+    }));
+    const promo = JSON.parse(execFileSync(PYTHON3, [promoScript, 'run', promoParams], {
+      cwd: join(__dirname, '..'),
+      encoding: 'utf8',
+      timeout: 1000 * 60 * 5,
+    }));
+    wl(`  ✅ Rescore: n_scored=${rescore?.n_scored ?? '?'} | promoted=${promo?.promoted ?? 0}`);
+  } catch (e) {
+    wl(`  ⚠️ Rescore failed: ${e.message}`);
+  }
+}
+
+const discoveryQuality = runDiscoveryQualityLoop(opportunity?.trade_date);
+if (discoveryQuality?.discovery_quality_score != null) {
+  wl(`  📊 Discovery quality: ${discoveryQuality.discovery_quality_score}% (grade ${discoveryQuality.grade})`);
+  if (quant?.discovery_quality?.discovery_quality_score) {
+    wl(`     quant grade: ${quant.discovery_quality.grade} | rules kept: ${quant.rules_kept}`);
+  }
+}
+
 const resolved = resolveDiscoveryDirectives({
   quantOk: !!quant?.success,
   oppOk: !!opportunity?.success,
+  oppFollowup,
+  feedback,
+  structuralOk: !!structural?.n_merged,
 });
 if (resolved.completed) {
   wl(`  📋 Directives:  ${resolved.completed} marked COMPLETED`);
@@ -226,6 +274,11 @@ try {
     discovery_feedback_items: feedback.n_items,
     p6_directives_pending: p6Directives.length,
     quant_feedback_applied: quant?.feedback_applied ?? null,
+    p6_context: ctxSummary,
+    structural_laws_merged: structural?.n_merged ?? null,
+    discovery_quality_score: discoveryQuality?.discovery_quality_score ?? null,
+    discovery_grade: discoveryQuality?.grade ?? null,
+    rescore_n: rescore?.n_scored ?? null,
     elapsed: result.total_elapsed || ((Date.now()-t0)/1000).toFixed(1),
     notified: NOTIFY,
   });

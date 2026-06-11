@@ -335,6 +335,7 @@ def score_symbol(
     memory: Dict[str, sqlite3.Row],
     finals: Dict[str, sqlite3.Row],
     universe_market_ret20: float,
+    opp_tuning: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     if len(rows) < 80 or symbol.startswith("EGX"):
         return None
@@ -376,6 +377,11 @@ def score_symbol(
     liq_base = safe_float(liq_row["liquidity_score"], None) if liq_row else None
     if liq_base is None:
         liq_base = clamp(45 + min(vol_ratio, 4.0) * 12)
+    vol10_vs20 = 1.0
+    if len(rows) >= 21:
+        v20 = avg_volume(rows, 20) or 0.0
+        if v20 > 0:
+            vol10_vs20 = vol10 / v20
     liquidity_expansion_score = clamp(0.45 * liq_base + 0.55 * (
         35 if vol_ratio < 0.55 else
         58 if vol_ratio < 0.95 else
@@ -383,6 +389,11 @@ def score_symbol(
         88 if vol_ratio <= 3.0 else
         70
     ))
+    # TRADING_LESSONS #10 — volume 2.5–3x sweet spot (session vol proxy)
+    if 2.5 <= vol10_vs20 <= 3.2:
+        liquidity_expansion_score = clamp(liquidity_expansion_score + 10)
+    elif vol10_vs20 > 4.5:
+        liquidity_expansion_score = clamp(liquidity_expansion_score - 8)
 
     dry_score = clamp(95 - abs(dry_ratio - 0.42) * 80)
     compression_score = clamp(cons_days * 2.0 + (20 if atr is not None and atr < 0.055 else 0))
@@ -420,6 +431,11 @@ def score_symbol(
         structure_score += 9
     if cp is not None:
         structure_score += (cp - 0.5) * 12
+        # TRADING_LESSONS #8 — lower third close = highest WR zone
+        if cp <= 0.33:
+            structure_score += 8
+        elif cp >= 0.82:
+            structure_score -= 5
     structure_score = clamp(structure_score)
 
     atrv = atr or 0.0
@@ -448,6 +464,11 @@ def score_symbol(
     )
 
     failure_penalty = 0.0
+    high300 = max(closes[-300:]) if len(closes) >= 60 else high60
+    pct_from_ath = (high300 - close) / high300 if high300 > 0 else 1.0
+    # TRADING_LESSONS #1 — near ATH without volume confirmation
+    if pct_from_ath <= 0.03 and vol10_vs20 < 2.5:
+        failure_penalty += 14
     false_rate = safe_float(dna_row["false_breakout_rate_pct"], None) if dna_row else None
     if false_rate is not None:
         failure_penalty += clamp(false_rate - 35, 0, 25)
@@ -461,6 +482,13 @@ def score_symbol(
         if yh and yc and yh >= high60 * 0.99 and yc < yh * 0.94:
             recent_wick_fail = True
             failure_penalty += 8
+    mem_row = memory.get(symbol)
+    bclass = str(mem_row["behavioral_class"] or "").upper() if mem_row else ""
+    if opp_tuning:
+        downrank = {str(x).upper() for x in opp_tuning.get("downrank_classes") or []}
+        if bclass and bclass in downrank:
+            failure_penalty += float(opp_tuning.get("failure_penalty_boost") or 0) * 0.5
+        failure_penalty += float(opp_tuning.get("failure_penalty_boost") or 0) * 0.15
     failure_penalty = clamp(failure_penalty, 0, 35)
 
     final_row = finals.get(symbol)
@@ -499,6 +527,12 @@ def score_symbol(
         flags.append("VOLUME_DRYUP")
     if 1.35 <= vol_ratio <= 3.20:
         flags.append("LIQUIDITY_EXPANSION")
+    if 2.5 <= vol10_vs20 <= 3.2:
+        flags.append("VOL_SWEET_SPOT")
+    if cp is not None and cp <= 0.33:
+        flags.append("LOWER_THIRD_CLOSE")
+    if pct_from_ath <= 0.03 and vol10_vs20 < 2.5:
+        flags.append("NEAR_ATH_LOW_VOL")
     if cons_days >= 25 and (high20 - low20) / high20 <= 0.16:
         flags.append("VCP_PROXY")
     if above50:
@@ -545,6 +579,8 @@ def score_symbol(
         "consolidation_days": cons_days,
         "atr_pct": round(atrv, 4),
         "close_position": round(cp, 3) if cp is not None else None,
+        "vol10_vs20": round(vol10_vs20, 3),
+        "pct_from_ath": round(pct_from_ath, 4),
         "above_ema50": above50,
         "above_ema200": above200,
         "final_score": safe_float(final_row["score"], None) if final_row else None,
@@ -604,7 +640,20 @@ def ensure_table(db: sqlite3.Connection) -> None:
     db.execute("CREATE INDEX IF NOT EXISTS idx_opp_v2_stage ON opportunity_score_v2(stage)")
 
 
-def run() -> Dict[str, Any]:
+def _load_opp_tuning(params: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        from discovery_feedback_loader import load_feedback_queue, load_opportunity_tuning
+
+        queue = params.get("feedback_queue") or load_feedback_queue()
+        followup = params.get("opportunity_followup")
+        return load_opportunity_tuning(queue, followup)
+    except Exception:
+        return {"failure_penalty_boost": 0.0, "downrank_classes": [], "reasons": []}
+
+
+def run(params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    params = params or {}
+    opp_tuning = _load_opp_tuning(params)
     db = connect()
     ensure_table(db)
     by_symbol = load_bars(db)
@@ -626,7 +675,18 @@ def run() -> Dict[str, Any]:
     rows_out = []
     for symbol, rows in by_symbol.items():
         item = score_symbol(
-            symbol, rows, market_score, market_ev, sectors, liq, pine, dna, memory, finals, universe_market_ret20
+            symbol,
+            rows,
+            market_score,
+            market_ev,
+            sectors,
+            liq,
+            pine,
+            dna,
+            memory,
+            finals,
+            universe_market_ret20,
+            opp_tuning=opp_tuning,
         )
         if item:
             rows_out.append(item)
@@ -667,12 +727,32 @@ def run() -> Dict[str, Any]:
         ).fetchall()
     )
     top = rows_out[:15]
+    lower_third_count = sum(
+        1 for r in rows_out if "LOWER_THIRD_CLOSE" in json.loads(r.get("flags_json") or "[]")
+    )
+    vol_sweet_count = sum(
+        1 for r in rows_out if "VOL_SWEET_SPOT" in json.loads(r.get("flags_json") or "[]")
+    )
+    near_ath_risk = sum(
+        1 for r in rows_out if "NEAR_ATH_LOW_VOL" in json.loads(r.get("flags_json") or "[]")
+    )
+    qualified_plus = sum(
+        stage_counts.get(s, 0)
+        for s in ("QUALIFIED_DISCOVERY", "ACTIONABLE_CANDIDATE", "NEAR_BREAKOUT")
+    )
+    avg_opp = mean([r["opportunity_score"] for r in rows_out]) if rows_out else 0.0
     result = {
         "success": True,
         "trade_date": trade_date,
         "symbols_scored": len(rows_out),
         "market_regime_score": round(market_score, 2),
+        "opp_tuning": opp_tuning,
         "stage_counts": stage_counts,
+        "qualified_plus": qualified_plus,
+        "avg_opportunity_score": round(avg_opp, 2),
+        "lower_third_count": lower_third_count,
+        "vol_sweet_spot_count": vol_sweet_count,
+        "near_ath_risk_count": near_ath_risk,
         "top": [
             {
                 "symbol": r["symbol"],
@@ -730,8 +810,14 @@ def status() -> None:
 
 def main() -> None:
     cmd = sys.argv[1] if len(sys.argv) > 1 else "run"
+    params: Dict[str, Any] = {}
+    if len(sys.argv) > 2 and cmd == "run":
+        try:
+            params = json.loads(sys.argv[2])
+        except Exception:
+            params = {}
     if cmd == "run":
-        run()
+        run(params)
     elif cmd == "report":
         limit = int(sys.argv[2]) if len(sys.argv) > 2 else 20
         report(limit)

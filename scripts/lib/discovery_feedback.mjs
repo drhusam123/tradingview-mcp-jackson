@@ -53,6 +53,16 @@ export function buildDiscoveryFeedback({ forensic = null, autopsy = null, opport
     });
   }
 
+  const discoveryQ = opportunity?.discovery_quality || opportunity?.discovery_quality_score;
+  if (discoveryQ != null && discoveryQ < 52) {
+    queue.push({
+      type: 'DISCOVERY_QUALITY_LOW',
+      target: 'quant_discovery',
+      priority: 0.82,
+      rationale: `Discovery quality ${discoveryQ}% — tighten OOS gates and reject toxic atoms`,
+    });
+  }
+
   const report = {
     at: new Date().toISOString(),
     n_items: queue.length,

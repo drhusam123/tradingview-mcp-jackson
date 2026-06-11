@@ -177,13 +177,18 @@ def morning_run(params):
         n_evo_tested = grid_evo.get('n_tested', 0)
         log.append(f"  → evolved re-grid: tested={n_evo_tested}")
 
-    # ══ STEP 7: UES signal scoring — all layers unified (Ph 65) ══
-    log.append("STEP 7: UES scoring — all layers (Ph 62-67 + Ph 70 integrated)...")
-    sig    = _run_script('signal_integration.py', 'score_all', {'date': today})
-    n_sig  = sig.get('n_scored', 0)
-    n_high = sig.get('n_high', 0)
-    n_med  = sig.get('n_medium', sig.get('n_med', 0))
-    log.append(f"  → scored={n_sig} | HIGH={n_high} | MED={n_med}")
+    # ══ STEP 7: UES signal scoring — skipped when daily pipeline will rescore post-scan ══
+    skip_ues = bool(params.get('skip_ues_score'))
+    n_sig = n_high = n_med = 0
+    if skip_ues:
+        log.append("STEP 7: UES scoring deferred — daily pipeline runs score_all after scan_today")
+    else:
+        log.append("STEP 7: UES scoring — all layers (Ph 62-67 + Ph 70 integrated)...")
+        sig    = _run_script('signal_integration.py', 'score_all', {'date': today})
+        n_sig  = sig.get('n_scored', 0)
+        n_high = sig.get('n_high', 0)
+        n_med  = sig.get('n_medium', sig.get('n_med', 0))
+        log.append(f"  → scored={n_sig} | HIGH={n_high} | MED={n_med}")
 
     # ── Summary ─────────────────────────────────────────────
     elapsed = (datetime.now() - t0).total_seconds()

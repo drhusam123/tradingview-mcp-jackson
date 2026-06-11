@@ -9,6 +9,7 @@ import { runCounterfactualSafety } from './counterfactual_safety.mjs';
 import { auditClosedLoops } from './loop_audit.mjs';
 import { countDirectiveStats } from './directive_resolver.mjs';
 import { loadP6ResearchContext } from './p6_research_context.mjs';
+import { existsSync, readFileSync } from 'fs';
 import { cairoDateParts } from './egx_calendar.mjs';
 
 export function buildMonitoringSnapshot() {
@@ -18,6 +19,11 @@ export function buildMonitoringSnapshot() {
   const loopAudit = auditClosedLoops({ maxAgeHours: 168 });
   const directives = countDirectiveStats();
   const p6Ctx = loadP6ResearchContext();
+  let discoveryQuality = null;
+  const dqPath = join(PROJECT_ROOT, 'data/discovery_quality_last.json');
+  if (existsSync(dqPath)) {
+    try { discoveryQuality = JSON.parse(readFileSync(dqPath, 'utf8')); } catch { /* */ }
+  }
 
   return {
     at: new Date().toISOString(),
@@ -52,6 +58,13 @@ export function buildMonitoringSnapshot() {
     downrank_behavioral: p6Ctx?.evolution_hints?.downrank_behavioral ?? [],
     discovery_feedback_items: p6Ctx?.discovery_feedback?.n_items ?? 0,
     opportunity_alerts: p6Ctx?.opportunity_trend?.alerts ?? 0,
+    discovery: {
+      quality_score: discoveryQuality?.discovery_quality_score ?? p6Ctx?.discovery_quality?.score ?? null,
+      grade: discoveryQuality?.grade ?? p6Ctx?.discovery_quality?.grade ?? null,
+      quant_avg_quality: discoveryQuality?.quant?.avg_quality ?? null,
+      sweet_spot_rules: discoveryQuality?.quant?.sweet_spot_rules ?? null,
+      near_ath_risk: discoveryQuality?.opportunity?.near_ath_risk_count ?? null,
+    },
   };
 }
 

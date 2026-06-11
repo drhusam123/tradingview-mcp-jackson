@@ -51,4 +51,11 @@ describe('closed loop connectors', () => {
     assert.ok(r.n_items >= 1);
     assert.ok(Array.isArray(r.queue));
   });
+
+  it('buildDiscoveryFeedback flags low discovery quality', () => {
+    const r = buildDiscoveryFeedback({
+      opportunity: { discovery_quality_score: 45, missed_high_opportunity: [] },
+    });
+    assert.ok(r.queue.some(q => q.type === 'DISCOVERY_QUALITY_LOW'));
+  });
 });

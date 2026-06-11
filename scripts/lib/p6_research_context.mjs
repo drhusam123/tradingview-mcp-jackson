@@ -61,6 +61,7 @@ export function buildP6ResearchContext({
   forensic = null,
   discovery = null,
   opportunity = null,
+  discoveryQuality = null,
   oppFollowup = null,
   ingested = null,
 } = {}) {
@@ -112,6 +113,15 @@ export function buildP6ResearchContext({
       n_delivered: opportunity.n_delivered,
       n_top_opportunity: opportunity.n_top_opportunity,
       missed_high_opportunity: opportunity.missed_high_opportunity?.length ?? 0,
+      discovery_quality_score: opportunity.discovery_quality_score ?? discoveryQuality?.discovery_quality_score,
+    } : null,
+    discovery_quality: discoveryQuality ? {
+      score: discoveryQuality.discovery_quality_score,
+      grade: discoveryQuality.grade,
+      quant_avg_quality: discoveryQuality.quant?.avg_quality ?? null,
+      sweet_spot_rules: discoveryQuality.quant?.sweet_spot_rules ?? null,
+      opp_qualified_pct: discoveryQuality.components?.opp_qualified_pct ?? null,
+      near_ath_risk: discoveryQuality.opportunity?.near_ath_risk_count ?? null,
     } : null,
     opportunity_trend: oppFollowup ? {
       alerts: oppFollowup.alerts?.length ?? 0,

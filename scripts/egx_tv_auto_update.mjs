@@ -20,6 +20,7 @@ import { alertNotification } from './lib/notification_alert.mjs';
 import { enforceDailyQualityGate } from './lib/data_quality_gate.mjs';
 import { writeProofLoopSnapshot } from './lib/proof_loop.mjs';
 import { checkIndicatorCacheCoverage } from './lib/indicator_cache_gate.mjs';
+import { buildDiscoveryParams } from './lib/discovery_context.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -343,8 +344,12 @@ async function main() {
     run('node scripts/fetch_pine_analytics.mjs all --local-only --all-symbols', 'Pine analytics local backfill (pre-scan)');
   }
   run(`node scripts/scan_today.mjs --db-only --cache-only --top 60 --date ${signalDate}`, 'Fresh daily setup scan', { critical: true });
-  run(`${PYTHON3} scripts/python/research_director.py morning_run '{}'`, 'Research director (quant kill/evolve)', { critical: false });
-  run(`${PYTHON3} scripts/python/quant_discovery.py run '{}'`, 'Quant discovery OOS rule refresh', { critical: true });
+  const directorParams = JSON.stringify({ date: signalDate, skip_ues_score: true });
+  run(
+    `${PYTHON3} scripts/python/research_director.py morning_run '${directorParams}'`,
+    'Research director (quant kill/evolve — feedback-aware, no duplicate quant)',
+    { critical: false },
+  );
 
   if (TECH) {
     run('node scripts/fetch_technical_indicators.mjs --max-symbols 30 --local-only', 'Fetch technical indicators', {
@@ -363,18 +368,29 @@ async function main() {
   run(`${PYTHON3} scripts/python/macro_edge_validator.py`, 'Macro edge purged validation');
   run('node scripts/tv_macro_reconcile.mjs', 'TradingView macro and cross-market reconcile gate');
   run(`${PYTHON3} scripts/python/ml_advanced.py daily ${signalDate}`, 'ML-Advanced daily (meta/MoE/analogs/conformal/survival/leadlag/drift)');
+  const discoveryCtx = buildDiscoveryParams({ signalDate });
   const scoreParams = JSON.stringify({ date: signalDate });
+  const discoveryParamsJson = JSON.stringify(discoveryCtx.params);
+  const promotionParams = JSON.stringify({ date: signalDate, ...discoveryCtx.params });
   run(`${PYTHON3} scripts/python/signal_integration.py score_all '${scoreParams}'`, 'Final signal scoring', { critical: true });
   run(`${PYTHON3} scripts/python/cognitive_arbitration.py arbitrate_all '{}'`, 'Cognitive arbitration (Phase 34)');
   run(`${PYTHON3} scripts/python/signal_integration.py apply_arbitration_veto '${scoreParams}'`, 'Apply arbitration veto to final_signals');
+  run(
+    `${PYTHON3} scripts/python/opportunity_score_v2.py run '${discoveryParamsJson}'`,
+    'Opportunity Score v2 (P6-tuned, post-score)',
+    { critical: true },
+  );
   run(`${PYTHON3} scripts/python/signal_integration.py track_outcomes`, 'Track recommendation outcomes (Ph 32)');
   run(`${PYTHON3} scripts/python/ml_advanced.py shadow_update ${signalDate}`, 'Gate shadow book — record vetoed signals');
   run(`${PYTHON3} scripts/python/egx_outcome_tracker.py`, 'Fill forward_test_predictions outcomes');
   run(`${PYTHON3} scripts/python/egx_ml_trainer.py phase46`, 'Bayesian WR update (Ph 46)');
   run(`${PYTHON3} scripts/python/alpha_ranker.py decay_check '{}'`, 'Alpha decay monitor (Ph 70)');
   run(`${PYTHON3} scripts/python/signal_integration.py signal_freshness '{}'`, 'Signal freshness gate');
-  run(`${PYTHON3} scripts/python/opportunity_score_v2.py run`, 'Opportunity Score Engine v2');
-  run(`${PYTHON3} scripts/python/client_signal_promotion.py '${scoreParams}'`, 'Client signal promotion (multi-engine consensus)');
+  run(
+    `${PYTHON3} scripts/python/client_signal_promotion.py '${promotionParams}'`,
+    'Client signal promotion (P6 feedback + opp followup tuned)',
+    { critical: true },
+  );
   if (tvReady) {
     run(`${PYTHON3} scripts/python/replay_gate.py '${scoreParams}'`, 'Replay gate (ULTRA validation)');
     run('node scripts/fetch_actionable_dom.mjs', 'DOM snapshots for actionable signals');

@@ -6,6 +6,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync } from 
 import { join } from 'path';
 import { PROJECT_ROOT } from './load_env.mjs';
 import { loadEgxRules, RULES_PATH } from './egx_safety_check.mjs';
+import { latestStructuralLawsFile } from './structural_laws_bridge.mjs';
 
 const RUNTIME_PATH = join(PROJECT_ROOT, 'data/egx_rules_runtime.json');
 const KB_DIR = join(PROJECT_ROOT, 'data/knowledge_base');
@@ -63,6 +64,25 @@ export function mergeRuntimeRules({ learningReport = null, minEvidence = 2 } = {
       if ((rule.evidence || 0) >= minEvidence) {
         overlay.applied_laws.push({ id: `autopsy_${rule.id}`, evidence: rule.evidence, source: 'autopsy' });
       }
+    }
+  }
+
+  const structFile = latestStructuralLawsFile();
+  if (structFile) {
+    try {
+      const pack = JSON.parse(readFileSync(structFile, 'utf8'));
+      const upLaws = (pack.laws || [])
+        .filter(l => String(l.directions || '').toUpperCase() === 'UP')
+        .filter(l => Number(l.support_pct || 0) >= 30)
+        .slice(0, 8);
+      overlay.structural_laws = upLaws.map(l => ({
+        id: l.id,
+        title: l.title,
+        support_pct: l.support_pct,
+      }));
+      overlay.structural_laws_file = structFile.replace(`${PROJECT_ROOT}/`, '');
+    } catch (e) {
+      overlay.warnings.push(`structural_laws parse: ${e.message}`);
     }
   }
 

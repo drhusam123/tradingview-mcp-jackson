@@ -1422,25 +1422,29 @@ def get_quant_discovery_score(symbol, date, conn):
             rules = conn.execute("""
                 SELECT rule_name, conditions_json, n_oos, oos_precision, baseline_precision,
                        oos_expectancy_pct, oos_profit_factor, stability_score,
+                       COALESCE(quality_score, composite_score * 0.6) AS quality_score,
                        COALESCE(vetted, 0) AS vetted
                 FROM quant_discovery_rules
                 WHERE run_date=(SELECT MAX(run_date) FROM quant_discovery_rules)
                   AND n_oos >= 250
                   AND stability_score >= 0.70
                   AND oos_precision >= baseline_precision
-                ORDER BY vetted DESC, composite_score DESC LIMIT 80
+                  AND COALESCE(quality_score, composite_score * 0.6) >= 52
+                ORDER BY vetted DESC, quality_score DESC, composite_score DESC LIMIT 80
             """).fetchall()
         except Exception:
             rules = conn.execute("""
                 SELECT rule_name, conditions_json, n_oos, oos_precision, baseline_precision,
                        oos_expectancy_pct, oos_profit_factor, stability_score,
+                       COALESCE(quality_score, composite_score * 0.6) AS quality_score,
                        0 AS vetted
                 FROM quant_discovery_rules
                 WHERE run_date=(SELECT MAX(run_date) FROM quant_discovery_rules)
                   AND n_oos >= 250
                   AND stability_score >= 0.70
                   AND oos_precision >= baseline_precision
-                ORDER BY composite_score DESC LIMIT 80
+                  AND COALESCE(quality_score, composite_score * 0.6) >= 52
+                ORDER BY quality_score DESC, composite_score DESC LIMIT 80
             """).fetchall()
         try:
             from discovery_feedback_loader import load_feedback_queue, adjust_match_score
@@ -1471,8 +1475,9 @@ def get_quant_discovery_score(symbol, date, conn):
                 baseline = safe_float(r['baseline_precision'], 0.395)
                 expectancy = safe_float(r['oos_expectancy_pct'], 0.0)
                 pf = safe_float(r['oos_profit_factor'], 1.0)
+                qscore = safe_float(r.get('quality_score'), 50.0)
                 edge = (precision - baseline) * 100.0 + max(0.0, expectancy) * 2.0 + max(0.0, pf - 1.0) * 4.0
-                score = max(40.0, min(92.0, 50.0 + edge))
+                score = max(40.0, min(92.0, 50.0 + edge + max(0.0, qscore - 52) * 0.15))
                 if not int(r['vetted'] or 0):
                     score = min(score, 78.0)   # DSR/PBO unvetted → cap influence
                 if _fb_queue:

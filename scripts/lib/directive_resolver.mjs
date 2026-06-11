@@ -103,23 +103,52 @@ export function resolveCognitionDirectives(result = {}) {
   });
 }
 
-export function resolveDiscoveryDirectives({ quantOk = false, oppOk = false } = {}) {
+const OPP_ALERT_TO_TARGET = {
+  QUALITY_DECLINING: 'opp_quality_decline',
+  MISSED_HIGH_OPP_RISING: 'opp_missed_trend',
+  SAFETY_BLOCKS_RISING: 'opp_safety_collateral',
+  DELIVERY_IMPROVING: 'opp_missed_high',
+};
+
+export function resolveDiscoveryDirectives({
+  quantOk = false,
+  oppOk = false,
+  oppFollowup = null,
+  feedback = null,
+  structuralOk = false,
+} = {}) {
   const targets = [];
+  const notes = [];
+
   if (quantOk) {
     targets.push('counterfactual_wr_lift', 'residual_loss_gap');
+    notes.push('quant_discovery consumed P6 feedback');
   }
+
   if (oppOk) {
-    targets.push(
-      'opp_missed_high',
-      'opp_blocked_safety',
-      'opp_quality_decline',
-      'opp_missed_trend',
-      'opp_safety_collateral',
-    );
+    const alertCodes = new Set((oppFollowup?.alerts || []).map(a => a.code));
+    for (const [code, target] of Object.entries(OPP_ALERT_TO_TARGET)) {
+      if (alertCodes.has(code)) targets.push(target);
+    }
+    const hasPromotionGap = (feedback?.queue || []).some(q => q.type === 'PROMOTION_GAP');
+    if (hasPromotionGap) targets.push('opp_missed_high');
+    if (oppFollowup?.directives?.length) {
+      for (const d of oppFollowup.directives) {
+        if (d.id) targets.push(d.id);
+      }
+    }
+    if (!targets.length) targets.push('opp_blocked_safety');
+    notes.push(`opp_v2 tuned (${oppFollowup?.alerts?.length ?? 0} alerts)`);
   }
-  return completeResearchDirectives(targets, {
+
+  if (structuralOk) {
+    targets.push('autopsy_structural_laws');
+    notes.push('structural_laws merged into runtime overlay');
+  }
+
+  return completeResearchDirectives([...new Set(targets)], {
     engine: 'discovery',
-    note: `quant=${quantOk} opp=${oppOk}`,
+    note: notes.join('; ') || `quant=${quantOk} opp=${oppOk}`,
   });
 }
 

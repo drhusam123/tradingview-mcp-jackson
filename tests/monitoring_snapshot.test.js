@@ -9,6 +9,8 @@ describe('monitoring snapshot', () => {
     assert.ok(s.closed_loops);
     assert.ok(s.directives);
     assert.ok('counterfactual' in s);
+    assert.ok('discovery' in s);
+    assert.ok('quality_score' in s.discovery);
   });
 
   it('writeMonitoringSnapshot persists file', () => {

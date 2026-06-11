@@ -31,6 +31,8 @@ export function auditClosedLoops({ maxAgeHours = 168 } = {}) {
     { file: 'data/p6_research_context.json', label: 'p6_context' },
     { file: 'data/discovery_feedback_last.json', label: 'discovery_feedback' },
     { file: 'data/opportunity_followup_last.json', label: 'opportunity_followup' },
+    { file: 'data/discovery_quality_last.json', label: 'discovery_quality' },
+    { file: 'data/discovery_audit_last.json', label: 'discovery_audit' },
     { file: 'data/egx_rules_runtime.json', label: 'runtime_rules' },
     { file: 'data/learning_loop_last.json', label: 'learning_loop' },
     { file: 'data/proof_loop_last.json', label: 'proof_loop' },
@@ -61,6 +63,7 @@ export function auditClosedLoops({ maxAgeHours = 168 } = {}) {
   const requiredLoops = [
     { id: 'loop_p6_context', needle: 'p6_research_context' },
     { id: 'loop_discovery_fb', needle: 'discovery_feedback' },
+    { id: 'loop_discovery_quality', needle: 'discovery_quality' },
     { id: 'loop_runtime_rules', needle: 'egx_rules_runtime' },
     { id: 'loop_directive_resolver', needle: 'directive_resolver' },
   ];

@@ -23,10 +23,22 @@ ROOT = Path(__file__).resolve().parents[2]
 DB_PATH = ROOT / "data" / "egx_trading.db"
 
 try:
-    from discovery_feedback_loader import load_feedback_queue, adjust_rule_composite, feedback_summary
+    from discovery_feedback_loader import (
+        load_feedback_queue,
+        adjust_rule_composite,
+        apply_p6_research_hints,
+        feedback_summary,
+    )
 except ImportError:
     load_feedback_queue = lambda: []
     adjust_rule_composite = lambda r, q=None: r
+    apply_p6_research_hints = lambda candidates, _params: candidates
+
+try:
+    from discovery_quality_gate import filter_quant_candidates, score_discovery_run
+except ImportError:
+    filter_quant_candidates = lambda c, _p=None: (c, {"n_pass": len(c), "n_in": len(c)})
+    score_discovery_run = lambda *a, **k: {"discovery_quality_score": 0, "grade": "?"}
     feedback_summary = lambda q=None: {"n_items": 0}
 
 
@@ -95,6 +107,9 @@ def ensure_tables(db):
     CREATE INDEX IF NOT EXISTS idx_quant_rules_run
       ON quant_discovery_rules(run_date, composite_score DESC);
     """)
+    cols = {r[1] for r in db.execute("PRAGMA table_info(quant_discovery_rules)").fetchall()}
+    if "quality_score" not in cols:
+        db.execute("ALTER TABLE quant_discovery_rules ADD COLUMN quality_score REAL")
     db.commit()
 
 
@@ -409,6 +424,13 @@ def run_discovery(params):
         for r in candidates:
             adjust_rule_composite(r, feedback_queue)
 
+    candidates = apply_p6_research_hints(candidates, params)
+
+    quality_params = dict(params)
+    if params.get("p6_gate", {}).get("gate_pass") is False:
+        quality_params["strict_quality"] = True
+    candidates, quality_summary = filter_quant_candidates(candidates, quality_params)
+
     composite_top = sorted(
         candidates,
         key=lambda x: (x["composite_score"], x["oos_expectancy_pct"], x["oos_lift"]),
@@ -436,22 +458,27 @@ def run_discovery(params):
              train_precision, oos_precision, oos_lift, oos_expectancy_pct,
              oos_avg_win_pct, oos_avg_loss_pct, oos_profit_factor,
              oos_hit_t1_rate, oos_stop_rate, baseline_precision,
-             stability_score, composite_score)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             stability_score, composite_score, quality_score)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (
             r["id"], run_date, r["rule_name"], "UP", json.dumps(r["conditions"], ensure_ascii=False),
             r["n_train"], r["n_oos"], r["train_precision"], r["oos_precision"],
             r["oos_lift"], r["oos_expectancy_pct"], r["oos_avg_win_pct"],
             r["oos_avg_loss_pct"], r["oos_profit_factor"], r["oos_hit_t1_rate"],
             r["oos_stop_rate"], r["baseline_precision"], r["stability_score"],
-            r["composite_score"],
+            r["composite_score"], r.get("quality_score"),
         ))
     db.commit()
     db.close()
     fb = feedback_summary(feedback_queue)
+    quality_summary["rules_kept"] = len(top)
+    quality_summary["avg_quality"] = quality_summary.get("avg_quality_pass", 0)
+    discovery_quality = score_discovery_run(quality_summary)
     return {
         "success": True,
         "feedback_applied": fb,
+        "quality_gate": quality_summary,
+        "discovery_quality": discovery_quality,
         "n_examples": len(examples),
         "n_symbols": len(data),
         "split_date": split_date,
@@ -478,6 +505,7 @@ def run_discovery(params):
                 "expectancy_pct": round(r["oos_expectancy_pct"], 3),
                 "pf": round(r["oos_profit_factor"], 3),
                 "score": round(r["composite_score"], 2),
+                "quality": r.get("quality_score"),
             }
             for r in top[:12]
         ],
