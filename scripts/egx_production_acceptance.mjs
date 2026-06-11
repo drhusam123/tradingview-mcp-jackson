@@ -15,6 +15,11 @@ import { fileURLToPath } from 'url';
 import Database from 'better-sqlite3';
 import { sendTelegram, validateTelegramPayload } from '../src/egx/notify.js';
 import { tradingDayStaleness, freshnessReferenceDate } from './lib/egx_calendar.mjs';
+import {
+  latestFinalSignalDate,
+  purgeTestFinalSignals,
+  FINAL_SIGNALS_DATE_WHERE,
+} from './lib/final_signals_query.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -64,11 +69,16 @@ try {
   `).get()?.n ?? 0;
   record(badFingerprint === 0, 'Reject known TradingView fallback fingerprint', `bad_rows=${badFingerprint}`);
 
-  const finalLatest = db.prepare('SELECT MAX(trade_date) AS d FROM final_signals').get()?.d ?? null;
+  const purge = purgeTestFinalSignals(DB_PATH);
+  if (purge.deleted > 0) {
+    console.log(`  (purged ${purge.deleted} test final_signals rows)`);
+  }
+  const finalLatest = latestFinalSignalDate(db);
   const finalStats = finalLatest
-    ? db.prepare('SELECT COUNT(*) AS total, SUM(actionable) AS actionable FROM final_signals WHERE trade_date=?').get(finalLatest)
+    ? db.prepare(`SELECT COUNT(*) AS total, SUM(actionable) AS actionable FROM final_signals WHERE trade_date=? AND ${FINAL_SIGNALS_DATE_WHERE}`).get(finalLatest)
     : { total: 0, actionable: 0 };
-  record(Boolean(finalLatest), 'final_signals exists', finalLatest ? `latest=${finalLatest} total=${finalStats.total} actionable=${finalStats.actionable ?? 0}` : 'missing');
+  const finalOk = Boolean(finalLatest) && !String(finalLatest).startsWith('2099-');
+  record(finalOk, 'final_signals exists (prod dates only)', finalLatest ? `latest=${finalLatest} total=${finalStats.total} actionable=${finalStats.actionable ?? 0}` : 'missing');
 
   const mig = db.prepare("SELECT COUNT(*) AS n FROM schema_migrations WHERE version='002'").get()?.n ?? 0;
   record(mig >= 1, 'Schema migration 002 applied', `rows=${mig}`);

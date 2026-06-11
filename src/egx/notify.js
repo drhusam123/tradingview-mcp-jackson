@@ -102,12 +102,13 @@ function upstreamAlignmentIssues(reportDate) {
 
 function finalActionableCount(reportDate) {
   try {
-    if (!existsSync(DB_PATH) || !reportDate) return 0;
+    if (!existsSync(DB_PATH) || !reportDate || String(reportDate).startsWith('2099-')) return 0;
     const db = new Database(DB_PATH, { readonly: true });
     const row = db.prepare(
       `SELECT COUNT(*) AS n
        FROM final_signals
-       WHERE trade_date=? AND actionable=1 AND veto_reason IS NULL`
+       WHERE trade_date=? AND actionable=1 AND veto_reason IS NULL
+         AND trade_date NOT LIKE '2099-%'`
     ).get(reportDate);
     db.close();
     return Number(row?.n || 0);

@@ -174,6 +174,8 @@ const resolved = stage('directive_resolve', () => resolveClosedLoopDirectives({
   learning,
   runtime,
   oppFollowup,
+  discoveryQuality,
+  discoveryRefresh: true,
 }));
 const p6Context = stage('p6_research_context', () => {
   const ctx = buildP6ResearchContext({

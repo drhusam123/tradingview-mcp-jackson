@@ -109,6 +109,11 @@ describe('notification pipeline', () => {
     assert.ok(dec, 'decision row for test symbol');
     assert.equal(dec.decision, 'BLOCKED');
     assert.ok(dec.failed_conditions.includes('near_ath_volume'));
+
+    const cleanup = new Database(DB);
+    cleanup.prepare('DELETE FROM final_signals WHERE trade_date=? AND symbol=?').run(testDate, sym);
+    cleanup.prepare('DELETE FROM indicators_cache WHERE symbol=? AND bar_date=?').run(sym, testDate);
+    cleanup.close();
   });
 
   it('Test H — VOLATILE blocked at delivery without optimal vol band', () => {

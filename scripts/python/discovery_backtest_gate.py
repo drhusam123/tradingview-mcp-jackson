@@ -130,6 +130,46 @@ def build_manifest(db, extras: dict | None = None) -> dict:
     if "low20_retest" in priority and "vol_2_5_3" in priority:
         pairs.append(["low20_retest", "vol_2_5_3"])
 
+    def _merge_pair(a, b):
+        if not a or not b:
+            return
+        p = [a, b]
+        if p not in pairs and [b, a] not in pairs:
+            pairs.append(p)
+
+    for src in (
+        DATA / "learning_loop_last.json",
+        DATA / "discovery_refresh_last.json",
+        DATA / "counterfactual_atoms_last.json",
+    ):
+        if not src.exists():
+            continue
+        try:
+            doc = json.loads(src.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        cf = doc.get("counterfactual") or doc.get("result") or doc
+        if isinstance(cf, dict) and "boost_atoms" in cf:
+            boosts = cf.get("boost_atoms") or cf.get("priority_atoms") or []
+            for sp in cf.get("seed_pairs") or []:
+                if isinstance(sp, (list, tuple)) and len(sp) >= 2:
+                    _merge_pair(sp[0], sp[1])
+            if len(boosts) >= 2:
+                _merge_pair(boosts[0], boosts[1])
+            if len(boosts) >= 3:
+                _merge_pair(boosts[0], boosts[2])
+                _merge_pair(boosts[1], boosts[2])
+        stages = doc.get("stages") or []
+        for st in stages:
+            r = st.get("result") if isinstance(st, dict) else None
+            if not isinstance(r, dict):
+                continue
+            for sp in r.get("seed_pairs") or []:
+                if isinstance(sp, (list, tuple)) and len(sp) >= 2:
+                    _merge_pair(sp[0], sp[1])
+
+    pairs = pairs[:12]
+
     manifest = {
         "at": datetime.now(timezone.utc).isoformat(),
         "priority_atoms": priority,

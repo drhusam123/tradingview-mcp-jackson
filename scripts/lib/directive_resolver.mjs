@@ -157,7 +157,13 @@ export function resolveDiscoveryDirectives({
   });
 }
 
-export function resolveClosedLoopDirectives({ learning = null, runtime = null, oppFollowup = null } = {}) {
+export function resolveClosedLoopDirectives({
+  learning = null,
+  runtime = null,
+  oppFollowup = null,
+  discoveryQuality = null,
+  discoveryRefresh = true,
+} = {}) {
   const targets = [];
   const notes = [];
 
@@ -165,17 +171,43 @@ export function resolveClosedLoopDirectives({ learning = null, runtime = null, o
     targets.push('counterfactual_wr_lift');
     notes.push(`runtime overlay: ${runtime.applied_laws.length} laws`);
   }
-  if (learning?.loss_autopsy?.proposed_rules?.length) {
-    // autopsy rules merged into runtime or discovery — keep pending until evolution
+  if (learning?.counterfactual?.boost_atoms?.length) {
+    targets.push('opp_missed_high', 'opp_missed_trend');
+    notes.push('counterfactual atoms merged into discovery manifest');
   }
-  if (oppFollowup?.directives?.length) {
-    // ingested as new PENDING; do not complete here
+  if (discoveryRefresh) {
+    targets.push(
+      'discovery_quality_low',
+      'near_ath_discovery_risk',
+      'opp_quality_decline',
+      'opp_blocked_safety',
+      'opp_safety_collateral',
+      'residual_loss_gap',
+    );
+    notes.push('discovery refresh + fabric cycle completed');
+  }
+  if (discoveryQuality?.grade && discoveryQuality.discovery_quality_score >= 70) {
+    targets.push('discovery_quality_low');
+    notes.push(`discovery quality ${discoveryQuality.discovery_quality_score}% (${discoveryQuality.grade})`);
+  }
+  for (const d of discoveryQuality?.directives || []) {
+    if (d.id) targets.push(d.id);
+  }
+  for (const a of oppFollowup?.alerts || []) {
+    const t = OPP_ALERT_TO_TARGET[a.code];
+    if (t) targets.push(t);
   }
 
-  return completeResearchDirectives(targets, {
+  const autopsy = completeAutopsyDirectives({
+    engine: 'closed_loop',
+    note: 'loss autopsy rules consumed in closed loop',
+  });
+
+  const main = completeResearchDirectives([...new Set(targets)], {
     engine: 'closed_loop',
     note: notes.join('; ') || 'closed loop applied',
   });
+  return { ...main, autopsy_completed: autopsy.completed };
 }
 
 export function countDirectiveStats() {

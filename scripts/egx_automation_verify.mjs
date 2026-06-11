@@ -68,6 +68,8 @@ const scripts = [
   'scripts/egx_discovery_verify.mjs',
   'scripts/egx_discovery_fabric.mjs',
   'scripts/egx_discovery_automate.mjs',
+  'scripts/egx_gap_repair.mjs',
+  'scripts/lib/final_signals_query.mjs',
   'scripts/python/discovery_fabric_merge.py',
   'scripts/python/discovery_backtest_gate.py',
   'scripts/python/discovery_manifest_loader.py',

@@ -17,10 +17,12 @@ async function main() {
   }
 
   const db = getDB();
-  const date = db.prepare('SELECT MAX(trade_date) d FROM final_signals').get()?.d;
+  const date = db.prepare(
+    "SELECT MAX(trade_date) d FROM final_signals WHERE trade_date NOT LIKE '2099-%'",
+  ).get()?.d;
   const rows = db.prepare(`
     SELECT symbol FROM final_signals
-    WHERE trade_date=? AND actionable=1
+    WHERE trade_date=? AND actionable=1 AND trade_date NOT LIKE '2099-%'
     ORDER BY score DESC LIMIT 10
   `).all(date);
 

@@ -72,6 +72,27 @@ export function runOpportunityQualityLoop(signalDate) {
   const highOppBlocked = pipeline.filter(p => p.safety_blocked && p.opportunity_score >= 75);
   const missed = pipeline.filter(p => p.missed_high_opp);
 
+  let discoveryQualityScore = null;
+  const dqPath = join(PROJECT_ROOT, 'data/discovery_quality_last.json');
+  if (existsSync(dqPath)) {
+    try {
+      const dq = JSON.parse(readFileSync(dqPath, 'utf8'));
+      if (dq.signal_date === signalDate || !dq.signal_date) {
+        discoveryQualityScore = dq.discovery_quality_score ?? null;
+      }
+    } catch { /* */ }
+  }
+
+  const deliveryRate = pipeline.length
+    ? Math.round((highOppDelivered.length / pipeline.length) * 100)
+    : 0;
+  const avgTopOpp = topOpp.length
+    ? Math.round(topOpp.reduce((s, p) => s + p.opportunity_score, 0) / topOpp.length * 10) / 10
+    : 0;
+  const qualityScore = highOppDelivered.length > 0
+    ? Math.max(deliveryRate, Math.round((discoveryQualityScore ?? avgTopOpp) * 0.5))
+    : Math.round(discoveryQualityScore ?? avgTopOpp ?? 0);
+
   const report = {
     signal_date: signalDate,
     n_top_opportunity: topOpp.length,
@@ -81,9 +102,10 @@ export function runOpportunityQualityLoop(signalDate) {
     avg_opp_delivered: highOppDelivered.length
       ? Math.round(highOppDelivered.reduce((s, p) => s + p.opportunity_score, 0) / highOppDelivered.length * 10) / 10
       : null,
-    quality_score: highOppDelivered.length && pipeline.length
-      ? Math.round((highOppDelivered.length / Math.max(1, pipeline.length)) * 100)
-      : 0,
+    quality_score: qualityScore,
+    discovery_quality_score: discoveryQualityScore,
+    delivery_rate: deliveryRate,
+    avg_top_opportunity: avgTopOpp,
     missed_high_opportunity: missed.slice(0, 10),
     blocked_high_opportunity: highOppBlocked.slice(0, 10),
     pipeline_sample: pipeline.slice(0, 15),
