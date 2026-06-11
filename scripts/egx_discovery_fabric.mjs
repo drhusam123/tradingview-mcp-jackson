@@ -51,6 +51,7 @@ const manifestHashBefore = existsSync(manifestPath)
   : null;
 
 if (!GATE_ONLY) {
+  stage('data_hydrate', () => PY('scripts/python/discovery_data_hydrate.py', '{"skip_fetch":true}'));
   const merge = stage('fabric_merge', () => PY('scripts/python/discovery_fabric_merge.py'));
   console.log(`  ✅ Merge: ${merge.n_proposed} atoms | ${merge.miners_run} miners`);
 }

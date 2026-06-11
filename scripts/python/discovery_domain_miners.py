@@ -192,8 +192,8 @@ def mine_ml_errors(db) -> list[dict]:
             SELECT ro.symbol, COUNT(*) n,
                    AVG(CASE WHEN ro.hit_t5 = 1 THEN 1.0 ELSE 0 END) wr
             FROM recommendation_outcomes ro
-            JOIN explosion_predictions ep ON ep.symbol = ro.symbol AND ep.trade_date = ro.signal_date
-            WHERE ro.outcome_filled >= 5 AND ep.probability >= 0.7
+            JOIN explosion_predictions ep ON ep.symbol = ro.symbol AND ep.pred_date = ro.signal_date
+            WHERE ro.outcome_filled >= 5 AND ep.explosion_prob >= 0.7
               AND ro.signal_date >= date('now', '-120 days')
             GROUP BY ro.symbol
             HAVING n >= 3 AND wr < 0.25
@@ -217,17 +217,24 @@ def mine_bayesian_wr(db) -> list[dict]:
     try:
         rows = db.execute(
             """
-            SELECT label, posterior_wr, n_obs
+            SELECT category, label, mean_wr, n_obs
             FROM bayesian_wr
-            WHERE n_obs >= 10
-            ORDER BY posterior_wr DESC
-            LIMIT 20
+            WHERE n_obs >= 8
+            ORDER BY mean_wr DESC
+            LIMIT 25
             """
         ).fetchall()
-        for label, pwr, n in rows:
-            if pwr and pwr >= 55:
-                out.append(_atom(f"bayes_{label}", "L8", "bayesian_wr", "bayesian_wr_miner",
-                                 cond={"label": label}, wr=pwr, n=n, boost=1.05))
+        for cat, label, pwr, n in rows:
+            wr_pct = (pwr or 0) * 100
+            key = str(label or cat or "unknown").replace(" ", "_")[:40]
+            if wr_pct >= 55:
+                out.append(_atom(f"bayes_{key}", "L8", "bayesian_wr", "bayesian_wr_miner",
+                                 cond={"category": cat, "label": label}, wr=round(wr_pct, 1),
+                                 n=n, boost=1.05))
+            elif wr_pct < 35 and n >= 10:
+                out.append(_atom(f"bayes_loss_{key}", "L8", "bayesian_wr", "bayesian_wr_miner",
+                                 cond={"category": cat, "label": label}, wr=round(wr_pct, 1),
+                                 n=n, penalize=0.65, hard_neg=1))
     except sqlite3.OperationalError:
         pass
     return out
@@ -240,7 +247,7 @@ def mine_arbitration_vetoes(db) -> list[dict]:
             """
             SELECT veto_reason, COUNT(*) n
             FROM arbitration_decisions
-            WHERE veto_triggered = 1 AND created_at >= datetime('now', '-90 days')
+            WHERE veto_triggered = 1 AND computed_at >= datetime('now', '-90 days')
             GROUP BY veto_reason
             HAVING n >= 5
             ORDER BY n DESC
@@ -483,6 +490,272 @@ def mine_entry_gap(db) -> list[dict]:
     return out
 
 
+def mine_indicator_divergence(db) -> list[dict]:
+    out = []
+    try:
+        row = db.execute(
+            """
+            SELECT COUNT(*) n FROM indicators_cache ic
+            JOIN ohlcv_history oh ON oh.symbol = ic.symbol
+              AND date(oh.bar_time,'unixepoch') = ic.bar_date
+            WHERE ic.bar_date >= date('now', '-90 days')
+              AND ic.obv_divergence = 'bearish'
+              AND oh.close < oh.open
+            """
+        ).fetchone()
+        if row and row[0] >= 15:
+            out.append(_atom("rsi_obv_bear_divergence", "L1", "indicators_cache",
+                             "indicator_divergence_miner",
+                             cond={"obv_divergence": "bearish", "red_bar": True},
+                             penalize=0.7, n=row[0]))
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
+def mine_markov_transition(db) -> list[dict]:
+    out = []
+    try:
+        row = db.execute(
+            """
+            SELECT p_bull_5d, current_state FROM markov_signal_daily
+            ORDER BY date DESC LIMIT 1
+            """
+        ).fetchone()
+        if row and row[0] is not None:
+            p = float(row[0])
+            state = row[1]
+            if p >= 0.55:
+                out.append(_atom("markov_p_bull_gate", "L2", "markov_signal_daily",
+                                 "markov_transition_miner", cond={"p_bull_5d_gte": 0.55}, boost=1.06))
+            elif p < 0.35:
+                out.append(_atom("markov_p_bear_gate", "L2", "markov_signal_daily",
+                                 "markov_transition_miner", cond={"p_bull_5d_lt": 0.35}, penalize=0.75))
+            if state:
+                out.append(_atom(f"markov_state_{str(state).lower()}", "L2", "markov_signal_daily",
+                                 "markov_transition_miner", cond={"current_state": state}, boost=1.03))
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
+def mine_sector_rotation(db) -> list[dict]:
+    out = []
+    try:
+        rows = db.execute(
+            """
+            SELECT sector, pct_above_ema20, ad_ratio, sector_rank, signal
+            FROM sector_breadth_daily
+            WHERE date >= date('now', '-30 days')
+            ORDER BY date DESC
+            """
+        ).fetchall()
+        if not rows:
+            return out
+        defensive = {"BANK", "BANKS", "FINANCIAL", "FINANCIALS", "SERVICES", "SERVICE", "INSURANCE"}
+        seen = set()
+        for sector, pct20, ad_ratio, rank, sig in rows[:80]:
+            sec = str(sector or "").upper()
+            if sec in seen:
+                continue
+            if any(d in sec for d in defensive) and (pct20 or 0) >= 0.5:
+                out.append(_atom("sector_defensive_strength", "L9", "sector_breadth_daily",
+                                 "sector_rotation_miner", cond={"sector": sector, "pct_above_ema20_gte": 0.5},
+                                 boost=1.05))
+                seen.add(sec)
+            if (ad_ratio or 0) >= 1.2 and (pct20 or 0) >= 0.6:
+                key = sec.replace(" ", "_")[:24]
+                out.append(_atom(f"sector_momo_{key}", "L9", "sector_breadth_daily",
+                                 "sector_rotation_miner", cond={"sector": sector}, boost=1.04, n=1))
+                seen.add(sec)
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
+def mine_grid_winners(db) -> list[dict]:
+    out = []
+    try:
+        rows = db.execute(
+            """
+            SELECT top_hyp_id, top_exp, n_valid, n_tested
+            FROM grid_runs
+            WHERE n_valid >= 1 AND top_exp IS NOT NULL
+            ORDER BY top_exp DESC LIMIT 3
+            """
+        ).fetchall()
+        for hyp, exp, nval, ntest in rows:
+            out.append(_atom(f"grid_winner_{str(hyp)[:12]}", "L9", "grid_runs", "grid_winner_miner",
+                             cond={"top_hyp_id": hyp}, wr=min(99.0, float(exp or 0)), n=ntest or nval,
+                             boost=1.04))
+        wf = db.execute(
+            """
+            SELECT window_id, win_rate, auc_test, n_signals
+            FROM walkforward_results
+            WHERE win_rate >= 0.5 AND n_signals >= 10
+            ORDER BY win_rate DESC LIMIT 3
+            """
+        ).fetchall()
+        for wid, wr, auc, n in wf:
+            out.append(_atom(f"wf_win_w{wid}", "L9", "walkforward_results", "grid_winner_miner",
+                             cond={"window_id": wid}, wr=round((wr or 0) * 100, 1), n=n, boost=1.05))
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
+def mine_dmids_structural(db) -> list[dict]:
+    out = []
+    kb = DATA / "knowledge_base"
+    if not kb.exists():
+        return out
+    files = sorted(kb.glob("structural_laws_*.json"), reverse=True)
+    if not files:
+        return out
+    try:
+        data = json.loads(files[0].read_text(encoding="utf-8"))
+        laws = data.get("laws") or data.get("up_laws") or []
+        up = []
+        for l in laws:
+            dirs = l.get("directions") or l.get("direction") or l.get("bias") or []
+            if isinstance(dirs, str):
+                dirs = [dirs]
+            if any(str(d).upper() in ("UP", "BULL", "LONG", "BULLISH") for d in dirs):
+                up.append(l)
+            elif float(l.get("support_pct") or 0) >= 60:
+                up.append(l)
+        if up:
+            out.append(_atom("dmids_up_law_gate", "L9", files[0].name, "dmids_structural_miner",
+                             cond={"n_up_laws": len(up)}, boost=1.05, n=len(up)))
+            for law in up[:5]:
+                lid = str(law.get("id") or law.get("law_number") or "law")[:20]
+                out.append(_atom(f"dmids_{lid}", "L9", files[0].name, "dmids_structural_miner",
+                                 cond={"law_id": lid}, boost=1.03,
+                                 wr=float(law.get("support_pct") or 0), n=1))
+    except Exception:
+        pass
+    return out
+
+
+def mine_scans_setup(db) -> list[dict]:
+    out = []
+    try:
+        row = db.execute(
+            """
+            SELECT setup_type, COUNT(*) n,
+                   AVG(CASE WHEN score >= 70 THEN 1.0 ELSE 0 END) hi_score_pct
+            FROM scans
+            WHERE scan_date >= date('now', '-60 days')
+            GROUP BY setup_type
+            HAVING n >= 20
+            ORDER BY hi_score_pct DESC LIMIT 3
+            """
+        ).fetchall()
+        for setup, n, pct in row:
+            if pct and pct >= 0.25:
+                key = str(setup or "unknown").replace(" ", "_")[:32]
+                out.append(_atom(f"scan_{key}", "L3", "scans", "scans_setup_miner",
+                                 cond={"setup_type": setup, "score_gte": 70},
+                                 boost=1.05, n=n))
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
+def mine_sandbox_hypotheses(db) -> list[dict]:
+    out = []
+    try:
+        rows = db.execute(
+            """
+            SELECT hypothesis_id, status, precision, n_samples
+            FROM sandbox_hypotheses
+            WHERE UPPER(status) IN ('PROMOTED', 'ACTIVE', 'VALIDATED')
+            ORDER BY precision DESC LIMIT 10
+            """
+        ).fetchall()
+        for hid, status, prec, n in rows:
+            wr_pct = (prec or 0) * 100 if (prec or 0) <= 1 else (prec or 0)
+            out.append(_atom(f"sandbox_{str(hid)[:16]}", "L9", "sandbox_hypotheses",
+                             "hypothesis_sandbox_bridge", cond={"hypothesis_id": hid, "status": status},
+                             wr=round(wr_pct, 1), n=n or 1, boost=1.06))
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
+def mine_setup_performance(db) -> list[dict]:
+    out = []
+    try:
+        rows = db.execute(
+            """
+            SELECT setup_type, win_rate, total_trades
+            FROM setup_performance
+            WHERE total_trades >= 3
+            ORDER BY win_rate DESC
+            """
+        ).fetchall()
+        for setup, wr, n in rows:
+            key = str(setup or "setup").replace(" ", "_")[:28]
+            wr_pct = (wr or 0) * 100 if (wr or 0) <= 1 else (wr or 0)
+            if wr_pct >= 20:
+                out.append(_atom(f"setup_perf_{key}", "L3", "setup_performance", "setup_performance_miner",
+                                 cond={"setup_type": setup}, wr=round(wr_pct, 1), n=n, boost=1.05))
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
+def mine_pine_analytics(db) -> list[dict]:
+    out = []
+    try:
+        row = db.execute("SELECT COUNT(*) FROM pine_analytics WHERE trade_date >= date('now', '-30 days')").fetchone()
+        if row and row[0] >= 50:
+            out.append(_atom("pine_analytics_fresh", "L2", "pine_analytics", "pine_analytics_miner",
+                             cond={"min_rows_30d": 50}, boost=1.03, n=row[0]))
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
+def mine_markov_regime(db) -> list[dict]:
+    out = []
+    try:
+        row = db.execute(
+            """
+            SELECT hmm_state_label, COUNT(*) n FROM markov_regime_daily
+            WHERE hmm_state_label IS NOT NULL
+            GROUP BY hmm_state_label ORDER BY n DESC LIMIT 1
+            """
+        ).fetchone()
+        if row and row[0]:
+            reg = str(row[0]).upper()
+            out.append(_atom(f"markov_regime_{reg.lower()}", "L2", "markov_regime_daily",
+                             "markov_regime_miner", cond={"hmm_state_label": reg}, boost=1.04, n=row[1]))
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
+def mine_delivery_p6(db) -> list[dict]:
+    out = []
+    try:
+        row = db.execute(
+            """
+            SELECT COUNT(*) n,
+                   AVG(CASE WHEN send_success=1 OR deliverable=1 THEN 1.0 ELSE 0 END) del_pct
+            FROM notification_delivery_audit
+            WHERE signal_date >= date('now', '-90 days')
+            """
+        ).fetchone()
+        if row and row[0] >= 5:
+            out.append(_atom("p6_delivery_audit", "L10", "notification_delivery_audit",
+                             "delivery_audit_miner", cond={"delivered_track": True},
+                             wr=round((row[1] or 0) * 100, 1), n=row[0], boost=1.0))
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
 def run_all_miners() -> tuple[list[dict], dict]:
     """Execute all domain miners; return atoms + extras for manifest."""
     if not DB_PATH.exists():
@@ -494,6 +767,9 @@ def run_all_miners() -> tuple[list[dict], dict]:
     atoms.extend(mine_canonical_price_atoms())
     atoms.extend(mine_closing_pressure(db))
     atoms.extend(mine_indicators_confluence(db))
+    atoms.extend(mine_indicator_divergence(db))
+    atoms.extend(mine_scans_setup(db))
+    atoms.extend(mine_setup_performance(db))
     atoms.extend(mine_outcome_weighted(db))
     ml_atoms, hard_syms = mine_ml_errors(db)
     atoms.extend(ml_atoms)
@@ -501,6 +777,14 @@ def run_all_miners() -> tuple[list[dict], dict]:
     atoms.extend(mine_arbitration_vetoes(db))
     atoms.extend(mine_alpha_universe(db))
     atoms.extend(mine_breadth_regime(db))
+    atoms.extend(mine_markov_transition(db))
+    atoms.extend(mine_sector_rotation(db))
+    atoms.extend(mine_grid_winners(db))
+    atoms.extend(mine_dmids_structural(db))
+    atoms.extend(mine_sandbox_hypotheses(db))
+    atoms.extend(mine_pine_analytics(db))
+    atoms.extend(mine_markov_regime(db))
+    atoms.extend(mine_delivery_p6(db))
     atoms.extend(mine_spectral(db))
     atoms.extend(mine_post_breakout_vol(db))
     atoms.extend(mine_cross_market(db))

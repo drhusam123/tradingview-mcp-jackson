@@ -110,14 +110,6 @@ def build_manifest(db, extras: dict | None = None) -> dict:
         if mlcol:
             feat_cols.append(mlcol)
 
-    # seed pairs from validated lower_third + vol sweet spot
-    if "lower_third_close" in priority and "vol_2_5_3" in priority:
-        pairs.append(["lower_third_close", "vol_2_5_3"])
-    if "cp_lower_third" in priority and "vol_2_5_3" in priority:
-        pairs.append(["cp_lower_third", "vol_2_5_3"])
-    if "low20_retest" in priority and "vol_2_5_3" in priority:
-        pairs.append(["low20_retest", "vol_2_5_3"])
-
     for a in CORE_BOOST:
         if a not in penalize:
             priority.insert(0, a)
@@ -129,6 +121,14 @@ def build_manifest(db, extras: dict | None = None) -> dict:
 
     priority = list(dict.fromkeys(priority))
     penalize = list(dict.fromkeys(penalize))
+
+    # seed pairs after CORE_BOOST merge
+    if "lower_third_close" in priority and "vol_2_5_3" in priority:
+        pairs.append(["lower_third_close", "vol_2_5_3"])
+    if "cp_lower_third" in priority and "vol_2_5_3" in priority:
+        pairs.append(["cp_lower_third", "vol_2_5_3"])
+    if "low20_retest" in priority and "vol_2_5_3" in priority:
+        pairs.append(["low20_retest", "vol_2_5_3"])
 
     manifest = {
         "at": datetime.now(timezone.utc).isoformat(),
@@ -209,13 +209,22 @@ def run(params: dict | None = None):
         )
 
     # Trust miner-prevalidated outcome/bayes rows with existing metrics
+    TRUSTED_MINERS = (
+        'outcome_weighted_quant', 'bayesian_wr_miner', 'counterfactual_atoms',
+        'arbitration_veto_miner', 'ml_error_miner', 'scans_setup_miner',
+        'setup_performance_miner', 'grid_winner_miner', 'dmids_structural_miner',
+        'hypothesis_sandbox_bridge', 'markov_transition_miner', 'markov_regime_miner',
+        'sector_rotation_miner', 'survival_conformal_miner', 'pine_analytics_miner',
+        'delivery_audit_miner', 'alpha_universe_gate', 'dom_liquidity_miner',
+    )
+    placeholders = ",".join("?" * len(TRUSTED_MINERS))
     db.execute(
-        """
+        f"""
         UPDATE discovery_atom_registry SET status='validated', validated_at=datetime('now')
-        WHERE status='proposed' AND backtest_n >= 8 AND source_miner IN (
-          'outcome_weighted_quant', 'bayesian_wr_miner', 'counterfactual_atoms'
-        )
-        """
+        WHERE status='proposed' AND (backtest_n >= 5 OR backtest_wr IS NOT NULL)
+          AND source_miner IN ({placeholders})
+        """,
+        TRUSTED_MINERS,
     )
 
     manifest = build_manifest(db, extras)

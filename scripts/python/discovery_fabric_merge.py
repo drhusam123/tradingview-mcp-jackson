@@ -19,6 +19,11 @@ import sys
 sys.path.insert(0, str(ROOT / "scripts" / "python"))
 from discovery_domain_miners import run_all_miners
 
+try:
+    from discovery_data_hydrate import enumerate_tables as _enum_tables
+except ImportError:
+    _enum_tables = None
+
 CATALOG = {
     "at": None,
     "layers": {
@@ -44,7 +49,8 @@ CATALOG = {
         "dom_liquidity_miner", "outcome_weighted_quant", "bayesian_wr_miner", "counterfactual_atoms",
         "arbitration_veto_miner", "hypothesis_sandbox_bridge", "alpha_universe_gate",
         "ml_error_miner", "spectral_atom_bridge", "tsfresh_pattern_miner", "survival_conformal_miner",
-        "regime_conditional_sweep",
+        "regime_conditional_sweep", "indicator_divergence_miner", "markov_transition_miner",
+        "sector_rotation_miner", "grid_winner_miner", "dmids_structural_miner", "scans_setup_miner",
     ],
     "json_artifacts": [
         "counterfactual_atoms_last.json", "regime_conditional_sweep_last.json",
@@ -117,6 +123,18 @@ def run(params: dict | None = None):
     db.close()
 
     CATALOG["at"] = now
+    if _enum_tables and DB_PATH.exists():
+        db2 = sqlite3.connect(DB_PATH, timeout=30)
+        tables = _enum_tables(db2)
+        db2.close()
+        production = [t for t in tables if t.get("has_data") and t.get("layer") not in ("OPS", "OTHER")]
+        by_layer: dict[str, list] = {}
+        for t in production:
+            by_layer.setdefault(t["layer"], []).append(t["table"])
+        CATALOG["total_tables"] = len(tables)
+        CATALOG["production_tables_with_data"] = len(production)
+        CATALOG["layers_full"] = {k: sorted(v) for k, v in sorted(by_layer.items())}
+        CATALOG["table_stats"] = tables
     (DATA / "discovery_data_catalog.json").write_text(json.dumps(CATALOG, indent=2), encoding="utf-8")
     payload = {
         "success": True,
