@@ -283,6 +283,8 @@
     "egx:economics:status": "node scripts/fetch_economics.mjs --status",
     "egx:economics:full": "node scripts/fetch_economics.mjs --bars 24 --notify",
     "egx:telegram:setup": "node scripts/setup_telegram.mjs --wait",
+    "egx:telegram:cron": "node scripts/egx_telegram_cron.mjs",
+    "egx:telegram:dry-run": "node scripts/egx_telegram_cron.mjs --dry-run",
     "egx:telegram:test": "node scripts/notify_test.mjs",
     "egx:notify:health": "node scripts/egx_notify_health.mjs",
     "egx:notify:dry-run": "node scripts/egx_notify_dry_run.mjs",

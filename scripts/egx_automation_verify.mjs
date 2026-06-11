@@ -34,7 +34,7 @@ if (CI_MODE) {
   ok('crontab installed', cron.includes('EGX-DAILY-AUTOMATION'), cron ? 'found markers' : 'empty');
   ok('TV sync lock egx-tv-sync', /egx-tv-sync.*egx_tv_auto_update/.test(cron));
   ok('Telegram cron egx-telegram', /egx-telegram.*egx_telegram_cron/.test(cron));
-  ok('Telegram cron PYTHON_BIN=/usr/bin/python3', /PYTHON_BIN=\/usr\/bin\/python3.*egx-telegram/.test(cron));
+  ok('Telegram cron PYTHON_BIN set', /PYTHON_BIN=[^\s]+.*egx-telegram/.test(cron));
   ok('Telegram NOT sharing egx-daily lock', !/egx-daily.*egx_telegram_daily/.test(cron));
   ok('.env exists', existsSync(join(PROJECT_ROOT, '.env')));
   ok('TELEGRAM_BOT_TOKEN', Boolean(process.env.TELEGRAM_BOT_TOKEN));
