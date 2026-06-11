@@ -164,7 +164,7 @@ if (RESCORE && opportunity?.success) {
       encoding: 'utf8',
       timeout: 1000 * 60 * 15,
     }));
-    const promo = JSON.parse(execFileSync(PYTHON3, [promoScript, 'run', promoParams], {
+    const promo = JSON.parse(execFileSync(PYTHON3, [promoScript, promoParams], {
       cwd: join(__dirname, '..'),
       encoding: 'utf8',
       timeout: 1000 * 60 * 5,

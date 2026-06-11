@@ -83,6 +83,12 @@ try {
 }
 
 try {
+  execSync(`"${NODE}" scripts/egx_discovery_refresh.mjs`, { cwd: PROJECT_ROOT, stdio: 'inherit', timeout: 600_000 });
+} catch (e) {
+  console.log(`⚠️  Discovery refresh: ${e.message?.slice(0, 120)}`);
+}
+
+try {
   execSync(`"${NODE}" scripts/egx_loop_audit.mjs`, { cwd: PROJECT_ROOT, stdio: 'inherit', timeout: 60_000 });
 } catch (e) {
   console.log(`⚠️  Loop audit: ${e.message?.slice(0, 80)}`);

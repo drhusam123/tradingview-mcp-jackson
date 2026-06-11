@@ -1014,7 +1014,15 @@ def discover_explosion_anatomy(db, params=None):
     n_sigs = db.execute("SELECT COUNT(*) FROM explosion_signatures").fetchone()[0]
     n_universal = db.execute("SELECT COUNT(*) FROM explosion_signatures WHERE scope='UNIVERSAL'").fetchone()[0]
 
+    p6_ctx = (params or {}).get('p6_context') or load_context() or {}
+    p6_hints = p6_ctx.get('cognition_hints') or {}
+    dq = p6_ctx.get('discovery_quality') or {}
+
     findings = archetype_findings + [f"{n_sigs} signatures found ({n_universal} universal)"]
+    if dq.get('grade') in ('C', 'D') or (dq.get('score') or 100) < 52:
+        findings.append(
+            f"Discovery quality {dq.get('score')}% grade {dq.get('grade')} — prioritize lower_third + vol_2.5-3x patterns"
+        )
     dt = time.time() - t0
     _log_stage(db, 'explosion_anatomy', dt, n_total, findings)
 
@@ -1026,8 +1034,6 @@ def discover_explosion_anatomy(db, params=None):
         SELECT signature_name, scope, prevalence_pct, avg_return_uplift, feature_type
         FROM explosion_signatures ORDER BY prevalence_pct DESC""").fetchall()]
 
-    p6_ctx = (params or {}).get('p6_context') or load_context() or {}
-    p6_hints = p6_ctx.get('cognition_hints') or {}
     p6_review = None
     if p6_hints.get('prioritize_explosive_review'):
         explosive_arch = [a for a in archetypes_out

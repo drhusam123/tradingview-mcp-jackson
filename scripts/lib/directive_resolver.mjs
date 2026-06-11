@@ -146,6 +146,11 @@ export function resolveDiscoveryDirectives({
     notes.push('structural_laws merged into runtime overlay');
   }
 
+  if (quantOk && oppOk) {
+    targets.push('discovery_quality_low', 'near_ath_discovery_risk');
+    notes.push('discovery quality gates applied in quant+opp pipeline');
+  }
+
   return completeResearchDirectives([...new Set(targets)], {
     engine: 'discovery',
     note: notes.join('; ') || `quant=${quantOk} opp=${oppOk}`,

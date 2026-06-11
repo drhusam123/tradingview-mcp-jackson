@@ -103,29 +103,17 @@ def morning_run(params):
     n_total = gen.get('total_hypotheses', 0)
     log.append(f"  → {gen.get('n_inserted', 0)} new | {n_total} total")
 
-    # ══ STEP 3b: Quant discovery OOS rules (parallel alpha path) ══
-    log.append("STEP 3b: Quant discovery rule refresh...")
-    fb_params = {}
-    fb_path = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'discovery_feedback_last.json')
-    if os.path.exists(fb_path):
-        try:
-            with open(fb_path, encoding='utf-8') as f:
-                fb_params['feedback_queue'] = json.load(f).get('queue', [])
-        except Exception:
-            pass
-    p6_path = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'p6_research_context.json')
-    if os.path.exists(p6_path):
-        try:
-            with open(p6_path, encoding='utf-8') as f:
-                p6 = json.load(f)
-            fb_params['p6_priorities'] = p6.get('research_priorities', [])
-            fb_params['evolution_hints'] = p6.get('evolution_hints', {})
-            fb_params['p6_gate'] = p6.get('p6_gate', {})
-        except Exception:
-            pass
+    # ══ STEP 3b: Quant discovery OOS rules (unified P6 discovery context) ══
+    log.append("STEP 3b: Quant discovery rule refresh (unified context)...")
+    try:
+        from discovery_context_loader import load_discovery_params
+        fb_params = load_discovery_params(today)
+    except Exception:
+        fb_params = {'signal_date': today}
     qd = _run_script('quant_discovery.py', 'run', fb_params, timeout=180)
-    n_qd = qd.get('n_rules', qd.get('rules_saved', 0))
-    log.append(f"  → quant_discovery: {n_qd} rules refreshed")
+    n_qd = qd.get('rules_kept', qd.get('n_rules', qd.get('rules_saved', 0)))
+    dq = (qd.get('discovery_quality') or {}).get('discovery_quality_score')
+    log.append(f"  → quant_discovery: {n_qd} rules | quality={dq or '?'}")
 
     # ══ STEP 4: Research grid — test new hypotheses (Ph 69) ══
     log.append("STEP 4: Research grid (Ph 69)...")

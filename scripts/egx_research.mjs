@@ -13,6 +13,10 @@
  */
 import { pythonResearchAssessLaws, pythonResearchDiscover, pythonResearchMutate,
          pythonResearchDirectives, pythonResearchEvolution, pythonResearchLawTree } from '../src/egx/index.js';
+import { loadP6ResearchContext } from './lib/p6_research_context.mjs';
+
+const p6Context = loadP6ResearchContext();
+const researchParams = p6Context ? { p6_context: p6Context } : {};
 
 const args    = process.argv.slice(2);
 const section = args.find(a => !a.startsWith('--')) ?? 'assess';
@@ -23,7 +27,7 @@ function pp(o)     { console.log(JSON.stringify(o, null, 2)); }
 switch (section) {
   case 'assess': {
     banner('Research: Law Health Assessment');
-    const r = await pythonResearchAssessLaws({});
+    const r = await pythonResearchAssessLaws(researchParams);
     if (r?.law_health) {
       console.log(`\n⚖️  Law Health:`);
       r.law_health.forEach(l =>
@@ -34,7 +38,7 @@ switch (section) {
   }
   case 'discover': {
     banner('Research: Discovering new laws…');
-    const r = await pythonResearchDiscover({});
+    const r = await pythonResearchDiscover(researchParams);
     console.log(`   Tested: ${r.n_tested}  Promoted: ${r.n_promoted}`);
     if (r?.new_laws) r.new_laws.slice(0, 5).forEach(l =>
       console.log(`   ✅ ${l.feature} prec: ${(l.precision ?? 0).toFixed(3)}`));
@@ -42,13 +46,13 @@ switch (section) {
   }
   case 'mutate': {
     banner('Research: Mutating weak laws…');
-    const r = await pythonResearchMutate({});
+    const r = await pythonResearchMutate(researchParams);
     console.log(`   Tested: ${r.n_mutations_tested}  Improvements: ${r.n_improvements}`);
     pp(r); break;
   }
   case 'directives': {
     banner('Research: Generating directives…');
-    const r = await pythonResearchDirectives({});
+    const r = await pythonResearchDirectives(researchParams);
     if (r?.priority_list) {
       console.log('\n📌 Research Directives:');
       r.priority_list.forEach(d =>
@@ -59,7 +63,7 @@ switch (section) {
   case 'evolve':
   case 'full': {
     banner('Research: Full Evolution Cycle');
-    const r = await pythonResearchEvolution({});
+    const r = await pythonResearchEvolution(researchParams);
     if (r?.summary) {
       console.log(`\n✅ Evolution complete:`);
       console.log(`   Best precision: ${r.summary.best_precision_after}`);
@@ -71,7 +75,7 @@ switch (section) {
   }
   case 'tree': {
     banner('Research: Law Lineage Tree');
-    const r = await pythonResearchLawTree({});
+    const r = await pythonResearchLawTree(researchParams);
     pp(r); break;
   }
   default: console.log(`Unknown: ${section}`); process.exit(1);

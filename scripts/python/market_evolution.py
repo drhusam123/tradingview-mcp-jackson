@@ -938,7 +938,21 @@ def full_evolution(db, params=None):
     p6_ctx = params.get('p6_context') or load_context()
     if p6_ctx:
         print('  [P6] Research context loaded — wiring live outcomes', flush=True)
-        results['p6_context'] = {'loaded': True, 'at': p6_ctx.get('at')}
+        dq = p6_ctx.get('discovery_quality') or {}
+        results['p6_context'] = {
+            'loaded': True,
+            'at': p6_ctx.get('at'),
+            'discovery_quality_score': dq.get('score'),
+            'discovery_grade': dq.get('grade'),
+        }
+        if dq.get('grade') in ('C', 'D') or (dq.get('score') or 100) < 52:
+            results['discovery_quality_guard'] = {
+                'active': True,
+                'score': dq.get('score'),
+                'grade': dq.get('grade'),
+                'action': 'conservative_hypothesis_promotion',
+            }
+            print(f'  [Discovery] Quality guard ON — grade {dq.get("grade")} score {dq.get("score")}', flush=True)
 
     print('  [1/7] Ingesting market experience …', flush=True)
     results['experience'] = ingest_market_experience(db)
@@ -970,6 +984,11 @@ def full_evolution(db, params=None):
     for block in ('p6_failures', 'p6_adjustments'):
         for f in (results.get(block) or {}).get('key_findings') or []:
             key_findings.append(f)
+    guard = results.get('discovery_quality_guard')
+    if guard and guard.get('active'):
+        key_findings.append(
+            f"Discovery quality guard: grade {guard.get('grade')} — tighten hypothesis promotion"
+        )
     db.execute("""
         INSERT INTO evolution_log
           (run_timestamp, run_type, laws_updated, new_hypotheses,

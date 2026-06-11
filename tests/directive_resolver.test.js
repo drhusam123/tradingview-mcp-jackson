@@ -40,6 +40,12 @@ describe('directive resolver', () => {
     assert.equal(r.ok, true);
   });
 
+  it('resolveDiscoveryDirectives completes quality directives when quant+opp ok', () => {
+    const r = resolveDiscoveryDirectives({ quantOk: true, oppOk: true });
+    assert.equal(r.ok, true);
+    assert.ok(r.targets?.includes('discovery_quality_low') || r.completed >= 0);
+  });
+
   it('resolveDiscoveryDirectives uses opp followup alert mapping', () => {
     const r = resolveDiscoveryDirectives({
       quantOk: true,

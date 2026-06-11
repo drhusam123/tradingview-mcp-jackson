@@ -231,6 +231,9 @@ def load_opportunity_tuning(
             downrank_classes.add(str(item.get("target", "")).upper())
             penalty_boost += 2.0
             reasons.append(item.get("rationale") or item.get("target"))
+        if item.get("type") == "DISCOVERY_QUALITY_LOW":
+            penalty_boost += 4.0
+            reasons.append(item.get("rationale") or "DISCOVERY_QUALITY_LOW")
 
     for alert in (followup or {}).get("alerts") or []:
         if alert.get("code") == "QUALITY_DECLINING":

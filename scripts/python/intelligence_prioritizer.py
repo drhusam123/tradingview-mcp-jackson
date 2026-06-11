@@ -526,6 +526,52 @@ def rolling_avg_volume(ohlcv_rows, window=20):
 # Command: prioritize
 # ---------------------------------------------------------------------------
 
+def load_opportunity_discovery_map(db):
+    """Top opportunity_score_v2 symbols — discovery layer confirmation."""
+    try:
+        row = db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='opportunity_score_v2'"
+        ).fetchone()
+        if not row:
+            return {}
+        d = db.execute("SELECT MAX(trade_date) d FROM opportunity_score_v2").fetchone()["d"]
+        if not d:
+            return {}
+        rows = db.execute(
+            """
+            SELECT symbol, opportunity_score, stage, flags_json
+            FROM opportunity_score_v2
+            WHERE trade_date = ? AND opportunity_score >= 62
+            ORDER BY opportunity_score DESC LIMIT 40
+            """,
+            (d,),
+        ).fetchall()
+        out = {}
+        for r in rows:
+            boost = 0.0
+            flags = []
+            try:
+                flags = json.loads(r["flags_json"] or "[]")
+            except Exception:
+                pass
+            if "LOWER_THIRD_CLOSE" in flags:
+                boost += 4.0
+            if "VOL_SWEET_SPOT" in flags:
+                boost += 3.0
+            if r["stage"] in ("QUALIFIED_DISCOVERY", "ACTIONABLE_CANDIDATE", "NEAR_BREAKOUT"):
+                boost += 2.0
+            if "NEAR_ATH_LOW_VOL" in flags:
+                boost -= 6.0
+            out[r["symbol"]] = {
+                "opportunity_score": float(r["opportunity_score"] or 0),
+                "stage": r["stage"],
+                "boost": boost,
+            }
+        return out
+    except Exception:
+        return {}
+
+
 def cmd_prioritize(params):
     today = datetime.date.today().isoformat()
     computed_at = datetime.datetime.utcnow().isoformat()
@@ -534,6 +580,7 @@ def cmd_prioritize(params):
 
     # Load all data sources
     symbols = load_symbols(db)
+    opp_map = load_opportunity_discovery_map(db)
     explosion_map = load_explosion_readiness(db)
     liquidity_map = load_liquidity_profiles(db)
     pattern_laws = load_pattern_laws(db)
@@ -574,7 +621,8 @@ def cmd_prioritize(params):
             reg_comp  * 0.20 +
             caus_comp * 0.15
         )
-        intelligence_score = max(0.0, min(100.0, raw_score))
+        opp_boost = (opp_map.get(sym) or {}).get("boost", 0.0)
+        intelligence_score = max(0.0, min(100.0, raw_score + opp_boost))
 
         comps = {
             "explosion": exp_comp,
