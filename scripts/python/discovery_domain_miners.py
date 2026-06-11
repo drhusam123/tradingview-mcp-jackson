@@ -756,6 +756,81 @@ def mine_delivery_p6(db) -> list[dict]:
     return out
 
 
+def mine_sector_rotation_daily(db) -> list[dict]:
+    out = []
+    try:
+        rows = db.execute(
+            """
+            SELECT sector, AVG(rotation_score) avg_rot, COUNT(*) n
+            FROM sector_rotation_daily
+            WHERE date >= date('now', '-60 days') AND rotation_score IS NOT NULL
+            GROUP BY sector HAVING n >= 10
+            ORDER BY avg_rot DESC LIMIT 8
+            """
+        ).fetchall()
+        for sector, avg_rot, n in rows:
+            if avg_rot and avg_rot >= 0.5:
+                key = str(sector or "sec").replace(" ", "_")[:20]
+                out.append(_atom(f"srot_{key}", "L2", "sector_rotation_daily",
+                                 "sector_rotation_daily_miner", cond={"sector": sector},
+                                 boost=1.04, n=n))
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
+def mine_explosive_moves(db) -> list[dict]:
+    out = []
+    try:
+        row = db.execute(
+            """
+            SELECT COUNT(*) n,
+                   AVG(CASE WHEN direction='UP' THEN 1.0 ELSE 0 END) up_pct
+            FROM explosive_moves
+            WHERE explosion_date >= date('now', '-180 days')
+            """
+        ).fetchone()
+        if row and row[0] >= 100:
+            out.append(_atom("explosive_up_bias", "L4", "explosive_moves", "explosive_moves_miner",
+                             cond={"direction": "UP"}, wr=round((row[1] or 0) * 100, 1), n=row[0], boost=1.05))
+        rows = db.execute(
+            """
+            SELECT symbol, COUNT(*) n FROM explosive_moves
+            WHERE explosion_date >= date('now', '-365 days')
+            GROUP BY symbol HAVING n >= 5
+            ORDER BY n DESC LIMIT 15
+            """
+        ).fetchall()
+        for sym, n in rows:
+            out.append(_atom(f"expl_hist_{sym}", "L4", "explosive_moves", "explosive_moves_miner",
+                             cond={"symbol": sym}, n=n, boost=1.03))
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
+def mine_market_experience(db) -> list[dict]:
+    out = []
+    try:
+        row = db.execute(
+            """
+            SELECT experience_type, COUNT(*) n, AVG(outcome_score) avg_o
+            FROM market_experience
+            WHERE created_at >= datetime('now', '-120 days')
+            GROUP BY experience_type
+            HAVING n >= 50
+            ORDER BY avg_o DESC LIMIT 5
+            """
+        ).fetchall()
+        for etype, n, avg_o in row:
+            key = str(etype or "exp")[:24]
+            out.append(_atom(f"mexp_{key}", "L8", "market_experience", "market_experience_miner",
+                             cond={"experience_type": etype}, n=n, boost=1.04))
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
 def run_all_miners() -> tuple[list[dict], dict]:
     """Execute all domain miners; return atoms + extras for manifest."""
     if not DB_PATH.exists():
@@ -785,6 +860,9 @@ def run_all_miners() -> tuple[list[dict], dict]:
     atoms.extend(mine_pine_analytics(db))
     atoms.extend(mine_markov_regime(db))
     atoms.extend(mine_delivery_p6(db))
+    atoms.extend(mine_sector_rotation_daily(db))
+    atoms.extend(mine_explosive_moves(db))
+    atoms.extend(mine_market_experience(db))
     atoms.extend(mine_spectral(db))
     atoms.extend(mine_post_breakout_vol(db))
     atoms.extend(mine_cross_market(db))

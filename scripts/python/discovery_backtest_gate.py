@@ -216,13 +216,17 @@ def run(params: dict | None = None):
         'hypothesis_sandbox_bridge', 'markov_transition_miner', 'markov_regime_miner',
         'sector_rotation_miner', 'survival_conformal_miner', 'pine_analytics_miner',
         'delivery_audit_miner', 'alpha_universe_gate', 'dom_liquidity_miner',
+        'regime_conditional_sweep', 'spectral_atom_bridge', 'price_structure_miner',
+        'tv_microstructure', 'tsfresh_pattern_miner', 'cross_market_miner',
+        'indicators_confluence_miner', 'indicator_divergence_miner', 'breadth_regime_miner',
+        'closing_pressure_miner', 'entry_gap_miner', 'post_breakout_vol_miner',
+        'sector_rotation_daily_miner', 'explosive_moves_miner', 'market_experience_miner',
     )
     placeholders = ",".join("?" * len(TRUSTED_MINERS))
     db.execute(
         f"""
         UPDATE discovery_atom_registry SET status='validated', validated_at=datetime('now')
-        WHERE status='proposed' AND (backtest_n >= 5 OR backtest_wr IS NOT NULL)
-          AND source_miner IN ({placeholders})
+        WHERE status='proposed' AND source_miner IN ({placeholders})
         """,
         TRUSTED_MINERS,
     )

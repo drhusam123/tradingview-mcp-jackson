@@ -86,6 +86,29 @@ def load_registry_seeds(params: dict | None = None) -> dict:
     }
 
 
+def registry_stats() -> dict:
+    if not DB_PATH.exists():
+        return {"atoms_total": 0, "atoms_validated": 0, "miners_active": 0, "source_tables": 0}
+    db = sqlite3.connect(DB_PATH, timeout=30)
+    total = db.execute("SELECT COUNT(*) FROM discovery_atom_registry").fetchone()[0]
+    validated = db.execute(
+        "SELECT COUNT(*) FROM discovery_atom_registry WHERE status='validated'"
+    ).fetchone()[0]
+    miners = db.execute(
+        "SELECT COUNT(DISTINCT source_miner) FROM discovery_atom_registry"
+    ).fetchone()[0]
+    tables = db.execute(
+        "SELECT COUNT(DISTINCT source_table) FROM discovery_atom_registry WHERE source_table IS NOT NULL"
+    ).fetchone()[0]
+    db.close()
+    return {
+        "atoms_total": total,
+        "atoms_validated": validated,
+        "miners_active": miners,
+        "source_tables": tables,
+    }
+
+
 def hard_negative_symbols(manifest: dict | None = None) -> set[str]:
     """Symbols to down-weight in ML training from ml_error_miner."""
     m = manifest or load_ml_manifest()
@@ -96,3 +119,11 @@ def hard_negative_symbols(manifest: dict | None = None) -> set[str]:
         elif isinstance(item, dict) and item.get("symbol"):
             syms.add(item["symbol"])
     return syms
+
+
+if __name__ == "__main__":
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "stats":
+        print(__import__("json").dumps(registry_stats()))
+    else:
+        print(__import__("json").dumps(load_registry_seeds()))

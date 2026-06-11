@@ -18,19 +18,30 @@ DB_PATH = DATA / "egx_trading.db"
 
 LAYER_MAP = {
     "ohlcv": "L0", "stock_universe": "L0", "ohlcv_weekly": "L0", "ohlcv_history": "L0",
-    "indicators_cache": "L1", "indicator": "L1",
+    "corporate_actions": "L0", "intraday_live": "L0", "tv_data_reconcile": "L0",
+    "indicators_cache": "L1", "indicator": "L1", "feature_matrix": "L1",
     "pine_analytics": "L2", "tv_discovery": "L2", "closing_pressure": "L2",
     "market_breadth": "L2", "cross_market": "L2", "dom_": "L2", "macro_": "L2",
-    "data_quality": "L2", "markov": "L2", "regime": "L2",
-    "scans": "L3", "setup_performance": "L3",
+    "data_quality": "L2", "markov": "L2", "regime": "L2", "sector_breadth": "L2",
+    "sector_rotation": "L2", "liquidity_profile": "L2", "anti_law": "L2",
+    "data_integrity": "L2", "gate_audit": "L2", "spectral": "L2", "market_physics": "L2",
+    "market_cycles": "L2", "event_calendar": "L2", "contagion": "L2",
+    "scans": "L3", "setup_performance": "L3", "validation_results": "L3",
     "feature_store": "L4", "explosion_predictions": "L4", "forward_test": "L4",
+    "explosive_moves": "L4", "explosion_readiness": "L4", "meta_label": "L4",
     "tsfresh": "L4", "survival": "L4", "conformal": "L4", "ml_": "L4",
-    "final_signals": "L5", "unified_signals": "L5",
+    "stock_forecast": "L4", "pattern_analog": "L4", "dtw_similarity": "L4",
+    "final_signals": "L5", "unified_signals": "L5", "bus_signals": "L5",
     "arbitration": "L6",
     "opportunity_score": "L7", "quant_discovery": "L7",
     "recommendation_outcomes": "L8", "bayesian_wr": "L8", "outcome": "L8",
+    "counterfactual": "L8", "failure_reconstruction": "L8", "false_breakout": "L8",
+    "market_experience": "L8", "reliability_curve": "L8",
     "sandbox": "L9", "alpha_rankings": "L9", "grid_runs": "L9", "walkforward": "L9",
-    "hypothesis": "L9", "research": "L9", "structural": "L9",
+    "hypothesis": "L9", "research": "L9", "structural": "L9", "law_competition": "L9",
+    "law_quality": "L9", "knowledge_graph": "L9", "umcg": "L9", "stock_profiles": "L9",
+    "stock_lead_lag": "L9", "correlation_cluster": "L9", "market_episode": "L9",
+    "tv_replay": "L9", "engine_health": "L9",
     "notification_delivery": "L10", "telegram": "L10",
     "discovery_atom": "L11", "discovery_fabric": "L11",
 }
@@ -38,6 +49,8 @@ LAYER_MAP = {
 HYDRATE_CMDS = [
     ("cross_market_regime", ["node", "scripts/egx_cross_market.mjs", "macro"], 120),
     ("indicators_cache", ["node", "scripts/rebuild_indicators.mjs"], 600),
+    ("pine_analytics", ["node", "scripts/fetch_pine_analytics.mjs", "session"], 300),
+    ("scans", ["node", "scripts/scan_today.mjs", "--db-only"], 300),
 ]
 
 
