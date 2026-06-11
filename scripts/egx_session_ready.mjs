@@ -11,7 +11,7 @@ import { isTradingDay, cairoDateParts, tradingDayStaleness, nextTradingDay } fro
 import { getUpstreamDates, latestOhlcvDate, countActionable, wasAlreadySent } from './lib/delivery_audit.mjs';
 import { alertNotification } from './lib/notification_alert.mjs';
 import { runDailyQualityGate } from './lib/data_quality_gate.mjs';
-import { getProofLoopMetrics, formatProofLoopLine, PROOF_MIN_N } from './lib/proof_loop.mjs';
+import { getProofLoopMetrics, formatProofLoopLine, PROOF_MIN_N, PROOF_MIN_WR } from './lib/proof_loop.mjs';
 import { syncDeliveredOutcomes } from './lib/delivered_outcomes.mjs';
 
 loadEnv();
@@ -96,10 +96,15 @@ ok(
   formatProofLoopLine(proof).replace(/^[^\s]+\s/, ''),
   { warn: !proof.gate_pass && proof.n_completed < PROOF_MIN_N },
 );
+const p6Blocker = proof.gate_pass
+  ? 'PASS'
+  : proof.samples_needed > 0
+    ? `need ${proof.samples_needed} more ULTRA samples`
+    : `WR ${proof.win_rate ?? '—'}% < ${PROOF_MIN_WR}% (live winning sessions)`;
 ok(
   'P6 delivered track',
   true,
-  `${proofDel.n_completed} delivered ULTRA filled≥5 @ ${proofDel.win_rate ?? '—'}% (need ${proof.samples_needed} sessions)`,
+  `${proofDel.n_completed} delivered ULTRA filled≥5 @ ${proofDel.win_rate ?? '—'}% | gate: ${p6Blocker}`,
   { warn: proofDel.n_completed === 0 },
 );
 
