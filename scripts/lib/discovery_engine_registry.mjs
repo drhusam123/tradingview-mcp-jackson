@@ -90,14 +90,21 @@ export const DISCOVERY_ENGINES = {
   },
   tv_microstructure: {
     id: 'tv_microstructure',
-    layer: 'intraday',
-    cadence_hours: 8,
-    npm: null,
-    status: 'planned',
-    outputs: ['tv_pine_features'],
+    layer: 'daily',
+    cadence_hours: 24,
+    npm: 'egx:discovery:tv:micro',
+    outputs: ['tv_discovery_features', 'pine_analytics'],
     feeds: ['opportunity_v2', 'quant_rules'],
-    triggers: ['TV_EDGE_GAP'],
-    notes: 'CVD / VP / VWAP / CMF via TradingView MCP pine tools',
+    triggers: ['TV_EDGE_GAP', 'MISSED_HIGH_OPP'],
+  },
+  counterfactual_atoms: {
+    id: 'counterfactual_atoms',
+    layer: 'daily',
+    cadence_hours: 24,
+    npm: 'egx:discovery:counterfactual:atoms',
+    outputs: ['counterfactual_atoms_last.json'],
+    feeds: ['quant_rules'],
+    triggers: ['INVESTIGATE_PATTERN', 'DISCOVERY_QUALITY_LOW'],
   },
 };
 

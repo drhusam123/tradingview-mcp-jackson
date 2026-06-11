@@ -98,6 +98,18 @@ const DISCOVERY_AUDIT_LOG    = join(ROOT, 'logs', 'discovery_audit.log');
 const MARKER_DISCOVERY_AUDIT = '# EGX-DISCOVERY-AUDIT-W';
 const CRON_DISCOVERY_AUDIT   = `30 18 * * 0 cd "${ROOT}" && ${NODE_BIN} "${DISCOVERY_AUDIT_SCRIPT}" >> "${DISCOVERY_AUDIT_LOG}" 2>&1 ${MARKER_DISCOVERY_AUDIT}`;
 
+// Discovery perpetual — weekly tier after DMIDS + audit (quant + counterfactual atoms)
+const PERPETUAL_SCRIPT = join(ROOT, 'scripts', 'egx_discovery_perpetual.mjs');
+const PERPETUAL_LOG    = join(ROOT, 'logs', 'discovery_perpetual.log');
+const MARKER_PERPETUAL = '# EGX-DISCOVERY-PERPETUAL-W';
+const CRON_PERPETUAL_W = `45 18 * * 0 cd "${ROOT}" && ${NODE_BIN} "${PERPETUAL_SCRIPT}" -- --tier weekly >> "${PERPETUAL_LOG}" 2>&1 ${MARKER_PERPETUAL}`;
+
+// TV microstructure sensing — daily before session (local-fallback when TV offline)
+const TV_MICRO_SCRIPT = join(ROOT, 'scripts', 'tv_microstructure_engine.mjs');
+const TV_MICRO_LOG    = join(ROOT, 'logs', 'tv_microstructure.log');
+const MARKER_TV_MICRO = '# EGX-TV-MICRO-D';
+const CRON_TV_MICRO   = `0 11 * * 0-4 cd "${ROOT}" && ${NODE_BIN} "${TV_MICRO_SCRIPT}" --local-fallback --max-symbols 30 >> "${TV_MICRO_LOG}" 2>&1 ${MARKER_TV_MICRO}`;
+
 // DHVD Deep Historical Validation — كل أول أحد من الشهر 7 PM القاهرة (17:00 UTC صيف)
 // يُعيد التحقق من جميع القوانين المكتشفة عبر كامل التاريخ، log-only بدون إرسال عميل
 const DHVD_SCRIPT    = join(ROOT, 'scripts', 'egx_dhvd.mjs');
@@ -471,7 +483,7 @@ const filtered = current.split('\n')
   .filter(l => !ALL_MARKERS.some(m => l.includes(m)))
   .join('\n').trim();
 const ALL_CRONS = [
-  CRON_LINE, CRON_MACRO, CRON_TG, CRON_TV_LIVE_1, CRON_TV_LIVE_2, CRON_DMIDS, CRON_DISCOVERY_AUDIT, CRON_DHVD,
+  CRON_LINE, CRON_MACRO, CRON_TG, CRON_TV_LIVE_1, CRON_TV_LIVE_2, CRON_DMIDS, CRON_DISCOVERY_AUDIT, CRON_PERPETUAL_W, CRON_TV_MICRO, CRON_DHVD,
   CRON_EVO_Q, CRON_EVO_F, CRON_COG_Q, CRON_COG_F,
   CRON_GRAPH_W, CRON_RL_W, CRON_EXPLAIN_Q, CRON_MACRO_G,
   CRON_INTEGRITY_W, CRON_UMCG_W, CRON_CAUSAL_W, CRON_FAILURE_D,
@@ -500,6 +512,8 @@ console.log(`   👁️  TV Live 1:   30 10 * * 0-4       (منتصف الجلس
 console.log(`   👁️  TV Live 2:   15 13 * * 0-4       (قرب الإغلاق)          → fetch_intraday_live.mjs`);
 console.log(`   🔬 DMIDS:       0 18 * * 0          (الأحد 8 PM)          → egx_discover.mjs --rescore`);
 console.log(`   🔍 Discovery:   30 18 * * 0          (الأحد 8:30 PM)       → egx_discovery_audit.mjs`);
+console.log(`   ♾️  Perpetual:   45 18 * * 0          (الأحد 8:45 PM)       → egx_discovery_perpetual --tier weekly`);
+console.log(`   📡 TV Micro:    0 11 * * 0-4         (11 AM)               → tv_microstructure_engine.mjs`);
 console.log(`   🧪 DHVD:        0 17 1-7 * 0       (أول أحد شهرياً)      → egx_dhvd.mjs (log only)`);
 console.log(`   🧠 Evo-Quick:   50 14 * * 0-4      (الأحد-الخميس 4:50 PM) → egx_evolution.mjs --quick`);
 console.log(`   🧬 Evo-Full:    0 19 * * 0          (الأحد 9 PM)          → egx_evolution.mjs`);

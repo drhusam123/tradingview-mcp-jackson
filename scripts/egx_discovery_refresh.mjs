@@ -4,6 +4,8 @@
  * Runs after closed loop or post-session to apply P6-tuned discovery.
  */
 import { execFileSync } from 'child_process';
+
+const NODE = process.execPath;
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { buildDiscoveryParams } from './lib/discovery_context.mjs';
@@ -51,8 +53,25 @@ function stage(name, fn) {
   }
 }
 
-console.log(`\n═══ Discovery Refresh (opp → score → promote) ═══`);
+console.log(`\n═══ Discovery Refresh (tv → opp → score → promote) ═══`);
 console.log(`  Date: ${signalDate} | feedback=${ctx.feedback.n_items} | strict=${ctx.params.strict_quality}\n`);
+
+stage('tv_microstructure', () => {
+  try {
+    execFileSync(NODE, [join(ROOT, 'scripts/tv_microstructure_engine.mjs'), '--local-only', '--max-symbols', '30', '--date', signalDate], {
+      cwd: ROOT,
+      encoding: 'utf8',
+      timeout: 900_000,
+      stdio: 'pipe',
+    });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, skipped: true, error: e.message?.slice(0, 120) };
+  }
+});
+
+stage('counterfactual_atoms', () =>
+  PY('scripts/python/counterfactual_atom_miner.py', JSON.stringify({ date: signalDate })));
 
 const opp = stage('opportunity_score_v2', () =>
   PY('scripts/python/opportunity_score_v2.py', 'run', paramsJson));

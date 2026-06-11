@@ -25,6 +25,21 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 ROOT = Path(__file__).resolve().parents[2]
 DB_PATH = ROOT / "data" / "egx_trading.db"
 
+# TRADING_LESSONS v3 historical quality symbols
+QUALITY_SYMBOLS_V3 = frozenset({
+    "MOSC", "UTOP", "TORA", "ADRI", "AMES", "KWIN", "SNFI",
+    "AALR", "HBCO", "AIFI", "WKOL", "IBCT",
+})
+
+TV_ATOM_BOOSTS = {
+    "VWAP_RECLAIM": {"smart_money": 8.0, "structure": 4.0, "flag": "TV_VWAP_RECLAIM"},
+    "VP_POC_RECLAIM": {"structure": 7.0, "smart_money": 4.0, "flag": "TV_VP_POC_RECLAIM"},
+    "ABSORPTION_BAR": {"smart_money": 10.0, "behavioral": 5.0, "flag": "TV_ABSORPTION"},
+    "PARTICIPATION_SHOCK": {"liquidity": 6.0, "flag": "TV_PARTICIPATION_SHOCK"},
+    "CVD_BULL_DIV_PROXY": {"smart_money": 9.0, "structure": 3.0, "flag": "TV_CVD_BULL_DIV"},
+    "CMF_POSITIVE_PROXY": {"smart_money": 5.0, "rs_sector": 3.0, "flag": "TV_CMF_POSITIVE"},
+}
+
 
 def connect() -> sqlite3.Connection:
     db = sqlite3.connect(str(DB_PATH), timeout=60)
@@ -336,6 +351,7 @@ def score_symbol(
     finals: Dict[str, sqlite3.Row],
     universe_market_ret20: float,
     opp_tuning: Optional[Dict[str, Any]] = None,
+    tv_features: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     if len(rows) < 80 or symbol.startswith("EGX"):
         return None
@@ -499,6 +515,39 @@ def score_symbol(
         final_boost = clamp((final_score - 55) * 0.18, 0, 5)
         final_veto = final_row["veto_reason"]
 
+    tv_boost = 0.0
+    tv_atoms: list[str] = []
+    if tv_features:
+        raw_atoms = None
+        try:
+            raw_atoms = tv_features["atoms"] if "atoms" in tv_features.keys() else None
+            if not raw_atoms and tv_features["atoms_json"]:
+                raw_atoms = json.loads(tv_features["atoms_json"])
+        except Exception:
+            raw_atoms = []
+        for atom in raw_atoms or []:
+            cfg = TV_ATOM_BOOSTS.get(atom)
+            if not cfg:
+                continue
+            tv_atoms.append(atom)
+            tv_boost += cfg.get("smart_money", 0) * 0.04
+            tv_boost += cfg.get("structure", 0) * 0.03
+            tv_boost += cfg.get("liquidity", 0) * 0.03
+            tv_boost += cfg.get("behavioral", 0) * 0.02
+            tv_boost += cfg.get("rs_sector", 0) * 0.02
+            if cfg.get("smart_money"):
+                smart_money_score = clamp(smart_money_score + cfg["smart_money"])
+            if cfg.get("structure"):
+                structure_score = clamp(structure_score + cfg["structure"])
+            if cfg.get("liquidity"):
+                liquidity_expansion_score = clamp(liquidity_expansion_score + cfg["liquidity"])
+            if cfg.get("behavioral"):
+                behavioral_score = clamp(behavioral_score + cfg["behavioral"])
+            if cfg.get("rs_sector"):
+                rs_sector_score = clamp(rs_sector_score + cfg["rs_sector"])
+
+    quality_boost = 3.5 if symbol in QUALITY_SYMBOLS_V3 else 0.0
+
     opportunity_score = (
         market_score * 0.10
         + sector_score * 0.14
@@ -510,6 +559,8 @@ def score_symbol(
         + risk_score * 0.05
         + smart_money_score * 0.05
         + final_boost
+        + tv_boost
+        + quality_boost
         - failure_penalty * 0.38
     )
     opportunity_score = clamp(opportunity_score)
@@ -545,6 +596,13 @@ def score_symbol(
         flags.append("ATR_OK")
     if absorption:
         flags.append("ABSORPTION")
+    for atom in tv_atoms:
+        cfg = TV_ATOM_BOOSTS.get(atom, {})
+        flag = cfg.get("flag")
+        if flag:
+            flags.append(flag)
+    if symbol in QUALITY_SYMBOLS_V3:
+        flags.append("QUALITY_V3")
     if recent_wick_fail:
         flags.append("RECENT_WICK_FAIL")
     if final_row and int(final_row["actionable"] or 0) == 1:
@@ -587,6 +645,9 @@ def score_symbol(
         "final_actionable": int(final_row["actionable"] or 0) if final_row else None,
         "final_veto": final_veto,
         "pine_source": pine[symbol]["source_script"] if symbol in pine and "source_script" in pine[symbol].keys() else None,
+        "tv_atoms": tv_atoms,
+        "tv_score": safe_float(tv_features["tv_score"] if tv_features and "tv_score" in tv_features.keys() else None, None),
+        "quality_v3": symbol in QUALITY_SYMBOLS_V3,
     }
 
     return {
@@ -665,6 +726,7 @@ def run(params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     sectors = sector_context(db, by_symbol)
     liq = latest_rows(db, "liquidity_profile", "computed_date")
     pine = latest_rows(db, "pine_analytics", "trade_date")
+    tv_feat = latest_rows(db, "tv_discovery_features", "trade_date")
     dna = latest_rows(db, "stock_dna", "updated_at")
     memory = latest_rows(db, "stock_behavioral_memory", "last_updated")
     finals = latest_final_signals(db)
@@ -687,6 +749,7 @@ def run(params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
             finals,
             universe_market_ret20,
             opp_tuning=opp_tuning,
+            tv_features=tv_feat.get(symbol),
         )
         if item:
             rows_out.append(item)
@@ -736,6 +799,13 @@ def run(params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     near_ath_risk = sum(
         1 for r in rows_out if "NEAR_ATH_LOW_VOL" in json.loads(r.get("flags_json") or "[]")
     )
+    tv_feature_count = sum(
+        1 for r in rows_out
+        if any(f.startswith("TV_") for f in json.loads(r.get("flags_json") or "[]"))
+    )
+    quality_v3_count = sum(
+        1 for r in rows_out if "QUALITY_V3" in json.loads(r.get("flags_json") or "[]")
+    )
     qualified_plus = sum(
         stage_counts.get(s, 0)
         for s in ("QUALIFIED_DISCOVERY", "ACTIONABLE_CANDIDATE", "NEAR_BREAKOUT")
@@ -753,6 +823,8 @@ def run(params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         "lower_third_count": lower_third_count,
         "vol_sweet_spot_count": vol_sweet_count,
         "near_ath_risk_count": near_ath_risk,
+        "tv_feature_count": tv_feature_count,
+        "quality_v3_count": quality_v3_count,
         "top": [
             {
                 "symbol": r["symbol"],

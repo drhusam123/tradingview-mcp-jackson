@@ -226,6 +226,19 @@ def build_examples(data, min_history=60, horizon=5):
     return examples
 
 
+def load_counterfactual_seeds(params: dict | None = None) -> dict:
+    params = params or {}
+    if params.get("counterfactual_atoms"):
+        return params["counterfactual_atoms"]
+    path = ROOT / "data" / "counterfactual_atoms_last.json"
+    if path.exists():
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {}
+
+
 def atoms():
     return [
         ("rsi_35_55", lambda x: 35 <= x["rsi"] <= 55),
@@ -358,31 +371,62 @@ def run_discovery(params):
         "expectancy": mean([x["realized"] for x in oos_all]),
     }
 
+    cf_seeds = load_counterfactual_seeds(params)
+    penalize_atoms = set(cf_seeds.get("penalize_atoms") or [])
+    priority_atoms = list(cf_seeds.get("priority_atoms") or cf_seeds.get("boost_atoms") or [])
+    seed_pairs = list(cf_seeds.get("seed_pairs") or [])
+
     atom_defs = atoms()
+    atom_map = {name: fn for name, fn in atom_defs}
     selected_by_atom = {
         name: {idx for idx, x in enumerate(examples) if fn(x)}
         for name, fn in atom_defs
     }
     candidates = []
-    for name, _fn in atom_defs:
+
+    def _score_single(name: str):
+        if name not in atom_map:
+            return
         selected = [examples[i] for i in selected_by_atom[name]]
         r = score_rule(name, [name], selected, baseline, split_date, min_oos=min_oos)
         if r:
             candidates.append(r)
 
-    pair_defs = list(itertools.combinations(atom_defs, 2))[:max_pairs]
+    seen_single = set()
+    for name in priority_atoms:
+        if name not in seen_single:
+            _score_single(name)
+            seen_single.add(name)
+    for name, _fn in atom_defs:
+        if name not in seen_single:
+            _score_single(name)
+
     pair_pool = []
-    for (n1, _f1), (n2, _f2) in pair_defs:
-        if n1 == n2:
-            continue
+    seen_pairs = set()
+
+    def _score_pair(n1: str, n2: str):
+        key = tuple(sorted((n1, n2)))
+        if key in seen_pairs or n1 not in atom_map or n2 not in atom_map:
+            return
+        seen_pairs.add(key)
         idxs = selected_by_atom[n1] & selected_by_atom[n2]
         if len(idxs) < min_oos:
-            continue
+            return
         selected = [examples[i] for i in idxs]
         r = score_rule(f"{n1} + {n2}", [n1, n2], selected, baseline, split_date, min_oos=min_oos)
         if r:
             candidates.append(r)
             pair_pool.append((r, n1, n2, idxs))
+
+    for pair in seed_pairs:
+        if isinstance(pair, (list, tuple)) and len(pair) == 2:
+            _score_pair(pair[0], pair[1])
+
+    pair_defs = list(itertools.combinations(atom_defs, 2))[:max_pairs]
+    for (n1, _f1), (n2, _f2) in pair_defs:
+        if n1 == n2:
+            continue
+        _score_pair(n1, n2)
 
     pair_pool.sort(
         key=lambda p: (
@@ -425,6 +469,16 @@ def run_discovery(params):
             adjust_rule_composite(r, feedback_queue)
 
     candidates = apply_p6_research_hints(candidates, params)
+
+    priority_set = set(priority_atoms)
+    for r in candidates:
+        conds = set(r.get("conditions") or [])
+        if conds & penalize_atoms:
+            r["composite_score"] = round(float(r["composite_score"]) * 0.72, 4)
+            r["counterfactual_penalized"] = True
+        elif priority_set and conds & priority_set:
+            r["composite_score"] = round(float(r["composite_score"]) * 1.06, 4)
+            r["counterfactual_boosted"] = True
 
     quality_params = dict(params)
     if params.get("p6_gate", {}).get("gate_pass") is False:

@@ -133,7 +133,28 @@ if (refresh.includes('cognitive_arbitration') && refresh.includes('apply_arbitra
   fail('refresh_arbitration_order', 'Discovery refresh missing arbitration step');
 }
 
-// 15. Perpetual orchestrator + engine registry
+// 15. Phase 2 — TV microstructure + counterfactual atoms
+const tvMicro = readText('scripts/tv_microstructure_engine.mjs');
+const tvFeat = readText('scripts/python/tv_discovery_features.py');
+const cfMiner = readText('scripts/python/counterfactual_atom_miner.py');
+if (tvMicro.includes('tv_discovery_features') && tvFeat.includes('derive_atoms')) {
+  pass('tv_microstructure_engine', 'TV sensing → tv_discovery_features atoms');
+} else {
+  fail('tv_microstructure_engine', 'TV microstructure engine missing');
+}
+if (cfMiner.includes('REASON_TO_BOOST') && readText('scripts/python/quant_discovery.py').includes('load_counterfactual_seeds')) {
+  pass('counterfactual_atom_miner', 'learning_loop → quant_discovery seed atoms');
+} else {
+  fail('counterfactual_atom_miner', 'Counterfactual atom miner not wired');
+}
+const oppPy2 = readText('scripts/python/opportunity_score_v2.py');
+if (oppPy2.includes('TV_ATOM_BOOSTS') && oppPy2.includes('tv_discovery_features')) {
+  pass('opp_tv_boosts', 'opportunity_score_v2 consumes TV discovery features');
+} else {
+  fail('opp_tv_boosts', 'Opportunity v2 missing TV boosts');
+}
+
+// 16. Perpetual orchestrator + engine registry
 const registry = readText('scripts/lib/discovery_engine_registry.mjs');
 const perpetual = readText('scripts/egx_discovery_perpetual.mjs');
 if (registry.includes('DISCOVERY_ENGINES') && perpetual.includes('planDiscoveryRun')) {
@@ -142,7 +163,7 @@ if (registry.includes('DISCOVERY_ENGINES') && perpetual.includes('planDiscoveryR
   fail('perpetual_orchestrator', 'Perpetual discovery orchestrator missing');
 }
 
-// 16. Directive stats
+// 17. Directive stats
 const dirs = countDirectiveStats();
 pass('directive_stats', `pending=${dirs.pending} completed=${dirs.completed}`);
 

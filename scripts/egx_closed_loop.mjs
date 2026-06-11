@@ -35,6 +35,7 @@ import { cairoDateParts } from './lib/egx_calendar.mjs';
 loadEnv();
 
 const NODE = process.execPath;
+const PYTHON3 = process.env.PYTHON_BIN || process.env.PYTHON3 || 'python3';
 const AS_JSON = process.argv.includes('--json');
 const dateArg = process.argv.find((a, i) => process.argv[i - 1] === '--date');
 const signalDate = dateArg || latestReadySignalDate() || cairoDateParts().date;
@@ -103,6 +104,21 @@ const allDirectives = [
   ...(oppFollowup?.directives || []),
 ];
 const ingested = stage('p6_directives_ingest', () => ingestP6Directives(allDirectives));
+let counterfactualAtoms = null;
+stage('counterfactual_atom_miner', () => {
+  const out = execSync(`"${PYTHON3}" scripts/python/counterfactual_atom_miner.py '{}'`, {
+    cwd: PROJECT_ROOT,
+    encoding: 'utf8',
+    timeout: 60_000,
+  });
+  try {
+    counterfactualAtoms = JSON.parse(out.trim());
+  } catch {
+    counterfactualAtoms = { parsed: false };
+  }
+  return { boost_atoms: counterfactualAtoms?.boost_atoms?.length ?? 0 };
+});
+
 const discovery = stage('discovery_feedback', () => buildDiscoveryFeedback({
   forensic,
   autopsy: learning?.loss_autopsy,
@@ -182,6 +198,7 @@ const report = {
   opportunity_followup: oppFollowup,
   p6_research_context: p6Context,
   discovery_refresh: discoveryRefresh,
+  counterfactual_atoms: counterfactualAtoms,
   directives_resolved: resolved?.completed ?? 0,
   loops_closed: [
     'delivery_audit → recommendation_outcomes.client_delivered',
