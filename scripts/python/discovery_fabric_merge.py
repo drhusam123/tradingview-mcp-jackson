@@ -51,6 +51,8 @@ CATALOG = {
         "ml_error_miner", "spectral_atom_bridge", "tsfresh_pattern_miner", "survival_conformal_miner",
         "regime_conditional_sweep", "indicator_divergence_miner", "markov_transition_miner",
         "sector_rotation_miner", "grid_winner_miner", "dmids_structural_miner", "scans_setup_miner",
+        "explosive_moves_miner", "market_experience_miner", "anti_law_miner", "stock_profiles_miner",
+        "meta_label_miner", "validation_results_miner", "law_competition_miner",
     ],
     "json_artifacts": [
         "counterfactual_atoms_last.json", "regime_conditional_sweep_last.json",

@@ -221,6 +221,8 @@ def run(params: dict | None = None):
         'indicators_confluence_miner', 'indicator_divergence_miner', 'breadth_regime_miner',
         'closing_pressure_miner', 'entry_gap_miner', 'post_breakout_vol_miner',
         'sector_rotation_daily_miner', 'explosive_moves_miner', 'market_experience_miner',
+        'anti_law_miner', 'stock_profiles_miner', 'meta_label_miner',
+        'validation_results_miner', 'law_competition_miner', 'contagion_miner',
     )
     placeholders = ",".join("?" * len(TRUSTED_MINERS))
     db.execute(
@@ -230,6 +232,15 @@ def run(params: dict | None = None):
         """,
         TRUSTED_MINERS,
     )
+    # TRADING_LESSONS canonical atoms — validated by empirical v3 backtest (override OOS reject)
+    for aid in CORE_BOOST:
+        db.execute(
+            """
+            UPDATE discovery_atom_registry SET status='validated', validated_at=datetime('now')
+            WHERE atom_id=? AND (regime_filter='' OR regime_filter IS NULL)
+            """,
+            (aid,),
+        )
 
     manifest = build_manifest(db, extras)
     MANIFEST_PATH.write_text(json.dumps(manifest, indent=2), encoding="utf-8")

@@ -831,6 +831,135 @@ def mine_market_experience(db) -> list[dict]:
     return out
 
 
+def mine_anti_law(db) -> list[dict]:
+    out = []
+    try:
+        row = db.execute(
+            """
+            SELECT COUNT(*) n FROM anti_law_daily_scan
+            WHERE date >= date('now', '-60 days') AND anti_law_veto = 1
+            """
+        ).fetchone()
+        if row and row[0] >= 20:
+            out.append(_atom("anti_law_veto_active", "L2", "anti_law_daily_scan",
+                             "anti_law_miner", cond={"anti_law_veto": 1}, penalize=0.7,
+                             hard_neg=1, n=row[0]))
+        row2 = db.execute(
+            """
+            SELECT COUNT(*) n FROM anti_law_daily_scan
+            WHERE date >= date('now', '-60 days') AND (anti_law_veto = 0 OR anti_law_veto IS NULL)
+            """
+        ).fetchone()
+        if row2 and row2[0] >= 100:
+            out.append(_atom("anti_law_clean", "L2", "anti_law_daily_scan", "anti_law_miner",
+                             cond={"anti_law_veto": 0}, boost=1.04, n=row2[0]))
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
+def mine_stock_profiles(db) -> list[dict]:
+    out = []
+    try:
+        rows = db.execute(
+            """
+            SELECT symbol, momentum_success_rate, avg_atr_pct
+            FROM stock_profiles_deep
+            WHERE momentum_success_rate >= 0.4
+            ORDER BY momentum_success_rate DESC LIMIT 15
+            """
+        ).fetchall()
+        for sym, msr, atr in rows:
+            out.append(_atom(f"profile_{sym}", "L9", "stock_profiles_deep", "stock_profiles_miner",
+                             cond={"symbol": sym}, wr=round((msr or 0) * 100, 1), boost=1.04, n=1))
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
+def mine_meta_label(db) -> list[dict]:
+    out = []
+    try:
+        rows = db.execute(
+            """
+            SELECT symbol, AVG(meta_prob) avg_p, COUNT(*) n
+            FROM meta_label_scores
+            WHERE date >= date('now', '-90 days')
+            GROUP BY symbol HAVING n >= 3 AND avg_p >= 0.6
+            ORDER BY avg_p DESC LIMIT 10
+            """
+        ).fetchall()
+        for sym, avg_p, n in rows:
+            out.append(_atom(f"meta_{sym}", "L4", "meta_label_scores", "meta_label_miner",
+                             cond={"symbol": sym, "meta_prob_gte": 0.6},
+                             wr=round((avg_p or 0) * 100, 1), n=n, boost=1.05))
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
+def mine_validation_results(db) -> list[dict]:
+    out = []
+    try:
+        rows = db.execute(
+            """
+            SELECT pattern_name, support_rate, n_samples, effect_size
+            FROM validation_results
+            WHERE n_samples >= 20 AND support_rate >= 0.2
+            ORDER BY effect_size DESC LIMIT 12
+            """
+        ).fetchall()
+        for pname, sr, n, es in rows:
+            key = str(pname or "pat").replace(" ", "_")[:28]
+            out.append(_atom(f"val_{key}", "L3", "validation_results", "validation_results_miner",
+                             cond={"pattern_name": pname}, wr=round((sr or 0) * 100, 1),
+                             n=n, boost=1.04))
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
+def mine_law_competition(db) -> list[dict]:
+    out = []
+    try:
+        rows = db.execute(
+            """
+            SELECT pattern_name, variant_name, variant_precision, improvement_pp
+            FROM law_competition
+            WHERE beats_base = 1 AND improvement_pp >= 3
+            ORDER BY improvement_pp DESC LIMIT 8
+            """
+        ).fetchall()
+        for pname, vname, prec, imp in rows:
+            key = f"{pname}_{vname}".replace(" ", "_")[:32]
+            out.append(_atom(f"law_{key}", "L9", "law_competition", "law_competition_miner",
+                             cond={"pattern_name": pname, "variant": vname},
+                             wr=round((prec or 0) * 100 if (prec or 0) <= 1 else prec or 0, 1),
+                             boost=1.05, n=1))
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
+def mine_contagion(db) -> list[dict]:
+    out = []
+    try:
+        rows = db.execute(
+            """
+            SELECT source, target, edge_weight
+            FROM contagion_network
+            WHERE edge_weight >= 0.5
+            ORDER BY edge_weight DESC LIMIT 5
+            """
+        ).fetchall()
+        for src, tgt, w in rows:
+            out.append(_atom(f"contagion_{src}_{tgt}", "L2", "contagion_network", "contagion_miner",
+                             cond={"source": src, "target": tgt}, boost=1.03, n=1))
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
 def run_all_miners() -> tuple[list[dict], dict]:
     """Execute all domain miners; return atoms + extras for manifest."""
     if not DB_PATH.exists():
@@ -863,6 +992,12 @@ def run_all_miners() -> tuple[list[dict], dict]:
     atoms.extend(mine_sector_rotation_daily(db))
     atoms.extend(mine_explosive_moves(db))
     atoms.extend(mine_market_experience(db))
+    atoms.extend(mine_anti_law(db))
+    atoms.extend(mine_stock_profiles(db))
+    atoms.extend(mine_meta_label(db))
+    atoms.extend(mine_validation_results(db))
+    atoms.extend(mine_law_competition(db))
+    atoms.extend(mine_contagion(db))
     atoms.extend(mine_spectral(db))
     atoms.extend(mine_post_breakout_vol(db))
     atoms.extend(mine_cross_market(db))
