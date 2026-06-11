@@ -17,6 +17,26 @@ import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
+function resolveCronPython() {
+  const candidates = [
+    process.env.PYTHON_BIN,
+    process.env.PYTHON3,
+    execSync('which python3', { encoding: 'utf8' }).trim(),
+    '/usr/bin/python3',
+    'python3',
+  ].filter(Boolean);
+  const seen = new Set();
+  for (const bin of candidates) {
+    if (seen.has(bin)) continue;
+    seen.add(bin);
+    try {
+      execSync(`"${bin}" -c "import numpy"`, { stdio: 'pipe', timeout: 5000 });
+      return bin;
+    } catch { /* try next */ }
+  }
+  return candidates[0] || 'python3';
+}
+
 const __dirname  = dirname(fileURLToPath(import.meta.url));
 const ROOT       = join(__dirname, '..');
 const LOG_FILE   = join(ROOT, 'logs', 'tv_auto_daily.log');
@@ -57,7 +77,8 @@ const CRON_MACRO     = `0 7 * * 0 cd "${ROOT}" && ${NODE_BIN} "${MACRO_SCRIPT}" 
 const TG_SCRIPT      = join(ROOT, 'scripts', 'egx_telegram_cron.mjs');
 const TG_LOG         = join(ROOT, 'logs', 'telegram.log');
 // Full automation: prepare-send → live telegram → reconcile (separate lock from TV sync).
-const CRON_ENV       = `PYTHON_BIN=/usr/bin/python3`;
+const CRON_PYTHON    = resolveCronPython();
+const CRON_ENV       = `PYTHON_BIN=${CRON_PYTHON} PYTHON3=${CRON_PYTHON}`;
 const CRON_TG        = `20 15 * * 0-4 cd "${ROOT}" && ${CRON_ENV} ${locked('egx-telegram', `${NODE_BIN} "${TG_SCRIPT}"`)} >> "${TG_LOG}" 2>&1 ${MARKER_TG}`;
 
 // TradingView live snapshots — خفيفة ومحدودة أثناء الجلسة لتغذية quotes/DOM

@@ -774,6 +774,7 @@
     "egx:p6:sync:light": "node scripts/egx_p6_sync.mjs --light",
     "egx:monitoring": "node scripts/egx_p6_status.mjs",
     "egx:go:live": "node scripts/egx_go_live.mjs",
+    "egx:git:push": "bash scripts/git_push.sh",
     "egx:go:live:local": "node scripts/egx_go_live.mjs --skip-push",
     "egx:loss:autopsy": "node scripts/egx_loss_autopsy.mjs",
     "egx:p6:status": "node scripts/egx_p6_status.mjs",
