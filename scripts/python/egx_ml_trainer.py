@@ -79,7 +79,7 @@ PH55_MIN_TOP_CONF_ACC  = float(os.environ.get('EGX_PH55_MIN_TOP_CONF_ACC', '0.38
 
 # ── DB ────────────────────────────────────────────────────────────────────────
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=120)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
@@ -4765,12 +4765,32 @@ def phase54_forecast_accuracy():
 # PREDICT ENSEMBLE — score today's stocks with the full 4-model + meta stack
 # ═════════════════════════════════════════════════════════════════════════════
 
-def cmd_predict_ensemble():
+def _resolve_pred_date(conn, override=None):
+    """Use explicit date, else latest OHLCV session on holidays/weekends."""
+    if override:
+        return str(override)
+    today_str = datetime.date.today().isoformat()
+    row = conn.execute(
+        "SELECT MAX(DATE(bar_time)) AS d FROM ohlcv_history_execution"
+    ).fetchone()
+    latest = (row[0] if isinstance(row, tuple) else row['d']) if row else None
+    if latest and latest < today_str:
+        print(
+            f"[ENS] Non-session day — pred_date={latest} (calendar today={today_str})",
+            flush=True,
+        )
+        return latest
+    return today_str
+
+
+def cmd_predict_ensemble(params=None):
     """
     Score every stock with the trained ensemble (LGBM + XGB + RF + ET → meta).
     Writes results to explosion_predictions table (same schema as explosion_ml.py).
     Called daily from run_daily.mjs after the old single-model predict.
+    Optional params: {"date": "YYYY-MM-DD"}
     """
+    params = params or {}
     import lightgbm as lgb
     import joblib
     import xgboost as xgb
@@ -4918,7 +4938,7 @@ def cmd_predict_ensemble():
     conn = get_db()
     ensure_tables(conn)
 
-    pred_date = datetime.date.today().isoformat()
+    pred_date = _resolve_pred_date(conn, params.get('date'))
     final_gate_symbols = _final_signal_symbols(conn, pred_date)
     print(f"[ENS] final_signals client gate: {len(final_gate_symbols)} actionable symbols for {pred_date}", flush=True)
 
@@ -11297,9 +11317,21 @@ if __name__ == '__main__':
         'phase67':            phase67_manipulation_classifier,
         'status':             cmd_status,
     }
+    cli_params = {}
+    if len(sys.argv) > 2:
+        try:
+            cli_params = json.loads(sys.argv[2])
+        except Exception:
+            cli_params = {}
+
     if cmd in dispatch:
         try:
-            dispatch[cmd]() if cmd == 'status' else _run_with_timeout(cmd, dispatch[cmd], PHASE_TIMEOUT_SEC)
+            if cmd == 'status':
+                dispatch[cmd]()
+            elif cmd == 'predict_ensemble':
+                _run_with_timeout(cmd, lambda: cmd_predict_ensemble(cli_params), PHASE_TIMEOUT_SEC)
+            else:
+                _run_with_timeout(cmd, dispatch[cmd], PHASE_TIMEOUT_SEC)
         except PhaseTimeoutError:
             print(json.dumps({
                 "success": False,

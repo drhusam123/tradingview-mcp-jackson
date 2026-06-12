@@ -46,6 +46,7 @@ ok('tv:auto → predict_ensemble', tvAuto.includes('predict_ensemble'));
 ok('tv:auto → score_all', tvAuto.includes('score_all'));
 ok('tv:auto → apply_arbitration_veto', tvAuto.includes('apply_arbitration_veto'));
 ok('tv:auto → signals diagnose', tvAuto.includes('egx_signal_funnel.mjs'));
+ok('tv:auto → phase50', tvAuto.includes('phase50'));
 
 const postOps = readFileSync(join(PROJECT_ROOT, 'scripts/egx_post_session_ops.mjs'), 'utf8');
 ok('post_session → ml refresh', postOps.includes('egx_ml_boost.mjs'));

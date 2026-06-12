@@ -7,6 +7,7 @@
  *   npm run egx:ml:boost -- --date 2026-06-11
  */
 import { execSync, execFileSync } from 'child_process';
+import { setTimeout as sleep } from 'timers/promises';
 import { writeFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { loadEnv, PROJECT_ROOT } from './lib/load_env.mjs';
@@ -50,10 +51,12 @@ if (!SKIP_ENSEMBLE) {
     steps.push({ name: 'predict_ensemble', ok: false, optional: true, error: 'xgboost/lightgbm missing' });
   }
   if (ensDeps) {
-    run('predict_ensemble', `"${PY}" scripts/python/egx_ml_trainer.py predict_ensemble`, {
+    const ensParams = JSON.stringify({ date: signalDate });
+    run('predict_ensemble', `"${PY}" scripts/python/egx_ml_trainer.py predict_ensemble '${ensParams}'`, {
       optional: true,
-      timeout: 900_000,
+      timeout: 1_800_000,
     });
+    await sleep(5_000);
   }
   run('explosion_ml', `"${PY}" scripts/python/explosion_ml.py predict_today '{"date":"${signalDate}"}'`, {
     optional: true,
@@ -64,7 +67,19 @@ run('mladv_daily', `"${PY}" scripts/python/ml_advanced.py daily`, { optional: tr
 run('adaptive_gate_phase50', `"${PY}" scripts/python/egx_ml_trainer.py phase50`, { optional: true, timeout: 300_000 });
 
 const scoreParams = JSON.stringify({ date: signalDate });
-run('score_all', `"${PY}" scripts/python/signal_integration.py score_all '${scoreParams}'`, { timeout: 600_000 });
+let scoreOk = false;
+for (let attempt = 1; attempt <= 4; attempt++) {
+  if (run('score_all', `"${PY}" scripts/python/signal_integration.py score_all '${scoreParams}'`, {
+    optional: attempt < 4,
+    timeout: 600_000,
+  })) {
+    scoreOk = true;
+    break;
+  }
+  console.log(`  ⏳ score_all upstream not ready — retry ${attempt}/4 in 30s`);
+  await sleep(30_000);
+}
+if (!scoreOk) process.exit(1);
 run('apply_arbitration', `"${PY}" scripts/python/signal_integration.py apply_arbitration_veto '${scoreParams}'`, { optional: true });
 
 let simulate = null;

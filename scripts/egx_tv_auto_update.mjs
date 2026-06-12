@@ -391,11 +391,16 @@ async function main() {
   run('node scripts/egx_regime_transition.mjs warning', 'Regime transition warning');
   run(`${PYTHON3} scripts/python/egx_ml_trainer.py phase21`, 'Spectral features before scoring');
   run(`node scripts/egx_explosion_ml.mjs predict --date ${signalDate} --top-n 20`, 'Explosion ML prediction refresh');
-  run(`${PYTHON3} scripts/python/egx_ml_trainer.py predict_ensemble`, 'Ensemble ML prediction refresh (LGBM+XGB+RF+Meta)');
+  run(
+    `${PYTHON3} scripts/python/egx_ml_trainer.py predict_ensemble '${JSON.stringify({ date: signalDate })}'`,
+    'Ensemble ML prediction refresh (LGBM+XGB+RF+Meta)',
+    { timeoutMs: 1_800_000 },
+  );
   run(`${PYTHON3} scripts/python/ml_purged_audit.py`, 'ML purged walk-forward governance');
   run(`${PYTHON3} scripts/python/macro_edge_validator.py`, 'Macro edge purged validation');
   run('node scripts/tv_macro_reconcile.mjs', 'TradingView macro and cross-market reconcile gate');
   run(`${PYTHON3} scripts/python/ml_advanced.py daily ${signalDate}`, 'ML-Advanced daily (meta/MoE/analogs/conformal/survival/leadlag/drift)');
+  run(`${PYTHON3} scripts/python/egx_ml_trainer.py phase50`, 'Adaptive gate thresholds (phase50)', { critical: false });
   const discoveryCtx = buildDiscoveryParams({ signalDate });
   const scoreParams = JSON.stringify({ date: signalDate });
   const discoveryParamsJson = JSON.stringify(discoveryCtx.params);
