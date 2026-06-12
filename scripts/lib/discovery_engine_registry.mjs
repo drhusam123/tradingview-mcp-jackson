@@ -165,9 +165,15 @@ export const DISCOVERY_ENGINES = {
     layer: 'daily',
     cadence_hours: 24,
     npm: 'egx:mde',
-    outputs: ['egx_market_discovery_daily', 'mde_shadow_last.json'],
-    feeds: [],
-    notes: 'Phase 1 shadow — discovery brain + scoring + setups; no opp/promotion/UES',
+    outputs: [
+      'egx_market_discovery_daily',
+      'mde_shadow_last.json',
+      'discovery_mde_manifest.json',
+      'mde_shadow_attribution_last.json',
+    ],
+    feeds: ['discovery_fabric'],
+    npm_attribution: 'egx:mde:attribution',
+    notes: 'Phase 2 shadow — fabric mde_* atoms + OOS attribution; additive only; no opp/promotion/UES',
   },
 };
 

@@ -271,7 +271,32 @@ if (
   fail('level_c_miners', 'Missing C1–C4 domain miners');
 }
 
-// 29. Directive stats
+// 29. MDE Phase 2 — isolated manifest + additive contract
+const mdeAttrPy = readText('scripts/python/mde_oos_attribution.py');
+const gatePy = readText('scripts/python/discovery_backtest_gate.py');
+if (
+  minersPy.includes('mine_egx_mde')
+  && mdeAttrPy.includes('discovery_mde_manifest.json')
+  && mdeAttrPy.includes('mde_watch_atoms')
+  && gatePy.includes('is_mde_atom')
+) {
+  pass('mde_phase2_isolation', 'MDE atoms → separate manifest; excluded from main gate penalize');
+} else {
+  fail('mde_phase2_isolation', 'MDE Phase 2 wiring incomplete');
+}
+if (fabricJs.includes('mde_oos_attribution') && registry.includes('egx_market_discovery')) {
+  pass('mde_fabric_attribution', 'discovery fabric runs MDE OOS attribution after backtest_gate');
+} else {
+  fail('mde_fabric_attribution', 'MDE attribution stage missing from fabric');
+}
+const oppMde = readText('scripts/python/opportunity_score_v2.py');
+if (!oppMde.includes('discovery_mde_manifest') && !oppMde.includes('mde_boost_atoms')) {
+  pass('mde_no_opp_coupling', 'opportunity_score_v2 does not read MDE manifest (additive shadow)');
+} else {
+  fail('mde_no_opp_coupling', 'opp_v2 must not consume MDE manifest until EGX_MDE_OPP_BOOST=1');
+}
+
+// 30. Directive stats
 const dirs = countDirectiveStats();
 pass('directive_stats', `pending=${dirs.pending} completed=${dirs.completed}`);
 

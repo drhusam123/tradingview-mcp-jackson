@@ -7,7 +7,15 @@ MDE Core        = discovery brain (hidden repricing before explosion)
 MDE Integration = safe plug-in to existing machine (deferred until shadow proof)
 ```
 
-## Phase 1 guarantees (current)
+## Phase 2 guarantees (current)
+
+- `mine_egx_mde()` proposes `mde_*` fabric atoms (boost only, `hard_negative=0`)
+- `mde_oos_attribution.py` → `discovery_mde_manifest.json` + `mde_shadow_attribution_last.json`
+- Manifest lists: `mde_watch_atoms`, `mde_boost_atoms`, `mde_priority_atoms`, `mde_rejected_atoms`
+- **Excluded** from `discovery_ml_manifest.json` `penalize_atoms` / `priority_atoms`
+- **Still does NOT** modify: UES, score_all, promotion, arbitration, Telegram, opp_v2, `final_signals`
+
+## Phase 1 guarantees
 
 - `egx_market_discovery_engine.py` runs in **shadow mode**
 - Outputs: `egx_market_discovery_daily`, `data/mde_shadow_last.json`

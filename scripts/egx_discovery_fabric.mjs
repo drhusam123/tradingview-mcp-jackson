@@ -67,6 +67,18 @@ if (!GATE_ONLY) {
 if (!MERGE_ONLY) {
   const gate = stage('backtest_gate', () => PY('scripts/python/discovery_backtest_gate.py'));
   console.log(`  ✅ Gate: validated=${gate.n_validated} rejected=${gate.n_rejected} | priority=${gate.priority_atoms}`);
+
+  if (process.env.EGX_MDE_ENABLED !== '0') {
+    const mdeAttr = stage('mde_oos_attribution', () =>
+      PY('scripts/python/mde_oos_attribution.py', LIGHT ? '{"max_dates":60}' : '{}'));
+    if (mdeAttr?.success) {
+      const s = mdeAttr.summary || {};
+      console.log(
+        `  ✅ MDE attribution (shadow): research=${s.atoms_research ?? 0} `
+        + `boost=${s.atoms_production_boost ?? 0} rejected=${s.atoms_rejected ?? 0}`,
+      );
+    }
+  }
 }
 
 let mlLoop = null;

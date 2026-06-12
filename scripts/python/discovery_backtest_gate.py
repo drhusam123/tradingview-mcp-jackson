@@ -20,6 +20,14 @@ MIN_LIFT = 1.03
 MIN_WR_DELTA_PP = 2.0
 MIN_PF_PROXY = 1.1
 
+MDE_ATOM_PREFIX = "mde_"
+
+
+def is_mde_atom(atom_id: str) -> bool:
+    """MDE atoms use separate discovery_mde_manifest — never main penalize/priority."""
+    return bool(atom_id) and atom_id.startswith(MDE_ATOM_PREFIX)
+
+
 # Import quant pipeline for OOS evaluation
 sys.path.insert(0, str(ROOT / "scripts/python"))
 from quant_discovery import load_bars, build_examples, atoms  # noqa: E402
@@ -94,6 +102,8 @@ def build_manifest(db, extras: dict | None = None) -> dict:
 
     for r in rows:
         aid, regime, wr, n, lift, boost, penal, hn, mlcol, status = r
+        if is_mde_atom(aid):
+            continue
         if status != "validated":
             if hn and status == "rejected":
                 penalize.append(aid)
@@ -217,6 +227,8 @@ def run(params: dict | None = None):
     n_val, n_rej = 0, 0
     for row in proposed:
         aid = row["atom_id"]
+        if is_mde_atom(aid):
+            continue
         if "_" in aid and aid.count("_") >= 2 and not atom_map.get(aid):
             # composite / non-evaluable — keep proposed with miner prior
             continue

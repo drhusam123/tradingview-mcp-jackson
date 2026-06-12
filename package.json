@@ -81,6 +81,7 @@
     "egx:opportunity:v2:status": "python3 scripts/python/opportunity_score_v2.py status",
     "egx:mde": "python3 scripts/python/egx_market_discovery_engine.py run",
     "egx:mde:shadow": "EGX_MDE_SHADOW=1 EGX_MDE_OPP_BOOST=0 python3 scripts/python/egx_market_discovery_engine.py run",
+    "egx:mde:attribution": "EGX_MDE_SHADOW=1 EGX_MDE_OPP_BOOST=0 python3 scripts/python/mde_oos_attribution.py",
     "egx:xpro": "python3 scripts/python/egx_x_pro_engine.py run",
     "egx:xpro:report": "python3 scripts/python/egx_x_pro_engine.py report",
     "egx:xpro:backtest": "python3 scripts/python/egx_x_pro_engine.py backtest",

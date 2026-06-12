@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -988,6 +989,76 @@ def mine_dmids_structural(db) -> list[dict]:
     return out
 
 
+def mine_egx_mde(db: sqlite3.Connection) -> list[dict]:
+    """Phase 2 — MDE discovery atoms from egx_market_discovery_daily (boost only, no hard_neg)."""
+    out: list[dict] = []
+    setup_atoms = {
+        "accum_breakout": "mde_accumulation_breakout",
+        "pullback_accum": "mde_pullback_accum",
+        "failed_breakdown": "mde_failed_breakdown_spring",
+        "sector_follower": "mde_sector_follower",
+        "absorption_pre_break": "mde_absorption_before_breakout",
+        "impact_expansion": "mde_impact_expansion_candidate",
+    }
+    try:
+        row = db.execute("SELECT MAX(trade_date) AS d FROM egx_market_discovery_daily").fetchone()
+        td = row[0] if row else None
+        if not td:
+            return out
+        rows = db.execute(
+            "SELECT * FROM egx_market_discovery_daily WHERE trade_date=?",
+            (td,),
+        ).fetchall()
+        if not rows:
+            return out
+
+        setup_counts: dict[str, int] = defaultdict(int)
+        inst_n = 0
+        hidden_n = 0
+        high_eff_n = 0
+        for r in rows:
+            try:
+                setups = json.loads(r["setups_json"] or "[]")
+            except json.JSONDecodeError:
+                setups = []
+            for s in setups:
+                if s in setup_atoms:
+                    setup_counts[s] += 1
+            if r["mde_stage"] == "INSTITUTIONAL_DISCOVERY":
+                inst_n += 1
+            if int(r["hidden_repricing"] or 0):
+                hidden_n += 1
+            if float(r["effective_score"] or 0) >= 70:
+                high_eff_n += 1
+
+        for setup_key, atom_id in setup_atoms.items():
+            n = setup_counts.get(setup_key, 0)
+            out.append(_atom(
+                atom_id, "L2", "egx_market_discovery_daily", "egx_mde_miner",
+                cond={"setup": setup_key, "trade_date": td, "n_symbols": n},
+                boost=1.06 if n > 0 else 1.03, n=n, hard_neg=0,
+            ))
+
+        out.append(_atom(
+            "mde_institutional_discovery", "L2", "egx_market_discovery_daily", "egx_mde_miner",
+            cond={"stage": "INSTITUTIONAL_DISCOVERY", "trade_date": td},
+            boost=1.08 if inst_n else 1.03, n=inst_n, hard_neg=0,
+        ))
+        out.append(_atom(
+            "mde_hidden_repricing", "L2", "egx_market_discovery_daily", "egx_mde_miner",
+            cond={"hidden_repricing": True, "trade_date": td},
+            boost=1.07 if hidden_n else 1.03, n=hidden_n, hard_neg=0,
+        ))
+        out.append(_atom(
+            "mde_high_effective", "L2", "egx_market_discovery_daily", "egx_mde_miner",
+            cond={"effective_score_gte": 70, "trade_date": td},
+            boost=1.05 if high_eff_n else 1.03, n=high_eff_n, hard_neg=0,
+        ))
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
 def mine_egx_x_pro(db: sqlite3.Connection) -> list[dict]:
     """EGX-X Pro liquidity/RS scores → discovery atoms."""
     out = []
@@ -1541,6 +1612,7 @@ def run_all_miners() -> tuple[list[dict], dict]:
         return mine_json_sources() + mine_canonical_price_atoms(), {}
 
     db = sqlite3.connect(DB_PATH, timeout=60)
+    db.row_factory = sqlite3.Row
     atoms = []
     atoms.extend(mine_json_sources())
     atoms.extend(mine_canonical_price_atoms())
@@ -1560,6 +1632,7 @@ def run_all_miners() -> tuple[list[dict], dict]:
     atoms.extend(mine_sector_rotation(db))
     atoms.extend(mine_grid_winners(db))
     atoms.extend(mine_dmids_structural(db))
+    atoms.extend(mine_egx_mde(db))
     atoms.extend(mine_egx_x_pro(db))
     atoms.extend(mine_sandbox_hypotheses(db))
     atoms.extend(mine_pine_analytics(db))

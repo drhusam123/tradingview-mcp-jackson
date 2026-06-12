@@ -30,7 +30,7 @@ CATALOG = {
         "L0": ["ohlcv_history_execution", "stock_universe"],
         "L1": ["indicators_cache"],
         "L2": ["pine_analytics", "tv_discovery_features", "closing_pressure_daily", "market_breadth_enhanced",
-               "cross_market_regime", "dom_snapshots"],
+               "cross_market_regime", "dom_snapshots", "egx_market_discovery_daily"],
         "L3": ["scans", "setup_performance"],
         "L4": ["feature_store", "explosion_predictions", "forward_test_predictions",
                "tsfresh_daily", "survival_exit_profile", "conformal_scores"],
@@ -51,7 +51,7 @@ CATALOG = {
         "alpha_universe_gate", "ml_error_miner", "spectral_atom_bridge", "tsfresh_pattern_miner",
         "survival_conformal_miner", "regime_conditional_sweep", "markov_transition_miner",
         "sector_rotation_miner", "sector_rotation_daily_miner", "grid_winner_miner",
-        "dmids_structural_miner", "egx_x_pro_miner", "causal_discovery_miner",
+        "dmids_structural_miner", "egx_mde_miner", "egx_x_pro_miner", "causal_discovery_miner",
         "institutional_retest_miner", "volume_accumulation_miner", "quality_universe_v3_miner",
         "near_ath_miner", "delivery_feedback_miner", "peer_rs_leader_miner",
         "session_microstructure_miner", "defensive_sector_miner", "scans_setup_miner",
@@ -64,7 +64,8 @@ CATALOG = {
     "json_artifacts": [
         "counterfactual_atoms_last.json", "regime_conditional_sweep_last.json",
         "hypothesis_sandbox_bridge_last.json", "tv_microstructure_last.json",
-        "causal_discovery_last.json", "discovery_ml_manifest.json", "egx_rules_runtime.json",
+        "causal_discovery_last.json", "discovery_ml_manifest.json", "discovery_mde_manifest.json",
+        "mde_shadow_attribution_last.json", "mde_shadow_last.json", "egx_rules_runtime.json",
     ],
 }
 
