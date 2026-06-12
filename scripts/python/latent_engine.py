@@ -115,7 +115,7 @@ def _load_ohlcv_all(min_bars=100):
     rows = con.execute("""
         SELECT o.symbol, o.bar_time, o.open, o.high, o.low, o.close, o.volume,
                u.sector
-        FROM ohlcv_history o
+        FROM ohlcv_history_execution o
         LEFT JOIN stock_universe u ON o.symbol = u.symbol
         ORDER BY o.symbol, o.bar_time
     """).fetchall()
@@ -1014,7 +1014,7 @@ def cmd_failure_precursors(params):
     What hidden variables DISTINGUISH failed reversals from true reversals?
 
     Method: For each stock in indicators_cache,
-    look at the next 5-bar return in ohlcv_history.
+    look at the next 5-bar return in ohlcv_history_execution.
     Split into TRUE_REVERSAL vs FAILED.
     Compare ALL indicator distributions.
     Find key discriminating variables.

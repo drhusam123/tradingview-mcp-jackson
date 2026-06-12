@@ -313,7 +313,7 @@ def discover_new_laws(db, params):
     # Build OHLCV lookup for feature computation
     ohlcv_rows = db.execute("""
         SELECT symbol, bar_time, open, high, low, close, volume
-        FROM   ohlcv_history
+        FROM   ohlcv_history_execution
         ORDER  BY symbol, bar_time
     """).fetchall()
 
@@ -770,17 +770,17 @@ def generate_directives(db, params):
 
     # ── Check 3: Historical data depth ────────────────────────────────────
     bar_count_row = db.execute(
-        "SELECT COUNT(DISTINCT bar_time) as n_bars FROM ohlcv_history"
+        "SELECT COUNT(DISTINCT bar_time) as n_bars FROM ohlcv_history_execution"
     ).fetchone()
     n_bars = bar_count_row['n_bars'] if bar_count_row else 0
 
     if n_bars < 750:  # < ~3 years of trading days
         directives.append({
             'directive_type': 'DATA_EXPANSION',
-            'target': 'ohlcv_history',
+            'target': 'ohlcv_history_execution',
             'priority': 0.90,
             'rationale': (
-                f"Only {n_bars} unique date-bars in ohlcv_history (< 3 years). "
+                f"Only {n_bars} unique date-bars in ohlcv_history_execution (< 3 years). "
                 "Law validation requires 3+ years to capture full market cycles. "
                 "Backfill historical data to 2020+ for all active symbols."
             ),
@@ -822,7 +822,7 @@ def generate_directives(db, params):
             'priority': 0.70,
             'rationale': (
                 f"{n_hyp - n_tested} untested hypotheses are pending. "
-                "Run batch hypothesis validation against full ohlcv_history "
+                "Run batch hypothesis validation against full ohlcv_history_execution "
                 "before generating more candidates."
             ),
         })

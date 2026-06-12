@@ -127,7 +127,7 @@ def load_ohlcv(db, days=90, max_per_sym=60):
         ex_rows = db.execute("""
             SELECT symbol, bar_time
             FROM data_quality_bar_exclusions
-            WHERE source_table = 'ohlcv_history'
+            WHERE source_table = 'ohlcv_history_execution'
               AND status = 'ACTIVE'
         """).fetchall()
         excluded_by_sym = defaultdict(list)
@@ -1088,7 +1088,7 @@ def cmd_data_health(db, data, cur_ind, macro):
         rows = db.execute("""
             SELECT symbol, bar_time
             FROM data_quality_bar_exclusions
-            WHERE source_table = 'ohlcv_history'
+            WHERE source_table = 'ohlcv_history_execution'
               AND status = 'ACTIVE'
         """).fetchall()
         active_exclusions = {(r['symbol'], int(r['bar_time'])) for r in rows}

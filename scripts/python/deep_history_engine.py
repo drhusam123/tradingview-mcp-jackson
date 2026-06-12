@@ -72,7 +72,7 @@ def history_coverage(params):
                    COUNT(*) AS total_bars,
                    MIN(date(bar_time,'unixepoch')) AS oldest,
                    MAX(date(bar_time,'unixepoch')) AS newest
-            FROM ohlcv_history
+            FROM ohlcv_history_execution
         """).fetchone()
         daily_stats = dict(row) if row else {}
     except Exception:
@@ -87,7 +87,7 @@ def history_coverage(params):
                    COALESCE(d.d_bars, 0) AS d_bars
             FROM ohlcv_weekly w
             LEFT JOIN (
-                SELECT symbol, COUNT(*) AS d_bars FROM ohlcv_history GROUP BY symbol
+                SELECT symbol, COUNT(*) AS d_bars FROM ohlcv_history_execution GROUP BY symbol
             ) d ON w.symbol = d.symbol
             GROUP BY w.symbol
         """).fetchall()
@@ -170,7 +170,7 @@ def long_term_regime(params):
         # Fallback to daily
         try:
             rows = conn.execute("""
-                SELECT bar_time, close FROM ohlcv_history
+                SELECT bar_time, close FROM ohlcv_history_execution
                 WHERE symbol = ?
                 ORDER BY bar_time ASC
             """, (symbol,)).fetchall()
@@ -212,7 +212,7 @@ def historical_volatility_profile(params):
     if len(rows) < 13:
         try:
             rows = conn.execute("""
-                SELECT bar_time, close FROM ohlcv_history
+                SELECT bar_time, close FROM ohlcv_history_execution
                 WHERE symbol = ?
                 ORDER BY bar_time ASC
             """, (symbol,)).fetchall()

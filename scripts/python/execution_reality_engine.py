@@ -157,9 +157,9 @@ def get_adv(symbol: str) -> float:
         if row and row['avg_daily_volume'] and row['avg_daily_volume'] > 0:
             conn.close()
             return float(row['avg_daily_volume'])
-        # Fallback: compute from ohlcv_history (last 20 bars)
+        # Fallback: compute from ohlcv_history_execution (last 20 bars)
         rows = conn.execute(
-            "SELECT volume FROM ohlcv_history WHERE symbol = ? ORDER BY bar_time DESC LIMIT 20",
+            "SELECT volume FROM ohlcv_history_execution WHERE symbol = ? ORDER BY bar_time DESC LIMIT 20",
             (symbol,)
         ).fetchall()
         conn.close()
@@ -180,7 +180,7 @@ def get_recent_price_change(symbol: str) -> float:
     try:
         conn = get_db()
         row = conn.execute(
-            "SELECT open, close FROM ohlcv_history WHERE symbol = ? ORDER BY bar_time DESC LIMIT 1",
+            "SELECT open, close FROM ohlcv_history_execution WHERE symbol = ? ORDER BY bar_time DESC LIMIT 1",
             (symbol,)
         ).fetchone()
         conn.close()

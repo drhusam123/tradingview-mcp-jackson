@@ -361,7 +361,7 @@ def build_historical_signals(
             SELECT symbol,
                    date(bar_time, 'unixepoch') AS trade_date,
                    open, high, low, close, volume
-            FROM ohlcv_history
+            FROM ohlcv_history_execution
             WHERE bar_time >= ?
               AND close > 0
               AND open  > 0

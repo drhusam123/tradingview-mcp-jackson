@@ -108,7 +108,7 @@ def _apply_barriers(symbol, explosion_date, conn, upper_pct, lower_pct, max_hold
     """
     # entry price = close on explosion_date itself (last bar before entry)
     row = conn.execute(
-        "SELECT close FROM ohlcv_history "
+        "SELECT close FROM ohlcv_history_execution "
         "WHERE symbol=? AND date(bar_time,'unixepoch') <= ? "
         "ORDER BY bar_time DESC LIMIT 1",
         (symbol, explosion_date),
@@ -123,7 +123,7 @@ def _apply_barriers(symbol, explosion_date, conn, upper_pct, lower_pct, max_hold
     # forward bars after explosion_date
     bars = conn.execute(
         "SELECT date(bar_time,'unixepoch') as d, high, low, close "
-        "FROM ohlcv_history "
+        "FROM ohlcv_history_execution "
         "WHERE symbol=? AND date(bar_time,'unixepoch') > ? "
         "ORDER BY bar_time LIMIT ?",
         (symbol, explosion_date, max_holding_days),

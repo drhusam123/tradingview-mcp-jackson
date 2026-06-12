@@ -109,7 +109,7 @@ def _fetch_ohlcv(db):
     try:
         rows = db.execute(
             "SELECT symbol, date(bar_time,'unixepoch') AS date, close, volume "
-            "FROM ohlcv_history ORDER BY symbol, date(bar_time,'unixepoch')"
+            "FROM ohlcv_history_execution ORDER BY symbol, date(bar_time,'unixepoch')"
         ).fetchall()
         return [dict(r) for r in rows]
     except Exception:
@@ -1104,7 +1104,7 @@ def _get_symbol_recent_closes(db, symbol, n=30):
     try:
         rows = db.execute(
             "SELECT date(bar_time,'unixepoch') AS date, close, volume "
-            "FROM ohlcv_history WHERE symbol=? ORDER BY bar_time DESC LIMIT ?",
+            "FROM ohlcv_history_execution WHERE symbol=? ORDER BY bar_time DESC LIMIT ?",
             (symbol, n)
         ).fetchall()
         return [dict(r) for r in rows][::-1]  # oldest first
@@ -1126,7 +1126,7 @@ def _get_sector_today_return(db, sector, today):
     try:
         rows = db.execute("""
             SELECT o.close, date(o.bar_time,'unixepoch') AS date
-            FROM ohlcv_history o
+            FROM ohlcv_history_execution o
             JOIN stock_dna d ON o.symbol = d.symbol
             WHERE d.sector=? AND date(o.bar_time,'unixepoch') <= ?
             ORDER BY o.bar_time DESC LIMIT 100
@@ -1359,7 +1359,7 @@ def cmd_daily_scan(params):
     db = get_db()
     try:
         symbols = [r['symbol'] for r in db.execute(
-            "SELECT DISTINCT symbol FROM ohlcv_history"
+            "SELECT DISTINCT symbol FROM ohlcv_history_execution"
         ).fetchall()]
     except Exception:
         symbols = []

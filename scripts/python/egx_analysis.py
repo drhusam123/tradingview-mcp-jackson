@@ -488,7 +488,7 @@ def cmd_param_sweep(params):
     con = get_connection()
     df  = pd.read_sql("""
         SELECT symbol, bar_time, open, high, low, close, volume
-        FROM ohlcv_history ORDER BY symbol, bar_time
+        FROM ohlcv_history_execution ORDER BY symbol, bar_time
     """, con)
     con.close()
 
@@ -740,7 +740,7 @@ def cmd_ml_signal(params):
     con = get_connection()
     df  = pd.read_sql("""
         SELECT symbol, bar_time, open, high, low, close, volume
-        FROM ohlcv_history ORDER BY symbol, bar_time
+        FROM ohlcv_history_execution ORDER BY symbol, bar_time
     """, con)
     con.close()
 
@@ -941,7 +941,7 @@ def cmd_egx_patterns(params):
     con = get_connection()
     df  = pd.read_sql("""
         SELECT symbol, bar_time, open, high, low, close, volume
-        FROM ohlcv_history ORDER BY symbol, bar_time
+        FROM ohlcv_history_execution ORDER BY symbol, bar_time
     """, con)
     con.close()
 
@@ -1533,7 +1533,7 @@ def cmd_shap_analysis(params):
     con = get_connection()
     df  = pd.read_sql("""
         SELECT symbol, bar_time, open, high, low, close, volume
-        FROM ohlcv_history ORDER BY symbol, bar_time
+        FROM ohlcv_history_execution ORDER BY symbol, bar_time
     """, con)
     con.close()
 
@@ -1713,7 +1713,7 @@ def cmd_regime_detection(params):
     con = get_connection()
     df  = pd.read_sql("""
         SELECT symbol, bar_time, high, low, close
-        FROM ohlcv_history ORDER BY symbol, bar_time
+        FROM ohlcv_history_execution ORDER BY symbol, bar_time
     """, con)
     con.close()
 
@@ -1813,7 +1813,7 @@ def cmd_regime_detection(params):
     df_hist = pd.read_sql("""
         SELECT symbol, bar_time, high, low, close
         FROM ohlcv_history
-        WHERE bar_time >= (SELECT MAX(bar_time) - 90*86400 FROM ohlcv_history)
+        WHERE bar_time >= (SELECT MAX(bar_time) - 90*86400 FROM ohlcv_history_execution)
         ORDER BY symbol, bar_time
     """, con2)
     con2.close()
@@ -3814,7 +3814,7 @@ def cmd_stability_test(params):
     con = get_connection()
     oh = pd.read_sql(
         "SELECT symbol, bar_time, open, high, low, close, volume "
-        "FROM ohlcv_history ORDER BY symbol, bar_time", con)
+        "FROM ohlcv_history_execution ORDER BY symbol, bar_time", con)
     con.close()
 
     if oh.empty or len(oh) < 1000:
@@ -3967,7 +3967,7 @@ def cmd_state_transitions(params):
     con = get_connection()
     oh  = pd.read_sql(
         "SELECT symbol, bar_time, open, high, low, close, volume "
-        "FROM ohlcv_history ORDER BY symbol, bar_time", con)
+        "FROM ohlcv_history_execution ORDER BY symbol, bar_time", con)
     con.close()
 
     if oh.empty or len(oh) < 1000:
@@ -4470,7 +4470,7 @@ def cmd_conditional_transitions(params):
     con = get_connection()
     oh  = pd.read_sql(
         "SELECT symbol, bar_time, open, high, low, close, volume "
-        "FROM ohlcv_history ORDER BY symbol, bar_time", con)
+        "FROM ohlcv_history_execution ORDER BY symbol, bar_time", con)
 
     # تحميل بيانات القطاعات من stock_universe
     ic_sectors = pd.read_sql(
@@ -5092,7 +5092,7 @@ def cmd_adaptive_memory(params):
     con = get_connection()
     oh  = pd.read_sql(
         "SELECT symbol, bar_time, open, high, low, close, volume "
-        "FROM ohlcv_history ORDER BY symbol, bar_time", con)
+        "FROM ohlcv_history_execution ORDER BY symbol, bar_time", con)
     su  = pd.read_sql("SELECT symbol, sector FROM stock_universe WHERE sector IS NOT NULL", con)
     con.close()
 
@@ -5615,7 +5615,7 @@ def cmd_evolving_structure(params):
     con = get_connection()
     oh  = pd.read_sql(
         "SELECT symbol, bar_time, open, high, low, close, volume "
-        "FROM ohlcv_history ORDER BY symbol, bar_time", con)
+        "FROM ohlcv_history_execution ORDER BY symbol, bar_time", con)
     su  = pd.read_sql("SELECT symbol, sector FROM stock_universe WHERE sector IS NOT NULL", con)
     con.close()
 
@@ -6295,7 +6295,7 @@ def cmd_market_evolution(params):
     con = get_connection()
     oh  = pd.read_sql(
         "SELECT symbol, bar_time, open, high, low, close, volume "
-        "FROM ohlcv_history ORDER BY symbol, bar_time", con)
+        "FROM ohlcv_history_execution ORDER BY symbol, bar_time", con)
     su  = pd.read_sql("SELECT symbol, sector FROM stock_universe WHERE sector IS NOT NULL", con)
     con.close()
     if oh.empty or len(oh) < 1000:

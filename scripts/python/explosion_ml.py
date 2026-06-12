@@ -2058,37 +2058,36 @@ def cmd_predict_today(params):
         prob = float(model.predict(X)[0])
         n_scored += 1
 
-        if prob >= min_prob:
-            # Get last row's indicator snapshot for display
-            last = df.iloc[-1]
-            rsi   = safe_float(last.get('rsi14',       50.0))
-            bbw   = safe_float(last.get('bb_width',    0.05))
-            volr  = safe_float(last.get('vol_ratio_20', 1.0))
-            if volr <= 0.10:
-                n_skipped_bad_market += 1
-                continue
+        last = df.iloc[-1]
+        rsi   = safe_float(last.get('rsi14',       50.0))
+        bbw   = safe_float(last.get('bb_width',    0.05))
+        volr  = safe_float(last.get('vol_ratio_20', 1.0))
+        if volr <= 0.10:
+            n_skipped_bad_market += 1
+            continue
 
-            mom5 = safe_float(last.get('momentum_5d', 0.0))
-            bbpos= safe_float(last.get('bb_position', 0.5))
+        mom5 = safe_float(last.get('momentum_5d', 0.0))
+        bbpos= safe_float(last.get('bb_position', 0.5))
 
-            predictions.append({
-                'symbol':          sym,
-                'explosion_prob':  round(prob, 4),
-                'prob_pct':        int(prob * 100),
-                'confidence_tier': 'UNRANKED',
-                'rsi14':           round(rsi,  1),
-                'bb_width':        round(bbw,  4),
-                'vol_ratio':       round(volr, 2),
-                'top_drivers':     [
-                    {'feature': 'vol_ratio',   'value': round(volr, 2)},
-                    {'feature': 'rsi14',       'value': round(rsi,  1)},
-                    {'feature': 'bb_width',    'value': round(bbw,  4)},
-                    {'feature': 'momentum_5d', 'value': round(mom5, 4)},
-                    {'feature': 'bb_position', 'value': round(bbpos,3)},
-                ],
-            })
-        else:
+        if prob < min_prob:
             n_abstained += 1
+
+        predictions.append({
+            'symbol':          sym,
+            'explosion_prob':  round(prob, 4),
+            'prob_pct':        int(prob * 100),
+            'confidence_tier': 'ABSTAIN' if prob < min_prob else 'UNRANKED',
+            'rsi14':           round(rsi,  1),
+            'bb_width':        round(bbw,  4),
+            'vol_ratio':       round(volr, 2),
+            'top_drivers':     [
+                {'feature': 'vol_ratio',   'value': round(volr, 2)},
+                {'feature': 'rsi14',       'value': round(rsi,  1)},
+                {'feature': 'bb_width',    'value': round(bbw,  4)},
+                {'feature': 'momentum_5d', 'value': round(mom5, 4)},
+                {'feature': 'bb_position', 'value': round(bbpos,3)},
+            ],
+        })
 
     predictions.sort(key=lambda x: -x['explosion_prob'])
 
@@ -2098,7 +2097,10 @@ def cmd_predict_today(params):
     for rank, p in enumerate(predictions, start=1):
         prob = float(p['explosion_prob'])
         vol_ratio = float(p.get('vol_ratio') or 0.0)
-        tier, gate_reason = _assign_model_tier(prob, rank, vol_ratio, decision_policy)
+        if prob < min_prob:
+            tier, gate_reason = 'ABSTAIN', 'probability_below_abstain_threshold'
+        else:
+            tier, gate_reason = _assign_model_tier(prob, rank, vol_ratio, decision_policy)
         db_tier, reliability_flag, client_ready = _client_gate_fields(
             p['symbol'], tier, final_gate_symbols
         )

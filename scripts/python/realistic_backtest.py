@@ -141,7 +141,7 @@ def get_bar_after(bars_sorted, signal_date: str, offset_days: int):
 def get_bars_map(conn, symbol):
     """Fetch all bars for a symbol, return sorted list."""
     rows = conn.execute(
-        "SELECT bar_time, open, high, low, close, volume FROM ohlcv_history WHERE symbol=? ORDER BY bar_time ASC",
+        "SELECT bar_time, open, high, low, close, volume FROM ohlcv_history_execution WHERE symbol=? ORDER BY bar_time ASC",
         (symbol,)
     ).fetchall()
     return list(rows)

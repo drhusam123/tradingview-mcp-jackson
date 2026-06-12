@@ -79,6 +79,18 @@ _EXPORT_TABLES: dict[str, str] = {
         FROM markov_regime_daily
         ORDER BY date
     """,
+    'stock_universe': """
+        SELECT symbol, name, sector, status, successor_symbol, archived_at,
+               hygiene_reason, last_fetch, total_bars
+        FROM stock_universe
+        ORDER BY symbol
+    """,
+    'indicators_cache': """
+        SELECT *
+        FROM indicators_cache
+        WHERE bar_date NOT LIKE '2099-%'
+        ORDER BY bar_date, symbol
+    """,
 }
 
 # Maximum age (seconds) before a Parquet file is considered stale.

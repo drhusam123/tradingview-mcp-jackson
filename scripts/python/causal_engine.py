@@ -208,7 +208,7 @@ def _load_ohlcv_all(min_bars=50, max_bars=None):
     try:
         rows = con.execute(
             "SELECT symbol, bar_time, open, high, low, close, volume "
-            "FROM ohlcv_history ORDER BY symbol, bar_time"
+            "FROM ohlcv_history_execution ORDER BY symbol, bar_time"
         ).fetchall()
     finally:
         con.close()
@@ -1351,7 +1351,7 @@ def cmd_pcmci_sectors(params):
             SELECT oh.bar_time, su.sector,
                    oh.close,
                    LAG(oh.close) OVER (PARTITION BY oh.symbol ORDER BY oh.bar_time) as prev_close
-            FROM ohlcv_history oh
+            FROM ohlcv_history_execution oh
             JOIN stock_universe su ON oh.symbol = su.symbol
             WHERE su.sector IS NOT NULL AND su.sector != ''
               AND oh.bar_time > (strftime('%s','now') - 86400*600)

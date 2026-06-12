@@ -127,7 +127,7 @@ def compute_stock_profile(args):
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
-            "SELECT bar_time, open, high, low, close, volume FROM ohlcv_history "
+            "SELECT bar_time, open, high, low, close, volume FROM ohlcv_history_execution "
             "WHERE symbol=? ORDER BY bar_time ASC",
             (symbol,)
         ).fetchall()
@@ -342,7 +342,7 @@ def cmd_run():
 
     # Get all symbols with enough data
     symbols = [r[0] for r in conn.execute(
-        "SELECT symbol FROM ohlcv_history GROUP BY symbol HAVING COUNT(*) >= 60"
+        "SELECT symbol FROM ohlcv_history_execution GROUP BY symbol HAVING COUNT(*) >= 60"
     ).fetchall()]
     conn.close()
 

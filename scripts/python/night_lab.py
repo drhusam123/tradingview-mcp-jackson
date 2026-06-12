@@ -60,13 +60,13 @@ def validate_ohlcv_latest_bar(conn, max_dup_pct=0.5, verbose=True):
     """
     try:
         latest = conn.execute(
-            "SELECT MAX(date(bar_time,'unixepoch')) FROM ohlcv_history"
+            "SELECT MAX(date(bar_time,'unixepoch')) FROM ohlcv_history_execution"
         ).fetchone()[0]
         if not latest:
             return {'action': 'no_data'}
 
         n_total = conn.execute(
-            "SELECT COUNT(*) FROM ohlcv_history WHERE date(bar_time,'unixepoch')=?",
+            "SELECT COUNT(*) FROM ohlcv_history_execution WHERE date(bar_time,'unixepoch')=?",
             (latest,)
         ).fetchone()[0]
 
@@ -76,7 +76,7 @@ def validate_ohlcv_latest_bar(conn, max_dup_pct=0.5, verbose=True):
         # Most common close price on this day
         top = conn.execute("""
             SELECT close, COUNT(*) n
-            FROM ohlcv_history WHERE date(bar_time,'unixepoch')=?
+            FROM ohlcv_history_execution WHERE date(bar_time,'unixepoch')=?
             GROUP BY close ORDER BY n DESC LIMIT 1
         """, (latest,)).fetchone()
 
@@ -93,7 +93,7 @@ def validate_ohlcv_latest_bar(conn, max_dup_pct=0.5, verbose=True):
         if dup_pct >= max_dup_pct:
             # High duplication → index contamination — delete the day
             deleted = conn.execute(
-                "DELETE FROM ohlcv_history WHERE date(bar_time,'unixepoch')=?",
+                "DELETE FROM ohlcv_history_execution WHERE date(bar_time,'unixepoch')=?",
                 (latest,)
             ).rowcount
             conn.commit()
@@ -131,7 +131,7 @@ def _check_data_freshness(conn) -> dict:
     """
     try:
         row = conn.execute(
-            "SELECT MAX(date(bar_time,'unixepoch')) FROM ohlcv_history WHERE close > 0"
+            "SELECT MAX(date(bar_time,'unixepoch')) FROM ohlcv_history_execution WHERE close > 0"
         ).fetchone()
         last_ohlcv = row[0] if row and row[0] else None
     except Exception:

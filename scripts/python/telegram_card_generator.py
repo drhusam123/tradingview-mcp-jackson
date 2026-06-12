@@ -201,13 +201,13 @@ def _draw_sparkline(draw: ImageDraw.Draw, prices: List[float],
 
 
 def _fetch_spark_prices(symbol: str, n: int = 20) -> List[float]:
-    """Fetch last n closing prices from ohlcv_history for sparkline.
-    Uses ohlcv_history (correct table — 1.3M rows) instead of ohlcv (may be empty).
+    """Fetch last n closing prices from ohlcv_history_execution for sparkline.
+    Uses ohlcv_history_execution (correct table — 1.3M rows) instead of ohlcv (may be empty).
     """
     try:
         conn = sqlite3.connect(DB_PATH)
         rows = conn.execute(
-            "SELECT close FROM ohlcv_history WHERE symbol=? "
+            "SELECT close FROM ohlcv_history_execution WHERE symbol=? "
             "ORDER BY bar_time DESC LIMIT ?",
             (symbol, n)
         ).fetchall()
@@ -970,7 +970,7 @@ def save_card(card_bytes: bytes, name: str) -> str:
 def _enrich_signal(row: sqlite3.Row, conn: sqlite3.Connection) -> Dict:
     """Convert a final_signals row into a card-ready dict.
 
-    FIX 2026-05-27: use ohlcv_history (1.3M rows) instead of ohlcv (may be empty).
+    FIX 2026-05-27: use ohlcv_history_execution (1.3M rows) instead of ohlcv (may be empty).
     FIX 2026-05-27: pull explosion_prob from explosion_predictions for accurate ML score.
     """
     sym = row["symbol"]
@@ -984,9 +984,9 @@ def _enrich_signal(row: sqlite3.Row, conn: sqlite3.Connection) -> Dict:
     except Exception:
         pass
 
-    # Current price — ohlcv_history is the authoritative price table
+    # Current price — ohlcv_history_execution is the authoritative price table
     price_row = conn.execute(
-        "SELECT close FROM ohlcv_history WHERE symbol=? ORDER BY bar_time DESC LIMIT 1",
+        "SELECT close FROM ohlcv_history_execution WHERE symbol=? ORDER BY bar_time DESC LIMIT 1",
         (sym,)
     ).fetchone()
     current = price_row[0] if price_row and price_row[0] else (sig.get("entry_price") or 0.0)
@@ -1161,29 +1161,29 @@ def generate_daily_cards(report_date: str = None) -> Dict:
         breadth_pct = regime_row["breadth_pct"] * 100 if regime_row and regime_row["breadth_pct"] else 0
 
         # 5-day market return: sample from regime_history if available,
-        # else approximate from EGX30 proxy using ohlcv_history for a few liquid symbols.
+        # else approximate from EGX30 proxy using ohlcv_history_execution for a few liquid symbols.
         # SQLite does not support window functions in older builds — use a correlated subquery.
         try:
             # Use the 6th-most-recent bar_time for each symbol via correlated subquery
             ret5_row = conn.execute(
                 """
                 SELECT AVG(h2.close / h1.close - 1) AS ret5
-                FROM   ohlcv_history h2
-                JOIN   ohlcv_history h1
+                FROM   ohlcv_history_execution h2
+                JOIN   ohlcv_history_execution h1
                     ON h1.symbol = h2.symbol
                 WHERE  h2.bar_time = (
-                           SELECT MAX(bar_time) FROM ohlcv_history
+                           SELECT MAX(bar_time) FROM ohlcv_history_execution
                            WHERE symbol = h2.symbol AND close > 0
                        )
                   AND  h1.bar_time = (
-                           SELECT bar_time FROM ohlcv_history
+                           SELECT bar_time FROM ohlcv_history_execution
                            WHERE symbol = h1.symbol AND close > 0
                            ORDER BY bar_time DESC
                            LIMIT 1 OFFSET 5
                        )
                   AND  h1.close > 0
                   AND  h2.symbol IN (
-                           SELECT symbol FROM ohlcv_history
+                           SELECT symbol FROM ohlcv_history_execution
                            GROUP BY symbol HAVING COUNT(*) >= 10
                            LIMIT 50
                        )
@@ -1367,7 +1367,7 @@ def generate_daily_cards(report_date: str = None) -> Dict:
             for rr in radar_rows:
                 sym = rr[0]
                 price_row = conn.execute(
-                    "SELECT close FROM ohlcv_history WHERE symbol=? "
+                    "SELECT close FROM ohlcv_history_execution WHERE symbol=? "
                     "ORDER BY bar_time DESC LIMIT 1",
                     (sym,)
                 ).fetchone()

@@ -268,7 +268,7 @@ def main(argv):
         if not dry_run and res["valid_rows"]:
             try:
                 cur.executemany(
-                    "INSERT OR IGNORE INTO ohlcv_history "
+                    "INSERT OR IGNORE INTO ohlcv_history_execution "
                     "(symbol, bar_time, open, high, low, close, volume) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?)",
                     res["valid_rows"],

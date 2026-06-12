@@ -365,14 +365,14 @@ def evaluate(params):
                o_entry.close as entry_close,
                o_exit.close  as exit_close
         FROM indicators_cache ic
-        JOIN ohlcv_history o_entry ON (
+        JOIN ohlcv_history_execution o_entry ON (
             o_entry.symbol = ic.symbol
             AND date(o_entry.bar_time, 'unixepoch') = ic.bar_date
         )
-        LEFT JOIN ohlcv_history o_exit ON (
+        LEFT JOIN ohlcv_history_execution o_exit ON (
             o_exit.symbol = ic.symbol
             AND o_exit.bar_time = (
-                SELECT bar_time FROM ohlcv_history
+                SELECT bar_time FROM ohlcv_history_execution
                 WHERE symbol = ic.symbol
                   AND bar_time > o_entry.bar_time
                 ORDER BY bar_time

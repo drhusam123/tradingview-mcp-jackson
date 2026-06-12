@@ -25,11 +25,11 @@ def target_stop(entry, path, tgt=0.15, stp=-0.07, to=10):
     return (path[idx][3]-entry)/entry - COST
 
 def get_path(conn,sym,ed,n=12):
-    rows=conn.execute("SELECT open,high,low,close FROM ohlcv_history WHERE symbol=? AND date(bar_time,'unixepoch')>? ORDER BY bar_time LIMIT ?",(sym,ed,n)).fetchall()
+    rows=conn.execute("SELECT open,high,low,close FROM ohlcv_history_execution WHERE symbol=? AND date(bar_time,'unixepoch')>? ORDER BY bar_time LIMIT ?",(sym,ed,n)).fetchall()
     return [(float(o or 0),float(h or 0),float(l or 0),float(c or 0)) for o,h,l,c in rows]
 
 def vol_ratio_at(conn,sym,ed):
-    rows=conn.execute("SELECT volume FROM ohlcv_history WHERE symbol=? AND date(bar_time,'unixepoch')<=? ORDER BY bar_time DESC LIMIT 21",(sym,ed)).fetchall()
+    rows=conn.execute("SELECT volume FROM ohlcv_history_execution WHERE symbol=? AND date(bar_time,'unixepoch')<=? ORDER BY bar_time DESC LIMIT 21",(sym,ed)).fetchall()
     v=[float(r[0] or 0) for r in rows]
     if len(v)<21 or sum(v[1:])==0: return 1.0
     return v[0]/(sum(v[1:21])/20)

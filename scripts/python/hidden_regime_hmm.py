@@ -57,7 +57,7 @@ def _build_market_features(conn, start_date='2021-01-01', end_date=None):
                date(bar_time,'unixepoch') AS bar_date,
                close, volume,
                open
-        FROM ohlcv_history
+        FROM ohlcv_history_execution
         WHERE date(bar_time,'unixepoch') BETWEEN ? AND ?
         ORDER BY bar_time
     """, (start_date, end_date)).fetchall()

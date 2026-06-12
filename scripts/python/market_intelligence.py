@@ -199,7 +199,7 @@ def compression_days_before(rv, idx, avg_vol, threshold=0.75):
 def load_ohlcv(con):
     rows = con.execute(
         "SELECT symbol, bar_time, open, high, low, close, volume "
-        "FROM ohlcv_history ORDER BY symbol, bar_time"
+        "FROM ohlcv_history_execution ORDER BY symbol, bar_time"
     ).fetchall()
     data = defaultdict(list)
     for sym,bt,o,h,l,c,v in rows:

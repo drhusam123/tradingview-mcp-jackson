@@ -82,7 +82,7 @@ def load_return_matrix(conn, symbols, min_bars=60):
         return [], {}
     placeholders = ','.join(['?'] * len(symbols))
     rows = conn.execute(
-        f"SELECT symbol, bar_time, close FROM ohlcv_history "
+        f"SELECT symbol, bar_time, close FROM ohlcv_history_execution "
         f"WHERE symbol IN ({placeholders}) ORDER BY bar_time ASC",
         symbols
     ).fetchall()
@@ -133,7 +133,7 @@ def get_top_liquid_symbols(conn, n=50):
     ).fetchall()
     if not rows:
         rows = conn.execute(
-            "SELECT symbol FROM ohlcv_history GROUP BY symbol ORDER BY COUNT(*) DESC LIMIT ?",
+            "SELECT symbol FROM ohlcv_history_execution GROUP BY symbol ORDER BY COUNT(*) DESC LIMIT ?",
             (n,)
         ).fetchall()
     return [r[0] for r in rows]
@@ -343,7 +343,7 @@ def compute_sector_rotation(conn, today_str):
 
     sym_sectors = get_symbol_sectors(conn)
     rows = conn.execute(
-        "SELECT symbol, bar_time, close FROM ohlcv_history ORDER BY bar_time ASC"
+        "SELECT symbol, bar_time, close FROM ohlcv_history_execution ORDER BY bar_time ASC"
     ).fetchall()
 
     # Build weekly returns per sector
@@ -463,7 +463,7 @@ def cmd_run():
     # ── 2. Correlation clustering ─────────────────────────────────────────────
     print(json.dumps({"step": "correlation_clusters", "status": "start"}))
     all_symbols = [r[0] for r in conn.execute(
-        "SELECT symbol FROM ohlcv_history GROUP BY symbol HAVING COUNT(*) >= 60"
+        "SELECT symbol FROM ohlcv_history_execution GROUP BY symbol HAVING COUNT(*) >= 60"
     ).fetchall()]
     clusters_found = compute_correlation_clusters(conn, all_symbols, today_str)
     print(json.dumps({"step": "correlation_clusters", "clusters": clusters_found}))

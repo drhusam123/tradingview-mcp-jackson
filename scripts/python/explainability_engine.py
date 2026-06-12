@@ -143,7 +143,7 @@ def load_training_data(con):
     # Build OHLCV date index for each symbol
     ohlcv_rows = con.execute("""
         SELECT symbol, bar_time, open, high, low, close, volume
-        FROM ohlcv_history
+        FROM ohlcv_history_execution
         ORDER BY symbol, bar_time
     """).fetchall()
 
@@ -443,7 +443,7 @@ def cmd_explain_stock(params):
     # Get latest OHLCV
     ohlcv_rows = con.execute("""
         SELECT bar_time, open, high, low, close, volume
-        FROM ohlcv_history WHERE symbol = ?
+        FROM ohlcv_history_execution WHERE symbol = ?
         ORDER BY bar_time DESC LIMIT 30
     """, (symbol,)).fetchall()
     ohlcv_rows = list(reversed(ohlcv_rows))
@@ -671,7 +671,7 @@ def cmd_daily_explanations(params):
         ).fetchall()]
     except Exception:
         symbols = [r[0] for r in con.execute(
-            "SELECT DISTINCT symbol FROM ohlcv_history LIMIT 253"
+            "SELECT DISTINCT symbol FROM ohlcv_history_execution LIMIT 253"
         ).fetchall()]
 
     con.close()

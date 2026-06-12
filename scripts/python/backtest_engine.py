@@ -325,7 +325,7 @@ def _load_forward_ohlcv(
         cursor = conn.execute(
             """
             SELECT bar_time, open, high, low, close, volume
-            FROM ohlcv_history
+            FROM ohlcv_history_execution
             WHERE symbol = ?
               AND bar_time > ?
             ORDER BY bar_time ASC

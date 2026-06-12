@@ -195,7 +195,7 @@ def fetch_ohlcv(db, symbol, count=40):
     """Fetch last N bars for symbol, ordered oldest first."""
     rows = db.execute(
         "SELECT bar_time, open, high, low, close, volume "
-        "FROM ohlcv_history WHERE symbol=? "
+        "FROM ohlcv_history_execution WHERE symbol=? "
         "ORDER BY bar_time DESC LIMIT ?",
         (symbol, count)
     ).fetchall()

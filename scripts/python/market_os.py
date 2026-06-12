@@ -661,7 +661,7 @@ def _cmd_health_monitor_impl(db, data, cur_ind, macro):
 
     # ── DB connectivity ───────────────────────────────────────────────────────
     try:
-        row = db.execute("SELECT COUNT(*) FROM ohlcv_history").fetchone()
+        row = db.execute("SELECT COUNT(*) FROM ohlcv_history_execution").fetchone()
         n_ohlcv = row[0] if row else 0
         checks['db_connectivity'] = {'score': 1.0, 'n_ohlcv_rows': n_ohlcv}
     except Exception as e:
@@ -670,7 +670,7 @@ def _cmd_health_monitor_impl(db, data, cur_ind, macro):
 
     # ── Data freshness ────────────────────────────────────────────────────────
     try:
-        row = db.execute("SELECT MAX(bar_time) FROM ohlcv_history").fetchone()
+        row = db.execute("SELECT MAX(bar_time) FROM ohlcv_history_execution").fetchone()
         last_bar = row[0] if row else 0
         age_h = (time.time() - (last_bar or 0)) / 3600
         fresh_score = 1.0 if age_h < 24 else 0.7 if age_h < 72 else 0.3 if age_h < 168 else 0.0
@@ -883,9 +883,9 @@ def cmd_observability(db):
     db_metrics = {}
     try:
         db_metrics = {
-            'ohlcv_rows':      db.execute("SELECT COUNT(*) FROM ohlcv_history").fetchone()[0],
-            'n_symbols':       db.execute("SELECT COUNT(DISTINCT symbol) FROM ohlcv_history").fetchone()[0],
-            'last_bar_epoch':  db.execute("SELECT MAX(bar_time) FROM ohlcv_history").fetchone()[0],
+            'ohlcv_rows':      db.execute("SELECT COUNT(*) FROM ohlcv_history_execution").fetchone()[0],
+            'n_symbols':       db.execute("SELECT COUNT(DISTINCT symbol) FROM ohlcv_history_execution").fetchone()[0],
+            'last_bar_epoch':  db.execute("SELECT MAX(bar_time) FROM ohlcv_history_execution").fetchone()[0],
             'indicator_rows':  db.execute("SELECT COUNT(*) FROM indicators_cache").fetchone()[0],
             'pipeline_runs_db': db.execute("SELECT COUNT(*) FROM pipeline_runs").fetchone()[0],
             'cognition_snapshots': db.execute("SELECT COUNT(*) FROM cognition_snapshots").fetchone()[0],

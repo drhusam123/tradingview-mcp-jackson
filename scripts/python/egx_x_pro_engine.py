@@ -103,7 +103,7 @@ def avg(values: Sequence[float]) -> Optional[float]:
 
 
 def load_bars(conn: sqlite3.Connection) -> Dict[str, List[sqlite3.Row]]:
-    source = "ohlcv_history_execution" if table_exists(conn, "ohlcv_history_execution") else "ohlcv_history"
+    source = "ohlcv_history_execution" if table_exists(conn, "ohlcv_history_execution") else "ohlcv_history_execution"
     rows = conn.execute(f"""
         SELECT h.symbol, h.bar_time, h.open, h.high, h.low, h.close, h.volume,
                COALESCE(su.sector, 'Unknown') sector

@@ -109,7 +109,7 @@ def _load_explosion_data(conn):
 
 
 def _load_negative_sample(conn, n=2000):
-    """Sample non-explosion dates with feature values (from ohlcv_history)."""
+    """Sample non-explosion dates with feature values (from ohlcv_history_execution)."""
     # We approximate negatives by sampling feature distributions from
     # explosive_moves with very low change (< 1%) as "near misses"
     rows = conn.execute("""

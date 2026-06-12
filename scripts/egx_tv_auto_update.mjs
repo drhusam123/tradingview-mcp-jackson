@@ -365,6 +365,7 @@ async function main() {
       timeoutMs: 1000 * 60 * 15,
       critical: false,
     });
+    run('node scripts/merge_technical_indicators.mjs', 'Merge TV technical → indicators_cache (source=tv)');
   }
 
   run('node scripts/egx_market_breadth.mjs signal', 'Compute market breadth');
@@ -386,7 +387,7 @@ async function main() {
   run(`${PYTHON3} scripts/python/signal_integration.py apply_arbitration_veto '${scoreParams}'`, 'Apply arbitration veto to final_signals');
   const tvMicroMode = tvReady ? '--local-fallback' : '--local-only';
   run(
-    `node scripts/tv_microstructure_engine.mjs ${tvMicroMode} --max-symbols 30`,
+    `node scripts/tv_microstructure_engine.mjs ${tvMicroMode} --max-symbols 40`,
     'TV microstructure → tv_discovery_features',
     { critical: false, timeoutMs: 900_000 },
   );

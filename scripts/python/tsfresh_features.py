@@ -37,7 +37,7 @@ def _load_ohlcv_window(conn, symbol, end_date, lookback_bars=20):
     rows = conn.execute("""
         SELECT date(bar_time,'unixepoch') AS bar_date,
                open, high, low, close, volume
-        FROM ohlcv_history
+        FROM ohlcv_history_execution
         WHERE symbol=?
           AND date(bar_time,'unixepoch') < ?
         ORDER BY bar_time DESC
@@ -404,12 +404,12 @@ def cmd_daily_store(params):
 
     # Get all active symbols from the universe
     syms = [r['symbol'] for r in conn.execute(
-        "SELECT DISTINCT symbol FROM ohlcv_history WHERE close > 0 ORDER BY symbol"
+        "SELECT DISTINCT symbol FROM ohlcv_history_execution WHERE close > 0 ORDER BY symbol"
     ).fetchall()]
 
     if not syms:
         conn.close()
-        return {'success': False, 'error': 'No symbols in ohlcv_history'}
+        return {'success': False, 'error': 'No symbols in ohlcv_history_execution'}
 
     # Skip if already stored for this date (unless overwrite)
     if not overwrite:
@@ -434,7 +434,7 @@ def cmd_daily_store(params):
         rows = conn.execute("""
             SELECT date(bar_time,'unixepoch') AS d,
                    close, high, low, volume
-            FROM ohlcv_history
+            FROM ohlcv_history_execution
             WHERE symbol=?
               AND date(bar_time,'unixepoch') <= ?
               AND close > 0
@@ -524,7 +524,7 @@ def cmd_backfill_history(params):
     # Get all distinct trading dates in range
     dates = [r[0] for r in conn.execute("""
         SELECT DISTINCT date(bar_time,'unixepoch') AS d
-        FROM ohlcv_history
+        FROM ohlcv_history_execution
         WHERE date(bar_time,'unixepoch') BETWEEN ? AND ?
           AND close > 0
         ORDER BY d DESC

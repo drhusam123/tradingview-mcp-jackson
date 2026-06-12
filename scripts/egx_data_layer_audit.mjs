@@ -60,6 +60,61 @@ function runAudit() {
 
   const intra60 = db.prepare('SELECT COUNT(*) n, COUNT(DISTINCT symbol) sym FROM ohlcv_60min').get();
   const intra15 = db.prepare('SELECT COUNT(*) n, COUNT(DISTINCT symbol) sym FROM ohlcv_15min').get();
+
+  // ── Phase 1 KPIs ─────────────────────────────────────────────────────
+  const hasArchivedCol = db.prepare(
+    "SELECT 1 ok FROM pragma_table_info('stock_universe') WHERE name='archived_at'",
+  ).get()?.ok === 1;
+  const unarchivedGhosts = hasArchivedCol
+    ? db.prepare(`
+        SELECT COUNT(*) n FROM stock_universe u
+        WHERE NOT EXISTS (SELECT 1 FROM ohlcv_history h WHERE h.symbol = u.symbol)
+          AND (u.archived_at IS NULL OR u.archived_at = '')
+          AND u.status NOT IN ('archived')
+      `).get()?.n ?? 0
+    : db.prepare(`
+        SELECT COUNT(*) n FROM stock_universe u
+        WHERE NOT EXISTS (SELECT 1 FROM ohlcv_history h WHERE h.symbol = u.symbol)
+          AND u.status = 'invalid'
+      `).get()?.n ?? 0;
+
+  const exclusionsN = db.prepare(
+    "SELECT COUNT(*) n FROM data_quality_bar_exclusions WHERE status='ACTIVE'",
+  ).get()?.n ?? 0;
+  const exclusionRatio = rawN > 0 ? Math.round((execN / rawN) * 1000) / 10 : 0;
+
+  const dailySyms = db.prepare('SELECT COUNT(DISTINCT symbol) n FROM ohlcv_history').get()?.n ?? 0;
+  const weeklySyms = db.prepare('SELECT COUNT(DISTINCT symbol) n FROM ohlcv_weekly').get()?.n ?? 0;
+  const weeklyGap = dailySyms - weeklySyms;
+
+  let metaSyms = 0;
+  let explosionSyms = 0;
+  if (signalDate) {
+    try {
+      metaSyms = db.prepare(
+        'SELECT COUNT(DISTINCT symbol) n FROM meta_label_scores WHERE date=?',
+      ).get(signalDate)?.n ?? 0;
+    } catch { /* table may differ */ }
+    try {
+      explosionSyms = db.prepare(
+        'SELECT COUNT(DISTINCT symbol) n FROM explosion_predictions WHERE pred_date=?',
+      ).get(signalDate)?.n ?? 0;
+    } catch { /* optional */ }
+  }
+
+  let crossLag = null;
+  try {
+    const ohlcvLatestRow = ohlcvLatest;
+    const crossLatest = db.prepare(
+      "SELECT MAX(date(bar_time,'unixepoch')) d FROM cross_market_daily",
+    ).get()?.d ?? null;
+    if (ohlcvLatestRow && crossLatest) {
+      crossLag = Math.round(
+        (Date.parse(ohlcvLatestRow) - Date.parse(crossLatest)) / 86400000,
+      );
+    }
+  } catch { /* optional */ }
+
   db.close();
 
   ok('l0_intraday_60min', (intra60?.sym ?? 0) >= 20,
@@ -87,8 +142,14 @@ function runAudit() {
     : null;
   const pqAge = ageHours(manifestPath);
   const pqRows = manifest?.ohlcv_history?.rows ?? manifest?.tables?.ohlcv_history?.rows ?? 0;
+  const pqUni = manifest?.stock_universe?.rows ?? manifest?.tables?.stock_universe?.rows ?? 0;
+  const pqIc = manifest?.indicators_cache?.rows ?? manifest?.tables?.indicators_cache?.rows ?? 0;
   ok('l0_parquet_snapshot', pqRows > 50000 && pqAge != null && pqAge < 168,
     `ohlcv parquet rows=${pqRows} age_h=${pqAge ?? 'missing'}`);
+  ok('l1_parquet_indicators', pqIc > 1000,
+    `indicators parquet rows=${pqIc} (run egx:parquet:export)`);
+  ok('l0_parquet_universe', pqUni >= 200,
+    `universe parquet rows=${pqUni}`);
 
   const hydratePy = readFileSync(join(PROJECT_ROOT, 'scripts/python/discovery_data_hydrate.py'), 'utf8');
   ok('hydrate_l0_wired', hydratePy.includes('stock_universe') && hydratePy.includes('ohlcv_history'),
@@ -108,6 +169,21 @@ function runAudit() {
   ok('mcp_data_get_ohlcv', mcpTools.includes('data_get_ohlcv'),
     'MCP data_get_ohlcv registered');
   ok('mcp_quote_get', mcpTools.includes('quote_get'), 'MCP quote_get registered');
+
+  ok('kpi_universe_ghosts', unarchivedGhosts <= 5,
+    `unarchived_ghosts=${unarchivedGhosts} (target ≤5, ideal 0)`);
+  ok('kpi_exclusion_ratio', exclusionRatio >= 96 && exclusionRatio <= 99,
+    `execution/raw=${exclusionRatio}% exclusions=${exclusionsN}`);
+  ok('kpi_weekly_gap', weeklyGap <= 10,
+    `daily=${dailySyms} weekly=${weeklySyms} gap=${weeklyGap}`);
+  if (signalDate) {
+    ok('kpi_ml_meta_coverage', metaSyms >= 200,
+      `meta_label @ ${signalDate}: ${metaSyms} symbols (target ≥200)`);
+    ok('kpi_explosion_stored', explosionSyms >= 150,
+      `explosion @ ${signalDate}: ${explosionSyms} stored (all scored, target ≥150)`);
+  }
+  ok('kpi_cross_market_fresh', crossLag == null || crossLag <= 1,
+    crossLag == null ? 'cross_market n/a' : `lag_days=${crossLag} (target ≤1)`);
 
   const fail = checks.filter(c => !c.ok);
   return {

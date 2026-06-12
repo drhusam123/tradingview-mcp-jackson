@@ -338,9 +338,9 @@ def _get_top_signals(db, date, top_n=5):
                        oh.close as latest_close
                 FROM final_signals fs
                 LEFT JOIN (
-                    SELECT symbol, close FROM ohlcv_history oh1
+                    SELECT symbol, close FROM ohlcv_history_execution oh1
                     WHERE bar_time = (
-                        SELECT MAX(bar_time) FROM ohlcv_history oh2
+                        SELECT MAX(bar_time) FROM ohlcv_history_execution oh2
                         WHERE oh2.symbol=oh1.symbol AND date(oh2.bar_time,'unixepoch')<=?
                     )
                 ) oh ON oh.symbol = fs.symbol
@@ -432,7 +432,7 @@ def _get_top_signals(db, date, top_n=5):
             _vplac = ','.join('?' * len(_vsyms))
             _vol_rows = db.execute(f"""
                 SELECT symbol, bar_time, volume
-                FROM ohlcv_history
+                FROM ohlcv_history_execution
                 WHERE symbol IN ({_vplac})
                 ORDER BY symbol, bar_time DESC
             """, _vsyms).fetchall()
@@ -735,7 +735,7 @@ def _get_data_freshness_warning(conn, ref_date=None) -> str:
     try:
         from datetime import date as _date, datetime as _datetime
         row = conn.execute(
-            "SELECT MAX(date(bar_time,'unixepoch')) FROM ohlcv_history WHERE close > 0"
+            "SELECT MAX(date(bar_time,'unixepoch')) FROM ohlcv_history_execution WHERE close > 0"
         ).fetchone()
         last_ohlcv = row[0] if row and row[0] else None
         if last_ohlcv is None:

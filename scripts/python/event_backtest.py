@@ -54,7 +54,7 @@ def _load_ohlcv(symbol: str) -> pd.DataFrame:
                low   AS Low,
                close AS Close,
                volume AS Volume
-        FROM ohlcv_history
+        FROM ohlcv_history_execution
         WHERE symbol = ?
         ORDER BY bar_time
     """
@@ -539,7 +539,7 @@ def cmd_execution_cost(params: dict) -> dict:
             SELECT symbol,
                    date(bar_time, 'unixepoch') AS date,
                    high, low, close, volume
-            FROM ohlcv_history
+            FROM ohlcv_history_execution
             WHERE bar_time >= strftime('%s', date('now', '-{lookback} days'))
             {where_sym}
             ORDER BY bar_time DESC

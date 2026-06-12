@@ -97,7 +97,7 @@ def compute_ohlcv_features(conn: sqlite3.Connection, symbol: str) -> dict:
     """Load last 5 OHLCV bars for symbol and compute derived features."""
     rows = conn.execute("""
         SELECT close, high, low, volume
-        FROM ohlcv_history
+        FROM ohlcv_history_execution
         WHERE symbol = ?
         ORDER BY bar_time DESC
         LIMIT 5
@@ -174,7 +174,7 @@ def cmd_refresh(params: dict) -> dict:
             LIMIT 1
         """, (symbol,)).fetchone()
 
-        # ── OHLCV-derived features (always computed from ohlcv_history) ────
+        # ── OHLCV-derived features (always computed from ohlcv_history_execution) ────
         ohlcv_feats = compute_ohlcv_features(conn, symbol)
 
         # ── Combine feature values ─────────────────────────────────────────
@@ -185,7 +185,7 @@ def cmd_refresh(params: dict) -> dict:
 
         for col in OHLCV_FEATURE_COLS:
             val = ohlcv_feats.get(col)
-            feature_rows.append((col, val, 'ohlcv_history'))
+            feature_rows.append((col, val, 'ohlcv_history_execution'))
 
         # ── Insert into feature_store ──────────────────────────────────────
         for feat_name, feat_val, src_table in feature_rows:
@@ -208,11 +208,11 @@ def cmd_refresh(params: dict) -> dict:
 
     # ── Write lineage ────────────────────────────────────────────────────────
     for feat_name in ALL_FEATURES:
-        src = 'explosive_moves' if feat_name in FEATURE_COLS else 'ohlcv_history'
+        src = 'explosive_moves' if feat_name in FEATURE_COLS else 'ohlcv_history_execution'
         logic = (
             'Pre-event indicator window (1/3/5 days before explosion)'
             if feat_name in FEATURE_COLS
-            else 'OHLCV-derived: last 5 bars from ohlcv_history'
+            else 'OHLCV-derived: last 5 bars from ohlcv_history_execution'
         )
         conn.execute("""
             INSERT INTO feature_lineage

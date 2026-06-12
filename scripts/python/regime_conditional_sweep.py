@@ -83,7 +83,7 @@ def load_examples(db, horizon=5):
     bars = db.execute(
         """
         SELECT symbol, bar_time, open, high, low, close, volume
-        FROM ohlcv_history
+        FROM ohlcv_history_execution
         ORDER BY symbol, bar_time
         """
     ).fetchall()

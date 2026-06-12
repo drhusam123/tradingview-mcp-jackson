@@ -399,7 +399,7 @@ def run_counterfactuals(db):
     """
     patterns  = db.execute("SELECT * FROM precursor_patterns").fetchall()
     symbols   = db.execute(
-        "SELECT DISTINCT symbol FROM ohlcv_history"
+        "SELECT DISTINCT symbol FROM ohlcv_history_execution"
     ).fetchall()
     sector_map = {r['symbol']: r['sector'] for r in
                   db.execute("SELECT symbol, sector FROM stock_profiles").fetchall()}
@@ -426,7 +426,7 @@ def run_counterfactuals(db):
     for sym_row in symbols:
         sym = sym_row[0]
         bars = db.execute(
-            "SELECT bar_time, close, volume FROM ohlcv_history WHERE symbol=? ORDER BY bar_time",
+            "SELECT bar_time, close, volume FROM ohlcv_history_execution WHERE symbol=? ORDER BY bar_time",
             (sym,)
         ).fetchall()
         if len(bars) < BB_COMP_WINDOW + COUNTERFACTUAL_HORIZON:

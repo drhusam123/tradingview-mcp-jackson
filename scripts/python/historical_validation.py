@@ -711,7 +711,7 @@ REGIME_WINDOW = 20  # trading days
 
 def build_regime_history(db):
     """
-    Compute rolling 20-day market return + vol from ohlcv_history.
+    Compute rolling 20-day market return + vol from ohlcv_history_execution.
     BULL: roll_ret > +3% | BEAR: < -3% | CHOPPY: otherwise.
     """
     # Sample up to 40 liquid symbols for market-wide signal
@@ -722,7 +722,7 @@ def build_regime_history(db):
     ).fetchall()]
     if not symbols:
         symbols = [r[0] for r in db.execute(
-            "SELECT DISTINCT symbol FROM ohlcv_history LIMIT 40"
+            "SELECT DISTINCT symbol FROM ohlcv_history_execution LIMIT 40"
         ).fetchall()]
 
     # Accumulate date → [return] across symbols
@@ -731,7 +731,7 @@ def build_regime_history(db):
 
     for sym in symbols:
         bars = db.execute(
-            """SELECT bar_time, close FROM ohlcv_history
+            """SELECT bar_time, close FROM ohlcv_history_execution
                WHERE symbol=? AND close>0 ORDER BY bar_time""",
             (sym,)
         ).fetchall()
@@ -858,11 +858,11 @@ def _validate_laws_by_regime(db):
 
 def analyze_false_breakouts(db):
     """
-    Scan ohlcv_history for moves ≥3% that reversed ≥60% within 3 bars.
+    Scan ohlcv_history_execution for moves ≥3% that reversed ≥60% within 3 bars.
     Compare precursor features to true explosions to find differentiators.
     """
     symbols = [r[0] for r in db.execute(
-        "SELECT DISTINCT symbol FROM ohlcv_history"
+        "SELECT DISTINCT symbol FROM ohlcv_history_execution"
     ).fetchall()]
 
     sector_map = {r['symbol']: r['sector'] for r in
@@ -873,7 +873,7 @@ def analyze_false_breakouts(db):
     fb_rows = []
     for sym in symbols:
         bars = db.execute(
-            """SELECT bar_time, close, volume FROM ohlcv_history
+            """SELECT bar_time, close, volume FROM ohlcv_history_execution
                WHERE symbol=? AND close>0 ORDER BY bar_time""",
             (sym,)
         ).fetchall()

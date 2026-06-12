@@ -68,7 +68,7 @@ def _load_ohlcv_all(min_bars=30, max_bars=None):
     con = _get_db()
     rows = con.execute(
         "SELECT symbol, bar_time, open, high, low, close, volume "
-        "FROM ohlcv_history ORDER BY symbol, bar_time"
+        "FROM ohlcv_history_execution ORDER BY symbol, bar_time"
     ).fetchall()
     con.close()
     result = defaultdict(list)

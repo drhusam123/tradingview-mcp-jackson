@@ -105,7 +105,7 @@ def ensure_schema(con):
 
 def load_ohlcv_all(con, start_ts=None, end_ts=None):
     """Load all OHLCV data, optionally filtered by time range."""
-    query = "SELECT symbol, bar_time, open, high, low, close, volume FROM ohlcv_history"
+    query = "SELECT symbol, bar_time, open, high, low, close, volume FROM ohlcv_history_execution"
     filters = []
     args = []
     if start_ts:
@@ -536,7 +536,7 @@ def cmd_backtest_strategy(params):
                 'elapsed': round(time.time()-t0, 2)}
 
     # Build close prices per symbol
-    ohlcv_q = "SELECT symbol, bar_time, close FROM ohlcv_history ORDER BY symbol, bar_time"
+    ohlcv_q = "SELECT symbol, bar_time, close FROM ohlcv_history_execution ORDER BY symbol, bar_time"
     ohlcv_rows = con.execute(ohlcv_q).fetchall()
     close_map = defaultdict(dict)
     for r in ohlcv_rows:

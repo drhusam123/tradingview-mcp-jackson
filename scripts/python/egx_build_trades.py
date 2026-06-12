@@ -115,7 +115,7 @@ def main():
 
     symbols = [
         s for (s,) in con.execute(
-            "SELECT DISTINCT symbol FROM ohlcv_history ORDER BY symbol"
+            "SELECT DISTINCT symbol FROM ohlcv_history_execution ORDER BY symbol"
         ).fetchall()
         if s not in EXCLUDE_SYMBOLS
     ]
@@ -135,7 +135,7 @@ def main():
         # Full clean series for the symbol, chronological.
         bars = con.execute(
             "SELECT bar_time, high, low, close, volume "
-            "FROM ohlcv_history WHERE symbol=? ORDER BY bar_time",
+            "FROM ohlcv_history_execution WHERE symbol=? ORDER BY bar_time",
             (sym,),
         ).fetchall()
         if len(bars) < VOL_LOOKBACK + 1:

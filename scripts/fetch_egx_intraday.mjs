@@ -20,6 +20,7 @@ import { setSymbol, setTimeframe } from '../src/core/chart.js';
 import { getOhlcv }                from '../src/core/data.js';
 import { getDB, saveOHLCVTimeframe,
          getTimeframeCoverage, EGX_UNIVERSE, EGX_UNIVERSE_CORE } from '../src/egx/index.js';
+import { loadLiquidTierSymbols } from './lib/liquid_tier.mjs';
 import { waitForChartReady }       from '../src/wait.js';
 import { toTvSymbol }              from '../src/egx/tv_symbols.js';
 
@@ -28,6 +29,16 @@ const DO_60    = !args.includes('--15only');
 const DO_15    = !args.includes('--60only');
 const RESUME   = args.includes('--resume');
 const CORE_ONLY = args.includes('--core-only');
+const TIER_LIQUID = args.includes('--tier') && args[args.indexOf('--tier') + 1] === 'liquid'
+  || args.includes('--tier-liquid');
+const MAX_SYMBOLS = (() => {
+  const i = args.indexOf('--max-symbols');
+  return i >= 0 ? Math.max(1, parseInt(args[i + 1] || '0', 10)) : null;
+})();
+const ROTATION_OFFSET = (() => {
+  const i = args.indexOf('--offset');
+  return i >= 0 ? Math.max(0, parseInt(args[i + 1] || '0', 10)) : 0;
+})();
 const SINGLE   = (() => { const i = args.indexOf('--symbol'); return i >= 0 ? args[i+1] : null; })();
 const DELAY_MS = process.env.DELAY_MS ? +process.env.DELAY_MS : 2000;
 const MAX_BARS = 500;
@@ -38,11 +49,31 @@ const LIQUID_FIRST = EGX_UNIVERSE_CORE.filter(s => EGX_UNIVERSE.includes(s));
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 function bar(pct, w=26) { const f=Math.round(pct/100*w); return '[' + '█'.repeat(f) + '░'.repeat(w-f) + ']'; }
 
-const ALL_RAW = SINGLE
+const dbForTier = getDB();
+let ALL_RAW = SINGLE
   ? [SINGLE]
   : CORE_ONLY
     ? [...new Set(LIQUID_FIRST)]
-    : [...new Set(EGX_UNIVERSE)];
+    : TIER_LIQUID
+      ? loadLiquidTierSymbols(dbForTier, { limit: 80, offset: 0 })
+      : [...new Set(EGX_UNIVERSE)];
+
+// Liquid tier + resume: prioritize symbols missing intraday (skip already-fetched core)
+if (TIER_LIQUID && RESUME && !SINGLE) {
+  const done60pre = new Set(
+    dbForTier.prepare('SELECT DISTINCT symbol FROM ohlcv_60min').all().map(r => r.symbol),
+  );
+  const done15pre = new Set(
+    dbForTier.prepare('SELECT DISTINCT symbol FROM ohlcv_15min').all().map(r => r.symbol),
+  );
+  const missing = ALL_RAW.filter(s =>
+    (DO_60 && !done60pre.has(s)) || (DO_15 && !done15pre.has(s)),
+  );
+  const have = ALL_RAW.filter(s => !missing.includes(s));
+  const cap = MAX_SYMBOLS ?? 20;
+  ALL_RAW = [...missing, ...have].slice(ROTATION_OFFSET, ROTATION_OFFSET + cap);
+}
+
 const ALL_SYMBOLS = [
   ...LIQUID_FIRST.filter(s => ALL_RAW.includes(s)),
   ...ALL_RAW.filter(s => !LIQUID_FIRST.includes(s)),

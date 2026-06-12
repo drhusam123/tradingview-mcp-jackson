@@ -425,6 +425,7 @@ function initSchema(db) {
       momentum_10d   REAL,
       momentum_20d   REAL,
       -- Metadata
+      source        TEXT DEFAULT 'local',  -- local | tv
       updated_at    TEXT DEFAULT (datetime('now')),
       PRIMARY KEY (symbol, bar_date)
     );
@@ -1052,8 +1053,10 @@ export function getStaleSymbols(daysOld = 1) {
  * @param {string} barDate - YYYY-MM-DD
  * @param {Object} ind - نتيجة calculateIndicators()
  */
-export function saveIndicatorsCache(symbol, barDate, ind) {
+export function saveIndicatorsCache(symbol, barDate, ind, { source = 'local' } = {}) {
   const db = getDB();
+  const cols = db.prepare('PRAGMA table_info(indicators_cache)').all().map(r => r.name);
+  const hasSource = cols.includes('source');
   db.prepare(`
     INSERT OR REPLACE INTO indicators_cache
       (symbol, bar_date, ema10, ema20, ema50, ema200,
@@ -1066,8 +1069,9 @@ export function saveIndicatorsCache(symbol, barDate, ind) {
        adx14, adx_plus_di, adx_minus_di,
        close_position, price_vs_ath, momentum_5d, momentum_10d, momentum_20d,
        rsi_slope_3d,
+       ${hasSource ? 'source,' : ''}
        updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,datetime('now'))
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,${hasSource ? '?,' : ''}datetime('now'))
   `).run(
     symbol, barDate,
     ind.ema10    ?? null, ind.ema20  ?? null, ind.ema50   ?? null, ind.ema200 ?? null,
@@ -1091,6 +1095,7 @@ export function saveIndicatorsCache(symbol, barDate, ind) {
     ind.closePosition ?? null, ind.athProximity ?? null,
     ind.momentum5d  ?? null, ind.momentum10d ?? null, ind.momentum20d ?? null,
     ind.rsiSlope3d ?? null,
+    ...(hasSource ? [source] : []),
   );
 }
 

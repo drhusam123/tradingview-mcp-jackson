@@ -149,7 +149,7 @@ def _load_ohlcv_all(min_bars=60):
     try:
         rows = con.execute(
             "SELECT symbol,bar_time,open,high,low,close,volume "
-            "FROM ohlcv_history ORDER BY symbol,bar_time"
+            "FROM ohlcv_history_execution ORDER BY symbol,bar_time"
         ).fetchall()
     finally:
         con.close()

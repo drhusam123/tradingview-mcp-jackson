@@ -7,7 +7,7 @@ automatic Telegram alerts on target hits, and daily portfolio snapshots.
 
 Features:
   • Add positions manually or auto-import from gate-passed signals
-  • Daily price update from ohlcv_history (authoritative price source)
+  • Daily price update from ohlcv_history_execution (authoritative price source)
   • T1 / T2 / T3 / Stop-Loss hit detection with one-time Telegram alerts
   • Unrealized & realized P&L per position and portfolio-wide
   • Daily snapshot table for equity curve tracking
@@ -314,7 +314,7 @@ def close_position(
 
 def update_prices(conn: sqlite3.Connection) -> List[Dict]:
     """
-    Pull latest close from ohlcv_history for every OPEN position.
+    Pull latest close from ohlcv_history_execution for every OPEN position.
     Returns list of updated position summaries.
     """
     ensure_tables(conn)
@@ -329,10 +329,10 @@ def update_prices(conn: sqlite3.Connection) -> List[Dict]:
     updated = []
     for p in open_pos:
         sym = p["symbol"]
-        # Latest close from ohlcv_history (authoritative table)
+        # Latest close from ohlcv_history_execution (authoritative table)
         price_row = conn.execute(
             "SELECT close, date(bar_time,'unixepoch') AS bar_date "
-            "FROM ohlcv_history WHERE symbol=? AND close>0 "
+            "FROM ohlcv_history_execution WHERE symbol=? AND close>0 "
             "ORDER BY bar_time DESC LIMIT 1",
             (sym,)
         ).fetchone()
@@ -721,9 +721,9 @@ def import_gate_passed_signals(conn: sqlite3.Connection, date: str = None,
 
         entry_price = float(sig["entry_price"] or 0)
         if entry_price <= 0:
-            # Try current price from ohlcv_history
+            # Try current price from ohlcv_history_execution
             pr = conn.execute(
-                "SELECT close FROM ohlcv_history WHERE symbol=? ORDER BY bar_time DESC LIMIT 1",
+                "SELECT close FROM ohlcv_history_execution WHERE symbol=? ORDER BY bar_time DESC LIMIT 1",
                 (sym,)
             ).fetchone()
             entry_price = float(pr[0]) if pr else 0
@@ -994,7 +994,7 @@ def daily_update(conn: sqlite3.Connection = None,
                  send_telegram: bool = True) -> Dict:
     """
     Full daily Portfolio Tracker pipeline:
-      1. Update prices from ohlcv_history
+      1. Update prices from ohlcv_history_execution
       2. Detect T1/T2/T3/SL hits
       3. Send Telegram alerts for hits
       4. Take daily snapshot

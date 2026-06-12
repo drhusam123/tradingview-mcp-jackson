@@ -293,7 +293,7 @@ def read_ohlcv_last_n(db, symbol, n=20):
     Returns list of floats (closes), most recent last.
     """
     closes = []
-    for table in ('ohlcv', 'ohlcv_history'):
+    for table in ('ohlcv', 'ohlcv_history_execution'):
         try:
             rows = db.execute(f"""
                 SELECT close FROM {table}

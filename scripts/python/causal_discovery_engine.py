@@ -154,7 +154,7 @@ def _load_sector_returns(db):
     rows = db.execute("""
         SELECT su.sector, date(o.bar_time, 'unixepoch') AS dt,
                o.close, o.open
-        FROM ohlcv_history o
+        FROM ohlcv_history_execution o
         JOIN stock_universe su ON su.symbol = o.symbol
         WHERE su.status = 'active' OR su.status IS NULL
         ORDER BY su.sector, o.symbol, o.bar_time
@@ -187,7 +187,7 @@ def _load_symbol_returns(db):
     """Returns {symbol: {date_str: return}}"""
     rows = db.execute("""
         SELECT symbol, date(bar_time, 'unixepoch') AS dt, close
-        FROM ohlcv_history
+        FROM ohlcv_history_execution
         ORDER BY symbol, bar_time
     """).fetchall()
     sym = defaultdict(list)

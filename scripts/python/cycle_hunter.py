@@ -147,14 +147,14 @@ def get_market_index_prices(conn, n_stocks=30):
     ).fetchall()]
     if not top_symbols:
         top_symbols = [r[0] for r in conn.execute(
-            "SELECT symbol FROM ohlcv_history GROUP BY symbol ORDER BY COUNT(*) DESC LIMIT ?",
+            "SELECT symbol FROM ohlcv_history_execution GROUP BY symbol ORDER BY COUNT(*) DESC LIMIT ?",
             (n_stocks,)
         ).fetchall()]
 
     # Get all bar_times present for all top symbols
     placeholders = ','.join(['?'] * len(top_symbols))
     rows = conn.execute(
-        f"SELECT bar_time, symbol, close FROM ohlcv_history WHERE symbol IN ({placeholders}) ORDER BY bar_time ASC",
+        f"SELECT bar_time, symbol, close FROM ohlcv_history_execution WHERE symbol IN ({placeholders}) ORDER BY bar_time ASC",
         top_symbols
     ).fetchall()
 
@@ -185,7 +185,7 @@ def compute_seasonality(conn, today_str):
     # Get all returns with timestamps and sectors
     rows = conn.execute("""
         SELECT oh.symbol, oh.bar_time, oh.close, su.sector
-        FROM ohlcv_history oh
+        FROM ohlcv_history_execution oh
         LEFT JOIN stock_universe su ON oh.symbol = su.symbol
         ORDER BY oh.symbol, oh.bar_time ASC
     """).fetchall()
@@ -354,7 +354,7 @@ def compute_stock_acf_cycles(args):
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
-            "SELECT close FROM ohlcv_history WHERE symbol=? ORDER BY bar_time ASC",
+            "SELECT close FROM ohlcv_history_execution WHERE symbol=? ORDER BY bar_time ASC",
             (symbol,)
         ).fetchall()
         conn.close()
@@ -422,7 +422,7 @@ def cmd_run():
     # ── 2. Per-stock ACF cycles ───────────────────────────────────────────────
     print(json.dumps({"step": "per_stock_acf", "status": "start"}))
     symbols = [r[0] for r in conn.execute(
-        "SELECT symbol FROM ohlcv_history GROUP BY symbol HAVING COUNT(*) >= 40"
+        "SELECT symbol FROM ohlcv_history_execution GROUP BY symbol HAVING COUNT(*) >= 40"
     ).fetchall()]
     n_workers = min(7, max(1, cpu_count() - 1))
 

@@ -57,7 +57,7 @@ def _compute_returns(conn, symbol, entry_date, holding_days=5):
     """Return (net_return, hit) for a single trade."""
     rows = conn.execute("""
         SELECT date(bar_time,'unixepoch') AS d, close
-        FROM ohlcv_history
+        FROM ohlcv_history_execution
         WHERE symbol=? AND date(bar_time,'unixepoch') >= ?
         ORDER BY bar_time LIMIT ?
     """, (symbol, entry_date, holding_days + 2)).fetchall()
@@ -459,7 +459,7 @@ def cmd_param_stability(params):
     """).fetchall()
 
     # Load non-explosion count (proxy: total ohlcv rows)
-    total_obs = conn.execute("SELECT COUNT(*) FROM ohlcv_history").fetchone()[0]
+    total_obs = conn.execute("SELECT COUNT(*) FROM ohlcv_history_execution").fetchone()[0]
     total_explosions = len(rows)
     conn.close()
 

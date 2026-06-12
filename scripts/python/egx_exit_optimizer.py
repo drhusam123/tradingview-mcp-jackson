@@ -20,7 +20,7 @@ OUT = Path('/tmp/egx_exit_report.json')
 def get_path(conn, sym, entry_date, ndays=MAXD):
     """Return list of bars (open,high,low,close) for the ndays trading bars AFTER entry_date."""
     rows = conn.execute(
-        "SELECT date(bar_time,'unixepoch') d, open,high,low,close FROM ohlcv_history "
+        "SELECT date(bar_time,'unixepoch') d, open,high,low,close FROM ohlcv_history_execution "
         "WHERE symbol=? AND date(bar_time,'unixepoch')>? ORDER BY bar_time LIMIT ?",
         (sym, entry_date, ndays)
     ).fetchall()
@@ -29,7 +29,7 @@ def get_path(conn, sym, entry_date, ndays=MAXD):
 
 def atr14(conn, sym, entry_date):
     rows = conn.execute(
-        "SELECT high,low,close FROM ohlcv_history WHERE symbol=? AND date(bar_time,'unixepoch')<=? "
+        "SELECT high,low,close FROM ohlcv_history_execution WHERE symbol=? AND date(bar_time,'unixepoch')<=? "
         "ORDER BY bar_time DESC LIMIT 15", (sym, entry_date)
     ).fetchall()
     if len(rows) < 2: return None

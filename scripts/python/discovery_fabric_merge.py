@@ -27,7 +27,7 @@ except ImportError:
 CATALOG = {
     "at": None,
     "layers": {
-        "L0": ["ohlcv_history", "stock_universe"],
+        "L0": ["ohlcv_history_execution", "stock_universe"],
         "L1": ["indicators_cache"],
         "L2": ["pine_analytics", "tv_discovery_features", "closing_pressure_daily", "market_breadth_enhanced",
                "cross_market_regime", "dom_snapshots"],

@@ -20,7 +20,7 @@ def load_models():
             joblib.load(str(M/'explosion_et_v1.pkl')))
 
 def get_path(conn, sym, ed, n=12):
-    rows=conn.execute("SELECT open,high,low,close FROM ohlcv_history WHERE symbol=? AND date(bar_time,'unixepoch')>? ORDER BY bar_time LIMIT ?",(sym,ed,n)).fetchall()
+    rows=conn.execute("SELECT open,high,low,close FROM ohlcv_history_execution WHERE symbol=? AND date(bar_time,'unixepoch')>? ORDER BY bar_time LIMIT ?",(sym,ed,n)).fetchall()
     return [(float(o or 0),float(h or 0),float(l or 0),float(c or 0)) for o,h,l,c in rows]
 
 def target_stop(entry, path, tgt=0.15, stp=-0.07, to=10):

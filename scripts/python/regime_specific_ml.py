@@ -73,7 +73,7 @@ def _build_market_daily_stats(conn, start_date='2021-01-01'):
             AVG(ABS((close - open) / NULLIF(open, 0) * 100)) AS avg_abs_ret,
             COUNT(DISTINCT symbol) AS n_symbols,
             SUM(CASE WHEN close > open THEN 1 ELSE 0 END) * 1.0 / COUNT(*) AS adv_ratio
-        FROM ohlcv_history
+        FROM ohlcv_history_execution
         WHERE date(bar_time,'unixepoch') >= ?
         GROUP BY bar_date
         ORDER BY bar_date
@@ -424,7 +424,7 @@ def _detect_current_regime(conn):
             AVG((close - open) / NULLIF(open, 0) * 100) AS median_ret,
             COUNT(DISTINCT symbol) AS n_sym,
             SUM(CASE WHEN close > open THEN 1 ELSE 0 END) * 1.0 / COUNT(*) AS adv_ratio
-        FROM ohlcv_history
+        FROM ohlcv_history_execution
         WHERE date(bar_time,'unixepoch') >= date('now','-30 days')
         GROUP BY bar_date
         ORDER BY bar_date DESC

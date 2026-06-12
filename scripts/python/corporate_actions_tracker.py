@@ -165,7 +165,7 @@ def scan_symbol(params):
     rows = db.execute("""
         SELECT bar_time, open, high, low, close, volume,
                date(bar_time, 'unixepoch') as bar_date
-        FROM ohlcv_history
+        FROM ohlcv_history_execution
         WHERE symbol = ? AND bar_time >= ?
         ORDER BY bar_time ASC
     """, (symbol, cutoff)).fetchall()

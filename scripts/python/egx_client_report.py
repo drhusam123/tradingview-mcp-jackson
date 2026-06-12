@@ -83,7 +83,7 @@ def driver_text(drivers: list) -> str:
 
 def latest_ohlcv_date(conn) -> str:
     row = conn.execute(
-        "SELECT MAX(date(bar_time, 'unixepoch')) AS latest FROM ohlcv_history WHERE close > 0"
+        "SELECT MAX(date(bar_time, 'unixepoch')) AS latest FROM ohlcv_history_execution WHERE close > 0"
     ).fetchone()
     return row['latest'] if row and row['latest'] else None
 

@@ -2,7 +2,7 @@
 """
 Nightly Outcome Filler
 ======================
-Fills return_t1/t3/t5/t10 in recommendation_outcomes from ohlcv_history.
+Fills return_t1/t3/t5/t10 in recommendation_outcomes from ohlcv_history_execution.
 Also calculates hit_t1, hit_t5, reached_t1_target, hit_stop, outcome_filled.
 
 Run: python3 scripts/python/outcome_filler.py
@@ -43,7 +43,7 @@ def main():
         prices = conn.execute("""
             SELECT date(bar_time,'unixepoch') as bar_date,
                    close
-            FROM ohlcv_history
+            FROM ohlcv_history_execution
             WHERE symbol = ?
               AND date(bar_time,'unixepoch') > ?
             ORDER BY bar_time

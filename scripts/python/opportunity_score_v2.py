@@ -155,7 +155,8 @@ def range_pct(bar: sqlite3.Row) -> Optional[float]:
 
 
 def load_bars(db: sqlite3.Connection) -> Dict[str, List[sqlite3.Row]]:
-    source = "ohlcv_history_execution" if table_exists(db, "ohlcv_history_execution") else "ohlcv_history"
+    from db_ohlcv import OHLCV_TABLE
+    source = OHLCV_TABLE if table_exists(db, OHLCV_TABLE) else "ohlcv_history"
     rows = db.execute(
         f"""
         SELECT h.symbol, h.bar_time, h.open, h.high, h.low, h.close, h.volume,

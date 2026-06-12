@@ -95,7 +95,7 @@ def _extract_raw_blob(raw: Any) -> dict:
 def _latest_close(db: sqlite3.Connection, symbol: str, trade_date: str) -> Optional[float]:
     row = db.execute(
         """
-        SELECT close FROM ohlcv_history
+        SELECT close FROM ohlcv_history_execution
         WHERE symbol=? AND date(bar_time,'unixepoch')=?
         ORDER BY bar_time DESC LIMIT 1
         """,
@@ -105,7 +105,7 @@ def _latest_close(db: sqlite3.Connection, symbol: str, trade_date: str) -> Optio
         return _safe_float(row["close"])
     row2 = db.execute(
         """
-        SELECT close FROM ohlcv_history
+        SELECT close FROM ohlcv_history_execution
         WHERE symbol=?
         ORDER BY bar_time DESC LIMIT 1
         """,

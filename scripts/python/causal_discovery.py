@@ -83,7 +83,7 @@ def _build_aligned_series(conn, start_date='2022-01-01'):
         SELECT date(bar_time,'unixepoch') AS bar_date,
                AVG(volume) AS avg_vol,
                AVG((close - open) / NULLIF(open, 0)) AS avg_ret
-        FROM ohlcv_history
+        FROM ohlcv_history_execution
         WHERE date(bar_time,'unixepoch') >= ?
         GROUP BY bar_date
         ORDER BY bar_date

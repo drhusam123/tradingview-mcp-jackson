@@ -38,7 +38,7 @@ def _latest_ohlcv_date() -> Optional[str]:
         import sqlite3
         conn = sqlite3.connect(DB_PATH)
         row = conn.execute(
-            "SELECT MAX(date(bar_time, 'unixepoch')) AS latest FROM ohlcv_history"
+            "SELECT MAX(date(bar_time, 'unixepoch')) AS latest FROM ohlcv_history_execution"
         ).fetchone()
         conn.close()
         return row[0] if row else None

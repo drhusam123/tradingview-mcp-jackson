@@ -116,7 +116,7 @@ def ensure_tables(db):
 def load_bars(db):
     rows = db.execute("""
         SELECT symbol, date(bar_time,'unixepoch') AS d, open, high, low, close, volume
-        FROM ohlcv_history
+        FROM ohlcv_history_execution
         WHERE close IS NOT NULL AND close > 0
         ORDER BY symbol, bar_time
     """).fetchall()

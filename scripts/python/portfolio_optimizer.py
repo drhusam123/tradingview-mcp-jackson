@@ -49,7 +49,7 @@ def _build_returns_matrix(conn, symbols, lookback_days=120):
     ph = ','.join('?' * len(symbols))
     rows = conn.execute(f"""
         SELECT symbol, date(bar_time,'unixepoch') AS bar_date, close
-        FROM ohlcv_history
+        FROM ohlcv_history_execution
         WHERE symbol IN ({ph})
         ORDER BY bar_time
     """, symbols).fetchall()

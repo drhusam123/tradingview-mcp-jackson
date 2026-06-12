@@ -1370,7 +1370,7 @@ def get_quant_discovery_score(symbol, date, conn):
     try:
         rows = conn.execute("""
             SELECT open, high, low, close, volume
-            FROM ohlcv_history
+            FROM ohlcv_history_execution
             WHERE symbol=? AND date(bar_time,'unixepoch') <= ?
               AND close IS NOT NULL AND close > 0
             ORDER BY bar_time DESC LIMIT 320

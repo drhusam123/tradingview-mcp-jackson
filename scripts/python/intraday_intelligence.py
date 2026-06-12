@@ -135,7 +135,7 @@ def require_intraday_tables(conn):
             json.dumps({
                 'error': 'intraday_data_not_fetched',
                 'missing_tables': missing,
-                'hint': 'Run: npm run egx:fetch:intraday',
+                'hint': 'Run: npm run egx:intraday:fetch',
             })
         )
 

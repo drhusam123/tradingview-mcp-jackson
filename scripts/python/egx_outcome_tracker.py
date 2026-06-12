@@ -33,7 +33,7 @@ def ohlcv_table(conn) -> str:
     row = conn.execute(
         "SELECT name FROM sqlite_master WHERE type IN ('view','table') AND name='ohlcv_history_execution'"
     ).fetchone()
-    return row['name'] if row else 'ohlcv_history'
+    return row['name'] if row else 'ohlcv_history_execution'
 
 
 def ensure_schema(conn):

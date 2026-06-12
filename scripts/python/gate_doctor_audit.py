@@ -102,9 +102,10 @@ def ensure_gate_audit_table(conn):
 
 
 def ohlcv_table(conn) -> str:
-    if table_exists(conn, "ohlcv_history_execution"):
-        return "ohlcv_history_execution"
-    return "ohlcv_history"
+    from db_ohlcv import OHLCV_TABLE, OHLCV_RAW
+    if table_exists(conn, OHLCV_TABLE):
+        return OHLCV_TABLE
+    return OHLCV_RAW
 
 
 def load_bars(conn):

@@ -92,7 +92,7 @@ def check_db_freshness():
 
         # OHLCV — should have data from yesterday (or today if EGX traded)
         last_ohlcv = conn.execute(
-            "SELECT MAX(date(bar_time,'unixepoch')) as d FROM ohlcv_history"
+            "SELECT MAX(date(bar_time,'unixepoch')) as d FROM ohlcv_history_execution"
         ).fetchone()['d']
         if last_ohlcv and last_ohlcv < yesterday and not is_weekend:
             issues.append(f"❌ OHLCV: آخر بيانات {last_ohlcv} (قديمة)")

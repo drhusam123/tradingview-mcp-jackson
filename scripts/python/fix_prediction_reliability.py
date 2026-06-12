@@ -251,7 +251,7 @@ def apply_fix_d(conn: sqlite3.Connection):
                 (latest,)
             ).fetchall()
 
-    # Entry prices from ohlcv_history
+    # Entry prices from ohlcv_history_execution
     inserted = 0
     skipped  = 0
     for row in top_preds:
@@ -259,7 +259,7 @@ def apply_fix_d(conn: sqlite3.Connection):
 
         # Get entry price (latest close for this symbol)
         price_row = conn.execute(
-            "SELECT close FROM ohlcv_history WHERE symbol=? ORDER BY bar_time DESC LIMIT 1",
+            "SELECT close FROM ohlcv_history_execution WHERE symbol=? ORDER BY bar_time DESC LIMIT 1",
             (sym,)
         ).fetchone()
         entry_price = price_row[0] if price_row else None
@@ -343,7 +343,7 @@ def update_forward_test_outcomes(conn: sqlite3.Connection):
         closes = conn.execute(
             """
             SELECT date(bar_time, 'unixepoch') AS d, close
-            FROM   ohlcv_history
+            FROM   ohlcv_history_execution
             WHERE  symbol=?
               AND  date(bar_time, 'unixepoch') > ?
             ORDER  BY bar_time ASC

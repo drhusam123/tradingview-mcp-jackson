@@ -535,7 +535,7 @@ def phase1_build_features():
     rows = conn.execute("""
         SELECT symbol, date(bar_time,'unixepoch') as bar_date,
                open, high, low, close, volume
-        FROM ohlcv_history
+        FROM ohlcv_history_execution
         WHERE date(bar_time,'unixepoch') >= '2021-01-01'
         ORDER BY symbol, bar_time
     """).fetchall()
@@ -1247,7 +1247,7 @@ def phase3_regime_models():
     target_neg = len(pos_rows) * 3
     neg_candidates = conn.execute("""
         SELECT o.symbol, date(o.bar_time,'unixepoch') AS bar_date
-        FROM ohlcv_history o
+        FROM ohlcv_history_execution o
         WHERE date(o.bar_time,'unixepoch') >= ?
           AND NOT EXISTS (
             SELECT 1 FROM explosive_moves e
@@ -1495,7 +1495,7 @@ def _train_single_stock(args):
         rows = conn.execute("""
             SELECT date(bar_time,'unixepoch') as d,
                    open, close, high, low, volume
-            FROM ohlcv_history
+            FROM ohlcv_history_execution
             WHERE symbol=? AND date(bar_time,'unixepoch') >= '2020-01-01'
             ORDER BY bar_time
         """, (sym,)).fetchall()
@@ -1681,7 +1681,7 @@ def phase4_per_stock_models():
     conn = get_db()
     syms = conn.execute("""
         SELECT symbol, COUNT(DISTINCT date(bar_time,'unixepoch')) as n_days
-        FROM ohlcv_history
+        FROM ohlcv_history_execution
         WHERE date(bar_time,'unixepoch') >= '2020-01-01'
         GROUP BY symbol HAVING n_days >= 100
         ORDER BY n_days DESC LIMIT 300
@@ -1751,7 +1751,7 @@ def phase5_triple_barrier():
 
     # Load OHLCV for top liquid symbols
     syms = conn.execute("""
-        SELECT symbol FROM ohlcv_history
+        SELECT symbol FROM ohlcv_history_execution
         GROUP BY symbol HAVING COUNT(*) >= 300
         ORDER BY COUNT(*) DESC LIMIT 80
     """).fetchall()
@@ -1763,7 +1763,7 @@ def phase5_triple_barrier():
     for sym in sym_list:
         rows = conn.execute("""
             SELECT date(bar_time,'unixepoch') as d, close, high, low, volume
-            FROM ohlcv_history WHERE symbol=? ORDER BY bar_time
+            FROM ohlcv_history_execution WHERE symbol=? ORDER BY bar_time
         """, (sym,)).fetchall()
         if len(rows) < 60: continue
 
@@ -2392,7 +2392,7 @@ def phase47_qmc_portfolio_risk():
     for sig in signals:
         sym = sig['symbol']
         prices = conn.execute("""
-            SELECT close FROM ohlcv_history
+            SELECT close FROM ohlcv_history_execution
             WHERE symbol=? AND close IS NOT NULL AND close > 0
             ORDER BY bar_time DESC LIMIT 65
         """, (sym,)).fetchall()
@@ -3215,7 +3215,7 @@ def phase52_53_enhanced_breadth():
     ohlcv = pd.read_sql_query("""
         SELECT symbol, date(bar_time,'unixepoch') AS trade_date,
                open, high, low, close, volume
-        FROM ohlcv_history
+        FROM ohlcv_history_execution
         WHERE close > 0 AND volume > 0
         ORDER BY symbol, trade_date
     """, conn)
@@ -3836,7 +3836,7 @@ def _load_breadth_for_ph51(conn) -> 'pd.DataFrame | None':
     ohlcv = pd.read_sql_query("""
         SELECT symbol, date(bar_time,'unixepoch') AS trade_date,
                close, volume
-        FROM ohlcv_history WHERE close > 0 AND volume > 0
+        FROM ohlcv_history_execution WHERE close > 0 AND volume > 0
         ORDER BY symbol, trade_date
     """, conn)
     if len(ohlcv) < 5000:
@@ -5042,7 +5042,7 @@ def cmd_predict_ensemble():
     t0 = time.time()
 
     symbols = [r['symbol'] for r in conn.execute(
-        "SELECT DISTINCT symbol FROM ohlcv_history"
+        "SELECT DISTINCT symbol FROM ohlcv_history_execution"
     ).fetchall()]
 
     # ── Compute RS features (relative strength) for all symbols ─────────────
@@ -5053,7 +5053,7 @@ def cmd_predict_ensemble():
         _sym_returns = {}
         for _s in symbols:
             _bars_rs = conn.execute("""
-                SELECT close FROM ohlcv_history WHERE symbol=?
+                SELECT close FROM ohlcv_history_execution WHERE symbol=?
                 ORDER BY bar_time DESC LIMIT 25
             """, (_s,)).fetchall()
             if len(_bars_rs) >= 21:
@@ -5067,7 +5067,7 @@ def cmd_predict_ensemble():
         # explosion_ml._build_feature_row). Previously used cross-sectional average
         # with a different normalization → train/inference mismatch.
         _egx30 = conn.execute("""
-            SELECT close FROM ohlcv_history WHERE symbol='EGX30'
+            SELECT close FROM ohlcv_history_execution WHERE symbol='EGX30'
             ORDER BY bar_time DESC LIMIT 25
         """).fetchall()
         _mkt_r5 = _mkt_r20 = 0.0
@@ -5105,7 +5105,7 @@ def cmd_predict_ensemble():
     for sym in symbols:
         bars = conn.execute("""
             SELECT date(bar_time,'unixepoch') AS bar_date, open, high, low, close, volume
-            FROM ohlcv_history WHERE symbol=? ORDER BY bar_time DESC LIMIT 150
+            FROM ohlcv_history_execution WHERE symbol=? ORDER BY bar_time DESC LIMIT 150
         """, (sym,)).fetchall()
         # LIMIT 150: previously LIMIT 40, but 40 bars is insufficient for stable indicator
         # computation. RSI14 needs 14+ bars warmup, ADX14 needs 28+, EMA50 needs 50+.
@@ -5973,7 +5973,7 @@ def phase9_calibration():
     print(f"[P9] Clean positives (return_5d>=7%): {len(pos_rows)}", flush=True)
     neg_cands = conn.execute("""
         SELECT o.symbol, date(o.bar_time,'unixepoch') AS bar_date
-        FROM ohlcv_history o
+        FROM ohlcv_history_execution o
         WHERE date(o.bar_time,'unixepoch') >= ?
           AND NOT EXISTS (SELECT 1 FROM explosive_moves e
                           WHERE e.symbol=o.symbol AND e.explosion_date=date(o.bar_time,'unixepoch'))
@@ -6284,7 +6284,7 @@ def phase10_tv_replay_backtest():
         # Get 15 bars around explosion
         bars = db_conn.execute("""
             SELECT date(bar_time,'unixepoch') d, open, high, low, close, volume
-            FROM ohlcv_history WHERE symbol=? ORDER BY bar_time
+            FROM ohlcv_history_execution WHERE symbol=? ORDER BY bar_time
         """, (sym,)).fetchall()
 
         dates = [r['d'] for r in bars]
@@ -6459,9 +6459,9 @@ def phase11_pine_features():
         FROM pine_analytics pa
         JOIN (
             SELECT symbol, close
-            FROM ohlcv_history
+            FROM ohlcv_history_execution
             WHERE (symbol, bar_time) IN (
-                SELECT symbol, MAX(bar_time) FROM ohlcv_history GROUP BY symbol
+                SELECT symbol, MAX(bar_time) FROM ohlcv_history_execution GROUP BY symbol
             )
         ) oh ON oh.symbol = pa.symbol
         WHERE pa.trade_date >= date('now', '-3 days')
@@ -6483,9 +6483,9 @@ def phase11_pine_features():
                 pine_rows = conn.execute("""
                     SELECT pa.*, oh.close as last_close
                     FROM pine_analytics pa
-                    JOIN (SELECT symbol, close FROM ohlcv_history
+                    JOIN (SELECT symbol, close FROM ohlcv_history_execution
                           WHERE (symbol, bar_time) IN (
-                              SELECT symbol, MAX(bar_time) FROM ohlcv_history GROUP BY symbol))
+                              SELECT symbol, MAX(bar_time) FROM ohlcv_history_execution GROUP BY symbol))
                          oh ON oh.symbol=pa.symbol
                     WHERE pa.trade_date >= date('now','-3 days')
                 """).fetchall()
@@ -6628,7 +6628,7 @@ def phase12_incremental_update():
     # ── Negatives: recent non-explosion bars (same 60d window) ───────────────
     neg_cands = conn.execute("""
         SELECT o.symbol, date(o.bar_time,'unixepoch') AS bar_date
-        FROM ohlcv_history o
+        FROM ohlcv_history_execution o
         WHERE date(o.bar_time,'unixepoch') >= ?
           AND NOT EXISTS (SELECT 1 FROM explosive_moves e
                           WHERE e.symbol=o.symbol AND e.explosion_date=date(o.bar_time,'unixepoch'))
@@ -6808,7 +6808,7 @@ def phase13_cpcv():
     ).fetchall()
     neg_cands = conn.execute("""
         SELECT o.symbol, date(o.bar_time,'unixepoch') AS bar_date
-        FROM ohlcv_history o
+        FROM ohlcv_history_execution o
         WHERE date(o.bar_time,'unixepoch') BETWEEN '2020-12-01' AND '2025-12-31'
           AND NOT EXISTS (SELECT 1 FROM explosive_moves e
                           WHERE e.symbol=o.symbol AND e.explosion_date=date(o.bar_time,'unixepoch'))
@@ -7026,7 +7026,7 @@ def phase14_mtf_features():
     conn = get_db()
 
     symbols = [r['symbol'] for r in conn.execute(
-        "SELECT DISTINCT symbol FROM ohlcv_history GROUP BY symbol HAVING COUNT(*) >= 60"
+        "SELECT DISTINCT symbol FROM ohlcv_history_execution GROUP BY symbol HAVING COUNT(*) >= 60"
     ).fetchall()]
 
     version = f"mtf_{today_str}"
@@ -7035,7 +7035,7 @@ def phase14_mtf_features():
     for sym in symbols:
         rows = conn.execute("""
             SELECT date(bar_time,'unixepoch') d, open, high, low, close, volume
-            FROM ohlcv_history WHERE symbol=? ORDER BY bar_time
+            FROM ohlcv_history_execution WHERE symbol=? ORDER BY bar_time
         """, (sym,)).fetchall()
         if len(rows) < 60: continue
 
@@ -7249,7 +7249,7 @@ def phase15_conformal_intervals():
             SELECT symbol,
                    date(bar_time, 'unixepoch') AS bar_date,
                    0 AS label
-            FROM ohlcv_history
+            FROM ohlcv_history_execution
             WHERE bar_time BETWEEN strftime('%s','2025-06-01')
                                AND strftime('%s','2026-04-01')
               AND symbol NOT IN (
@@ -8296,7 +8296,7 @@ def phase21_spectral_intelligence():
     # ── Load all OHLCV data at once ──────────────────────────────────────────
     rows = conn.execute("""
         SELECT symbol, bar_time, close
-        FROM ohlcv_history
+        FROM ohlcv_history_execution
         WHERE close > 0
         ORDER BY symbol, bar_time ASC
     """).fetchall()
@@ -8646,7 +8646,7 @@ def phase23_spectral_attribution():
     sym_ohlcv = {}
     for row in conn.execute("""
         SELECT symbol, date(bar_time,'unixepoch') AS bar_date, close
-        FROM ohlcv_history
+        FROM ohlcv_history_execution
         ORDER BY symbol, bar_time ASC
     """).fetchall():
         sym = row['symbol']
@@ -9089,7 +9089,7 @@ def phase55_stock_forecast():
         ohlcv = pd.read_sql_query("""
             SELECT symbol, date(bar_time,'unixepoch') AS trade_date,
                    close, high, low, volume
-            FROM ohlcv_history
+            FROM ohlcv_history_execution
             WHERE close > 0 AND volume > 0
             ORDER BY symbol, trade_date
         """, conn)
@@ -9663,7 +9663,7 @@ def phase56_markov_regime():
         try:
             raw = pd.read_sql_query("""
                 SELECT bar_time AS trade_date, symbol, close
-                FROM ohlcv_history
+                FROM ohlcv_history_execution
                 ORDER BY symbol, bar_time
             """, conn)
             raw['trade_date'] = pd.to_datetime(raw['trade_date'])
@@ -10175,7 +10175,7 @@ def phase57_closing_pressure():
                date(bar_time,'unixepoch') AS trade_date,
                open, high, low, close, volume,
                bar_time
-        FROM ohlcv_history
+        FROM ohlcv_history_execution
         WHERE high IS NOT NULL AND low IS NOT NULL
           AND high > low          -- skip zero-range bars
           AND open > 0 AND close > 0
@@ -10592,7 +10592,7 @@ def phase61_volume_intelligence():
     exps = conn.execute("SELECT symbol, explosion_date FROM explosive_moves WHERE explosion_date >= '2025-01-01' ORDER BY RANDOM() LIMIT 30").fetchall()
     negs = conn.execute("""
         SELECT o.symbol, date(o.bar_time,'unixepoch') as bar_date
-        FROM ohlcv_history o
+        FROM ohlcv_history_execution o
         WHERE date(o.bar_time,'unixepoch') >= '2025-01-01'
           AND NOT EXISTS (SELECT 1 FROM explosive_moves e WHERE e.symbol=o.symbol AND e.explosion_date=date(o.bar_time,'unixepoch'))
         ORDER BY RANDOM() LIMIT 30
@@ -10661,7 +10661,7 @@ def phase62_dtw_similarity():
     conn.commit()
 
     symbols = conn.execute("""
-        SELECT DISTINCT symbol FROM ohlcv_history
+        SELECT DISTINCT symbol FROM ohlcv_history_execution
         GROUP BY symbol HAVING COUNT(*) >= 50
     """).fetchall()
     symbols = [s[0] for s in symbols]
@@ -10686,7 +10686,7 @@ def phase62_dtw_similarity():
         try:
             rows = conn.execute("""
                 SELECT date(bar_time,'unixepoch') as bar_date, open, high, low, close, volume
-                FROM ohlcv_history WHERE symbol=? ORDER BY bar_time
+                FROM ohlcv_history_execution WHERE symbol=? ORDER BY bar_time
             """, (sym,)).fetchall()
 
             if len(rows) < 30:
@@ -10799,7 +10799,7 @@ def phase66_accumulation_detector():
         bars_before = conn.execute("""
             SELECT close, high, low, volume,
                    date(bar_time,'unixepoch') as bar_date
-            FROM ohlcv_history
+            FROM ohlcv_history_execution
             WHERE symbol = ? AND date(bar_time,'unixepoch') < ?
             ORDER BY bar_time DESC LIMIT 30
         """, (sym, exp_date)).fetchall()
@@ -10865,7 +10865,7 @@ def phase66_accumulation_detector():
     # Negatives: random days that did NOT lead to explosion in 5-20d
     neg_cands = conn.execute("""
         SELECT oh.symbol, date(oh.bar_time,'unixepoch') as bar_date
-        FROM ohlcv_history oh
+        FROM ohlcv_history_execution oh
         WHERE date(oh.bar_time,'unixepoch') >= '2023-01-01'
           AND oh.close > 0 AND oh.volume > 0
           AND NOT EXISTS (
@@ -10883,7 +10883,7 @@ def phase66_accumulation_detector():
 
         bars = conn.execute("""
             SELECT close, high, low, volume
-            FROM ohlcv_history
+            FROM ohlcv_history_execution
             WHERE symbol = ? AND date(bar_time,'unixepoch') <= ?
             ORDER BY bar_time DESC LIMIT 25
         """, (sym, bar_date)).fetchall()
@@ -11029,7 +11029,7 @@ def phase67_manipulation_classifier():
         # Get bars at the peak (the manipulation signature)
         bars = conn.execute("""
             SELECT close, high, low, volume
-            FROM ohlcv_history
+            FROM ohlcv_history_execution
             WHERE symbol = ? AND date(bar_time,'unixepoch') <= ?
             ORDER BY bar_time DESC LIMIT 15
         """, (sym, peak)).fetchall()
@@ -11103,7 +11103,7 @@ def phase67_manipulation_classifier():
 
         bars = conn.execute("""
             SELECT close, high, low, volume
-            FROM ohlcv_history
+            FROM ohlcv_history_execution
             WHERE symbol = ? AND date(bar_time,'unixepoch') <= ?
             ORDER BY bar_time DESC LIMIT 15
         """, (sym, exp_date)).fetchall()

@@ -72,7 +72,7 @@ def load_returns(con, lookback_days=252):
         SELECT symbol, bar_time,
                (close - LAG(close) OVER (PARTITION BY symbol ORDER BY bar_time))
                / NULLIF(LAG(close) OVER (PARTITION BY symbol ORDER BY bar_time), 0) AS daily_return
-        FROM ohlcv_history
+        FROM ohlcv_history_execution
         WHERE bar_time > strftime('%s', 'now', '-' || ? || ' days')
         ORDER BY symbol, bar_time
     """, (lookback_days + 10,)).fetchall()

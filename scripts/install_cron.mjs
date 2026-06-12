@@ -143,6 +143,8 @@ const INTRADAY_SCRIPT = join(ROOT, 'scripts', 'fetch_egx_intraday.mjs');
 const INTRADAY_LOG    = join(ROOT, 'logs', 'intraday_fetch.log');
 const MARKER_INTRADAY_W = '# EGX-INTRADAY-W';
 const CRON_INTRADAY_W = `55 19 * * 0 cd "${ROOT}" && ${CRON_ENV} ${NODE_BIN} "${INTRADAY_SCRIPT}" --core-only --resume >> "${INTRADAY_LOG}" 2>&1 ${MARKER_INTRADAY_W}`;
+const MARKER_INTRADAY_LIQ_W = '# EGX-INTRADAY-LIQ-W';
+const CRON_INTRADAY_LIQ_W = `5 20 * * 0 cd "${ROOT}" && ${CRON_ENV} ${NODE_BIN} "${INTRADAY_SCRIPT}" --tier-liquid --max-symbols 20 --resume >> "${INTRADAY_LOG}" 2>&1 ${MARKER_INTRADAY_LIQ_W}`;
 
 // DHVD Deep Historical Validation — كل أول أحد من الشهر 7 PM القاهرة (17:00 UTC صيف)
 // يُعيد التحقق من جميع القوانين المكتشفة عبر كامل التاريخ، log-only بدون إرسال عميل
@@ -517,7 +519,7 @@ const filtered = current.split('\n')
   .filter(l => !ALL_MARKERS.some(m => l.includes(m)))
   .join('\n').trim();
 const ALL_CRONS = [
-  CRON_LINE, CRON_MACRO, CRON_TG, CRON_TV_LIVE_1, CRON_TV_LIVE_2, CRON_DMIDS, CRON_REGIME_SWEEP_W, CRON_HYP_BRIDGE_W, CRON_DISCOVERY_AUDIT, CRON_PERPETUAL_W, CRON_FABRIC_D, CRON_FABRIC_W, CRON_TV_MICRO, CRON_GAP_REPAIR_D, CRON_GAP_REPAIR_W, CRON_INTRADAY_W, CRON_DHVD,
+  CRON_LINE, CRON_MACRO, CRON_TG, CRON_TV_LIVE_1, CRON_TV_LIVE_2, CRON_DMIDS, CRON_REGIME_SWEEP_W, CRON_HYP_BRIDGE_W, CRON_DISCOVERY_AUDIT, CRON_PERPETUAL_W, CRON_FABRIC_D, CRON_FABRIC_W, CRON_TV_MICRO, CRON_GAP_REPAIR_D, CRON_GAP_REPAIR_W, CRON_INTRADAY_W, CRON_INTRADAY_LIQ_W, CRON_DHVD,
   CRON_EVO_Q, CRON_EVO_F, CRON_COG_Q, CRON_COG_F,
   CRON_GRAPH_W, CRON_RL_W, CRON_EXPLAIN_Q, CRON_MACRO_G,
   CRON_INTEGRITY_W, CRON_UMCG_W, CRON_CAUSAL_W, CRON_FAILURE_D,

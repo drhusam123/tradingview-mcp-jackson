@@ -381,7 +381,7 @@ class PortfolioEngine:
         Keep top `max_per_group` per sector by UES score.
 
         Note: A real implementation would use a rolling correlation
-        matrix from ohlcv_history; here sector membership is the
+        matrix from ohlcv_history_execution; here sector membership is the
         simplified proxy.
         """
         from collections import defaultdict

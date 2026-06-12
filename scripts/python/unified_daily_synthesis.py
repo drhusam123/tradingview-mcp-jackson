@@ -807,7 +807,7 @@ def _section_research_directives(db, target_date):
                    MIN(bar_count) as min_bars
             FROM (
                 SELECT symbol, COUNT(*) as bar_count
-                FROM ohlcv_history
+                FROM ohlcv_history_execution
                 GROUP BY symbol
             )
         """).fetchone()
@@ -1295,7 +1295,7 @@ def cmd_status(params):
         checks = {}
 
         table_checks = [
-            ('ohlcv_history',          'OHLCV data'),
+            ('ohlcv_history_execution',          'OHLCV data'),
             ('stock_universe',          'Stock universe'),
             ('universal_laws_p16',      'Universal laws (P16)'),
             ('explosion_readiness',     'Explosion readiness'),

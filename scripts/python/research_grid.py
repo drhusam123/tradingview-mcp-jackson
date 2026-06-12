@@ -147,7 +147,7 @@ def _load_indicator_cache():
     raw  = conn.execute("""
         SELECT symbol, date(bar_time,'unixepoch') as bar_date,
                open, high, low, close, volume
-        FROM ohlcv_history ORDER BY symbol, bar_time
+        FROM ohlcv_history_execution ORDER BY symbol, bar_time
     """).fetchall()
     conn.close()
     df_all = pd.DataFrame(raw, columns=['symbol','bar_date','open','high','low','close','volume'])
@@ -543,7 +543,7 @@ def vbt_backtest_signals(params):
     ph_marks = ','.join('?' * len(syms))
     raw = conn.execute(f"""
         SELECT symbol, date(bar_time,'unixepoch') AS bar_date, close
-        FROM ohlcv_history
+        FROM ohlcv_history_execution
         WHERE symbol IN ({ph_marks})
           AND date(bar_time,'unixepoch') >= ?
         ORDER BY bar_time

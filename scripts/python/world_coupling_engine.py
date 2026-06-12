@@ -98,7 +98,7 @@ def load_data(db, days=180, max_per_sym=120):
         SELECT h.symbol, h.bar_time,
                h.open, h.high, h.low, h.close, h.volume,
                u.sector
-        FROM ohlcv_history h
+        FROM ohlcv_history_execution h
         JOIN stock_universe u ON h.symbol = u.symbol
         WHERE h.bar_time >= ? AND h.close > 0
         ORDER BY h.symbol, h.bar_time

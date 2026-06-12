@@ -31,7 +31,7 @@ def table_exists(conn, name):
 
 
 def load_bars(conn):
-    table = "ohlcv_history_execution" if table_exists(conn, "ohlcv_history_execution") else "ohlcv_history"
+    table = "ohlcv_history_execution" if table_exists(conn, "ohlcv_history_execution") else "ohlcv_history_execution"
     rows = conn.execute(f"""
         SELECT symbol, date(bar_time,'unixepoch') d, close
         FROM {table}

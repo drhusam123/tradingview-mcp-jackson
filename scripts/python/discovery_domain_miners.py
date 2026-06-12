@@ -95,7 +95,7 @@ def mine_canonical_price_atoms() -> list[dict]:
         "bb_squeeze_low35", "range_lt4pct", "not_extended_3d",
         "vol_lt1_5", "upper_close", "high20_break", "vol_gt3", "vol_gt5",
     ]
-    return [_atom(a, "L0", "ohlcv_history", "price_structure_miner", boost=1.0) for a in canonical]
+    return [_atom(a, "L0", "ohlcv_history_execution", "price_structure_miner", boost=1.0) for a in canonical]
 
 
 def mine_closing_pressure(db) -> list[dict]:
@@ -321,7 +321,7 @@ def mine_spectral(db) -> list[dict]:
 
 
 def mine_post_breakout_vol(db) -> list[dict]:
-    return [_atom("post_breakout_vol_collapse", "L0", "ohlcv_history", "post_breakout_vol_miner",
+    return [_atom("post_breakout_vol_collapse", "L0", "ohlcv_history_execution", "post_breakout_vol_miner",
                   cond={"vol_ratio_next_lt": 0.4}, penalize=0.55, hard_neg=1)]
 
 
@@ -457,7 +457,7 @@ def mine_entry_gap(db) -> list[dict]:
             """
             SELECT fs.symbol, fs.trade_date, fs.entry_high,
                    (
-                     SELECT o.open FROM ohlcv_history oh
+                     SELECT o.open FROM ohlcv_history_execution oh
                      WHERE oh.symbol = fs.symbol
                        AND date(oh.bar_time, 'unixepoch') = date(fs.trade_date, '+1 day')
                      LIMIT 1
@@ -496,7 +496,7 @@ def mine_indicator_divergence(db) -> list[dict]:
         row = db.execute(
             """
             SELECT COUNT(*) n FROM indicators_cache ic
-            JOIN ohlcv_history oh ON oh.symbol = ic.symbol
+            JOIN ohlcv_history_execution oh ON oh.symbol = ic.symbol
               AND date(oh.bar_time,'unixepoch') = ic.bar_date
             WHERE ic.bar_date >= date('now', '-90 days')
               AND ic.obv_divergence = 'bearish'

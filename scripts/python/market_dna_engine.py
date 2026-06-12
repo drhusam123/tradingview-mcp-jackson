@@ -388,7 +388,7 @@ def build_dna(params):
             sector = sym_row['sector'] or 'Unknown'
 
             bars = db.execute(
-                "SELECT bar_time, close, volume FROM ohlcv_history "
+                "SELECT bar_time, close, volume FROM ohlcv_history_execution "
                 "WHERE symbol=? ORDER BY bar_time DESC LIMIT 100",
                 (symbol,)
             ).fetchall()

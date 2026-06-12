@@ -97,7 +97,7 @@ def load_data(db, days=200, max_per_sym=120):
     # OHLCV history
     ohlcv_rows = db.execute("""
         SELECT h.symbol, h.bar_time, h.close, h.volume, u.sector
-        FROM ohlcv_history h
+        FROM ohlcv_history_execution h
         JOIN stock_universe u ON h.symbol = u.symbol
         WHERE h.bar_time >= ? AND h.close IS NOT NULL AND h.close > 0
         ORDER BY h.symbol, h.bar_time

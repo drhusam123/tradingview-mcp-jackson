@@ -513,7 +513,7 @@ def volume_profile_analysis(params: dict) -> dict:
         else:
             va_width_trend = 'STABLE'
 
-    # --- fetch current price from ohlcv_history / financial_data ---
+    # --- fetch current price from ohlcv_history_execution / financial_data ---
     current_price = None
     price_vs_poc  = None
     poc_proximity = None
@@ -521,7 +521,7 @@ def volume_profile_analysis(params: dict) -> dict:
     try:
         con2 = _connect()
         row_p = con2.execute("""
-            SELECT close FROM ohlcv_history
+            SELECT close FROM ohlcv_history_execution
             WHERE symbol = ?
             ORDER BY bar_date DESC
             LIMIT 1
@@ -761,7 +761,7 @@ def vwap_position(params: dict) -> dict:
     try:
         con2 = _connect()
         row_p = con2.execute("""
-            SELECT close FROM ohlcv_history
+            SELECT close FROM ohlcv_history_execution
             WHERE symbol = ? ORDER BY bar_date DESC LIMIT 1
         """, (symbol,)).fetchone()
         if row_p:

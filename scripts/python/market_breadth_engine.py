@@ -20,6 +20,8 @@ import statistics
 import datetime
 import collections
 
+from db_ohlcv import OHLCV_TABLE
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
@@ -165,7 +167,7 @@ def _compute_breadth_score(ad_ratio, pct_above_ma50, hl_ratio, mcclellan_osc,
 def _all_trading_dates(conn) -> list:
     """Return sorted list of unique 'YYYY-MM-DD' dates present in ohlcv_history."""
     rows = conn.execute(
-        "SELECT DISTINCT bar_time FROM ohlcv_history ORDER BY bar_time"
+        f"SELECT DISTINCT bar_time FROM {OHLCV_TABLE} ORDER BY bar_time"
     ).fetchall()
     seen = set()
     dates = []
@@ -178,7 +180,7 @@ def _all_trading_dates(conn) -> list:
 
 
 def _latest_date(conn) -> str:
-    row = conn.execute("SELECT MAX(bar_time) FROM ohlcv_history").fetchone()
+    row = conn.execute(f"SELECT MAX(bar_time) FROM {OHLCV_TABLE}").fetchone()
     if not row or row[0] is None:
         return None
     return _ts_to_date(row[0])
@@ -189,7 +191,7 @@ def _get_closes_on_date(conn, date_str: str) -> dict:
     day_start = _date_to_ts(date_str)
     day_end   = day_start + 86399
     rows = conn.execute(
-        "SELECT symbol, close FROM ohlcv_history WHERE bar_time BETWEEN ? AND ?",
+        f"SELECT symbol, close FROM {OHLCV_TABLE} WHERE bar_time BETWEEN ? AND ?",
         (day_start, day_end)
     ).fetchall()
     return {r['symbol']: r['close'] for r in rows}

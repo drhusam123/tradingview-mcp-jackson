@@ -424,11 +424,11 @@ def cmd_usdegp_regime(conn, params):
 def _get_egx_proxy_returns(conn, n_bars):
     """
     Proxy EGX30 using average daily returns of the top liquid EGX stocks
-    from ohlcv_history (most recent n_bars bars).
+    from ohlcv_history_execution (most recent n_bars bars).
     """
     # Get top 20 by bar count (most liquid)
     top_syms = conn.execute("""
-        SELECT symbol, COUNT(*) AS cnt FROM ohlcv_history
+        SELECT symbol, COUNT(*) AS cnt FROM ohlcv_history_execution
         GROUP BY symbol ORDER BY cnt DESC LIMIT 20
     """).fetchall()
 
@@ -439,7 +439,7 @@ def _get_egx_proxy_returns(conn, n_bars):
     symbol_placeholders = ','.join('?' * len(symbols))
 
     rows = conn.execute(f"""
-        SELECT symbol, bar_time, close FROM ohlcv_history
+        SELECT symbol, bar_time, close FROM ohlcv_history_execution
         WHERE symbol IN ({symbol_placeholders})
           AND close IS NOT NULL
         ORDER BY symbol, bar_time
@@ -513,7 +513,7 @@ def cmd_coupling_matrix(conn, params):
         'correlations':               {k: v for k, v in sorted_corr},
         'strongest_positive_correlations': strongest_positive,
         'strongest_negative_correlations': strongest_negative,
-        'note': 'EGX proxy = average return of top 20 liquid stocks in ohlcv_history',
+        'note': 'EGX proxy = average return of top 20 liquid stocks in ohlcv_history_execution',
     }
 
 

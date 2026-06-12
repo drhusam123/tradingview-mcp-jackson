@@ -1407,7 +1407,7 @@ def _load_ohlcv(min_bars=60):
     rows = con.execute("""
         SELECT o.symbol, o.bar_time, o.open, o.high, o.low, o.close, o.volume,
                u.sector
-        FROM ohlcv_history o
+        FROM ohlcv_history_execution o
         LEFT JOIN stock_universe u ON o.symbol = u.symbol
         ORDER BY o.symbol, o.bar_time
     """).fetchall()

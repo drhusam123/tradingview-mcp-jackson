@@ -224,7 +224,7 @@ def _get_market_stats_before(conn, date_str, lookback=10):
             AVG(ABS((close - open) / NULLIF(open, 0) * 100.0)) AS avg_abs_ret,
             SUM(CASE WHEN close > open THEN 1 ELSE 0 END) * 1.0 / COUNT(*) AS adv_ratio,
             SUM(volume) AS total_vol
-        FROM ohlcv_history
+        FROM ohlcv_history_execution
         WHERE date(bar_time,'unixepoch') < ?
           AND date(bar_time,'unixepoch') >= date(?, ? || ' days')
         GROUP BY d
@@ -244,7 +244,7 @@ def _get_market_stats_before(conn, date_str, lookback=10):
         SELECT
             date(bar_time,'unixepoch') AS d,
             AVG(ABS((close - open) / NULLIF(open, 0) * 100.0)) AS avg_abs_ret
-        FROM ohlcv_history
+        FROM ohlcv_history_execution
         WHERE date(bar_time,'unixepoch') < date(?, ? || ' days')
           AND date(bar_time,'unixepoch') >= date(?, '-30 days')
         GROUP BY d
@@ -380,10 +380,10 @@ def _detect_current_regime(conn):
             date(bar_time,'unixepoch') AS bar_date,
             AVG((close - open) / NULLIF(open, 0) * 100) AS median_ret,
             SUM(CASE WHEN close > open THEN 1 ELSE 0 END) * 1.0 / COUNT(*) AS adv_ratio
-        FROM ohlcv_history
+        FROM ohlcv_history_execution
         WHERE date(bar_time,'unixepoch') IN (
             SELECT DISTINCT date(bar_time,'unixepoch')
-            FROM ohlcv_history
+            FROM ohlcv_history_execution
             ORDER BY date(bar_time,'unixepoch') DESC
             LIMIT 30
         )
@@ -422,10 +422,10 @@ def _get_current_stats(conn, lookback=5):
             AVG(ABS((close - open) / NULLIF(open, 0) * 100.0)) AS avg_abs_ret,
             SUM(CASE WHEN close > open THEN 1 ELSE 0 END) * 1.0 / COUNT(*) AS adv_ratio,
             SUM(volume) AS total_vol
-        FROM ohlcv_history
+        FROM ohlcv_history_execution
         WHERE date(bar_time,'unixepoch') IN (
             SELECT DISTINCT date(bar_time,'unixepoch')
-            FROM ohlcv_history
+            FROM ohlcv_history_execution
             ORDER BY date(bar_time,'unixepoch') DESC
             LIMIT ?
         )
@@ -442,23 +442,23 @@ def _get_current_stats(conn, lookback=5):
 
     # Latest date in DB for baseline cutoff
     latest_row = conn.execute(
-        "SELECT MAX(date(bar_time,'unixepoch')) AS ld FROM ohlcv_history"
+        "SELECT MAX(date(bar_time,'unixepoch')) AS ld FROM ohlcv_history_execution"
     ).fetchone()
     latest_date = latest_row['ld'] if latest_row else None
 
     # 20d baseline (20 days prior to the lookback window)
     baseline_rows = conn.execute("""
         SELECT AVG(ABS((close - open) / NULLIF(open, 0) * 100.0)) AS avg_abs_ret
-        FROM ohlcv_history
+        FROM ohlcv_history_execution
         WHERE date(bar_time,'unixepoch') IN (
             SELECT DISTINCT date(bar_time,'unixepoch')
-            FROM ohlcv_history
+            FROM ohlcv_history_execution
             ORDER BY date(bar_time,'unixepoch') DESC
             LIMIT 30
         )
           AND date(bar_time,'unixepoch') NOT IN (
             SELECT DISTINCT date(bar_time,'unixepoch')
-            FROM ohlcv_history
+            FROM ohlcv_history_execution
             ORDER BY date(bar_time,'unixepoch') DESC
             LIMIT ?
         )
@@ -714,7 +714,7 @@ def cmd_volatility_acceleration(params):
         SELECT
             date(bar_time,'unixepoch') AS d,
             AVG(ABS((close - open) / NULLIF(open, 0) * 100.0)) AS avg_abs_ret
-        FROM ohlcv_history
+        FROM ohlcv_history_execution
         WHERE date(bar_time,'unixepoch') >= ?
         GROUP BY d
         ORDER BY d

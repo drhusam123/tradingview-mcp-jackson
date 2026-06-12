@@ -481,7 +481,7 @@ def build_stock_dna(db, params=None):
             cycle_period = 0.0
 
         # ── Explosion rate (per 100 trading days) ──
-        total_bars = db.execute("""SELECT COUNT(*) FROM ohlcv_history WHERE symbol=?""",
+        total_bars = db.execute("""SELECT COUNT(*) FROM ohlcv_history_execution WHERE symbol=?""",
                                 (sym,)).fetchone()[0]
         expl_rate = _pct(n, total_bars) if total_bars > 0 else 0.0
 
@@ -1072,7 +1072,7 @@ def discover_universal_laws(db, params=None):
 
     # Global directional random baselines:
     # P(UP explosion | random bar) and P(DOWN explosion | random bar)
-    total_bars   = db.execute("SELECT COUNT(*) FROM ohlcv_history").fetchone()[0] or 1
+    total_bars   = db.execute("SELECT COUNT(*) FROM ohlcv_history_execution").fetchone()[0] or 1
     n_up_expl    = db.execute("SELECT COUNT(*) FROM explosive_moves WHERE direction='UP'").fetchone()[0]
     n_down_expl  = db.execute("SELECT COUNT(*) FROM explosive_moves WHERE direction='DOWN'").fetchone()[0]
     baseline_up   = _safe_div(n_up_expl,   total_bars, 0.05)
@@ -1358,7 +1358,7 @@ def self_evolve(db, params=None):
     ).fetchall()]
 
     # Direction-aware baselines
-    total_bars_se = db.execute("SELECT COUNT(*) FROM ohlcv_history").fetchone()[0] or 1
+    total_bars_se = db.execute("SELECT COUNT(*) FROM ohlcv_history_execution").fetchone()[0] or 1
     n_up_se   = db.execute("SELECT COUNT(*) FROM explosive_moves WHERE direction='UP'").fetchone()[0]
     n_down_se = db.execute("SELECT COUNT(*) FROM explosive_moves WHERE direction='DOWN'").fetchone()[0]
     baseline_se = {'UP': _safe_div(n_up_se, total_bars_se, 0.05),
@@ -1553,7 +1553,7 @@ def generate_report(db, params=None):
     # ── Section 5: Universal Laws ──
     w('  ═══ SECTION 5: UNIVERSAL LAW ANALYSIS ═══')
     w('')
-    n_ohlcv_r   = qs('SELECT COUNT(*) FROM ohlcv_history')
+    n_ohlcv_r   = qs('SELECT COUNT(*) FROM ohlcv_history_execution')
     n_up_r      = qs("SELECT COUNT(*) FROM explosive_moves WHERE direction='UP'")
     n_down_r    = qs("SELECT COUNT(*) FROM explosive_moves WHERE direction='DOWN'")
     up_base_r   = n_up_r / max(n_ohlcv_r, 1)

@@ -149,7 +149,7 @@ def compute_symbol_liquidity(params: dict) -> dict:
 
     rows = db.execute("""
         SELECT bar_time, open, high, low, close, volume
-        FROM ohlcv_history
+        FROM ohlcv_history_execution
         WHERE symbol = ? AND bar_time >= ? AND close > 0 AND volume > 0
         ORDER BY bar_time ASC
     """, (symbol, cutoff_ts)).fetchall()
@@ -285,7 +285,7 @@ def tier_classification(params: dict) -> dict:
 
     # Universe size (symbols with any ohlcv data)
     total_symbols = db.execute(
-        "SELECT COUNT(DISTINCT symbol) AS cnt FROM ohlcv_history"
+        "SELECT COUNT(DISTINCT symbol) AS cnt FROM ohlcv_history_execution"
     ).fetchone()['cnt']
 
     tier_counts     = collections.Counter()
@@ -444,7 +444,7 @@ def max_position_size(params: dict) -> dict:
 
     # Estimate shares (need a current price — use advt_10d / 10-day avg volume)
     latest_close = db.execute("""
-        SELECT close FROM ohlcv_history
+        SELECT close FROM ohlcv_history_execution
         WHERE symbol = ? AND close > 0
         ORDER BY bar_time DESC LIMIT 1
     """, (symbol,)).fetchone()
@@ -486,7 +486,7 @@ def build_liquidity_profiles(params: dict) -> dict:
 
     # All symbols with data
     symbols_rows = db.execute(
-        "SELECT DISTINCT symbol FROM ohlcv_history ORDER BY symbol"
+        "SELECT DISTINCT symbol FROM ohlcv_history_execution ORDER BY symbol"
     ).fetchall()
     all_symbols = [r['symbol'] for r in symbols_rows]
 

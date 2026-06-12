@@ -15,6 +15,7 @@ import { existsSync, readFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import Database from 'better-sqlite3';
+import { loadFreshnessKpis, formatFreshnessLines } from './lib/freshness_kpis.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const NODE = process.execPath;
@@ -122,6 +123,10 @@ async function status() {
     if (s.purged_auc?.v != null) console.log(`  Purged AUC: ${s.purged_auc.v} (honest)`);
     if (s.drift?.v >= 1) console.log(`  ⚠️  Drift throttle ON — ML floor +4`);
   }
+
+  console.log('\n▶  Freshness KPIs (L0→L1)');
+  const freshness = loadFreshnessKpis(ROOT, join(ROOT, 'data/egx_trading.db'));
+  for (const line of formatFreshnessLines(freshness)) console.log(line);
 
   console.log('\n▶  أوامر الإنتاج');
   console.log('  npm run egx:prod:daily         — تحديث + scoring + dry-run telegram');
