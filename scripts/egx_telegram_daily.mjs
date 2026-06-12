@@ -22,6 +22,7 @@ import {
   normalizeDeliverableSignals, wasAlreadySent,
 } from './lib/delivery_audit.mjs';
 import { runPreSendCheck } from './lib/pre_send_check.mjs';
+import { buildClientFormatParams, resolvePrepMode } from './lib/client_message_prep.mjs';
 import { loadEnv } from './lib/load_env.mjs';
 
 loadEnv();
@@ -98,7 +99,9 @@ async function validateSignalPrices(topSymbols, reportDate = null) {
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const FORCE   = process.argv.includes('--force');
+const PREP    = resolvePrepMode();
 const requestedReportDate = getLatestOhlcvDate() || new Date().toISOString().slice(0, 10);
+const prepBundle = buildClientFormatParams(requestedReportDate, { prep: PREP });
 
 ensureDeliveryAuditTable();
 
@@ -170,7 +173,7 @@ function scrubClientText(text) {
     .trim();
 }
 
-function validateClientMessages(messages, { reportDate, finalActionableCount }) {
+function validateClientMessages(messages, { reportDate, finalActionableCount, prepMode = false, targetSessionDate = null }) {
   const issues = [];
   const body = messages.join('\n\n');
   if (!body.trim()) issues.push('empty Telegram payload');
@@ -197,7 +200,9 @@ function validateClientMessages(messages, { reportDate, finalActionableCount }) 
     }
   }
   const isoDates = [...body.matchAll(/\b20\d{2}-\d{2}-\d{2}\b/g)].map(m => m[0]);
-  const wrongDates = [...new Set(isoDates.filter(d => d !== reportDate))];
+  const allowedIso = new Set([reportDate]);
+  if (prepMode && targetSessionDate) allowedIso.add(targetSessionDate);
+  const wrongDates = [...new Set(isoDates.filter(d => !allowedIso.has(d)))];
   if (wrongDates.length > 0) {
     issues.push(`payload contains non-report ISO date(s): ${wrongDates.slice(0, 5).join(', ')}`);
   }
@@ -255,6 +260,7 @@ if (!DRY_RUN && !FORCE) {
 const t0 = Date.now();
 sep();
 wl(`  📲 EGX TELEGRAM DAILY BRIEFING`);
+wl(`  ${PREP ? `📌 PREP — توصية الجلسة القادمة (${prepBundle.target_session_date || '?'})` : '📅 Same-day bulletin'}`);
 wl(`  ${DRY_RUN ? '🔍 DRY RUN — no messages sent' : '🚀 LIVE — will send to Telegram'}`);
 wl(`  ${new Date().toISOString()}`);
 sep();
@@ -287,7 +293,7 @@ if (!FORCE) {
 wl('\n  📝 Step 2: Formatting Telegram report...');
 let formatResult;
 try {
-  formatResult = await pythonTgFormatDaily({ report_date: requestedReportDate });
+  formatResult = await pythonTgFormatDaily(prepBundle.params);
 } catch (e) {
   wl(`  ❌ Format error: ${e.message}`);
   process.exit(1);
@@ -324,7 +330,9 @@ normalizeDeliverableSignals(reportDate);
 
 let preSend = null;
 if (!DRY_RUN) {
-  preSend = runPreSendCheck(reportDate, { dryRun: false, allowDuplicate: FORCE, logBlock: false });
+  preSend = runPreSendCheck(reportDate, {
+    dryRun: false, allowDuplicate: FORCE, logBlock: false, prepMode: PREP,
+  });
   if (!preSend.ok) {
     wl('  ⛔ Pre-send gate blocked live delivery:');
     preSend.blockers.forEach(issue => wl(`     - ${issue}`));
@@ -363,7 +371,12 @@ if (!DRY_RUN) {
   wl(`  ✅ Pre-send gate OK — deliverable=${preSend.actionable.deliverable} ML=${preSend.ml_latest_date}`);
 }
 
-const qaIssues = validateClientMessages(messages, { reportDate, finalActionableCount });
+const qaIssues = validateClientMessages(messages, {
+  reportDate,
+  finalActionableCount,
+  prepMode: PREP,
+  targetSessionDate: prepBundle.target_session_date,
+});
 if (qaIssues.length > 0) {
   wl(`  ⛔ Client QA blocked delivery:`);
   qaIssues.forEach(issue => wl(`     - ${issue}`));

@@ -61,6 +61,9 @@ const scripts = [
   'scripts/egx_automation_status.mjs',
   'scripts/egx_prod_ready.mjs',
   'scripts/lib/pre_send_check.mjs',
+  'scripts/lib/client_message_prep.mjs',
+  'scripts/egx_client_message_audit.mjs',
+  'scripts/egx_notify_backfill.mjs',
   'scripts/lib/delivery_audit.mjs',
   'scripts/lib/egx_safety_check.mjs',
   'scripts/lib/ops_digest.mjs',
@@ -142,6 +145,11 @@ ok('npm egx:gate:simulate', npmScripts['egx:gate:simulate']?.includes('gate_acti
 ok('npm egx:ml:gate:verify', npmScripts['egx:ml:gate:verify']?.includes('egx_ml_gate_pipeline_verify.mjs'));
 ok('npm egx:ml:gate:verify:ci', npmScripts['egx:ml:gate:verify:ci']?.includes('--ci'));
 ok('npm egx:pre:session', npmScripts['egx:pre:session']?.includes('egx_pre_session.mjs'));
+ok('npm egx:client:message:audit', npmScripts['egx:client:message:audit']?.includes('egx_client_message_audit.mjs'));
+const tgCron = existsSync(join(PROJECT_ROOT, 'scripts/egx_telegram_cron.mjs'))
+  ? readFileSync(join(PROJECT_ROOT, 'scripts/egx_telegram_cron.mjs'), 'utf8')
+  : '';
+ok('telegram cron prep flag', tgCron.includes('egx_telegram_daily.mjs --prep'));
 ok('Recovery script', existsSync(join(PROJECT_ROOT, 'scripts/egx_notify_recovery.mjs')));
 ok('EGX_ALERT_TELEGRAM', process.env.EGX_ALERT_TELEGRAM !== '0', process.env.EGX_ALERT_TELEGRAM ?? 'default=1');
 ok('EGX_OPS_SUCCESS_ALERT', process.env.EGX_OPS_SUCCESS_ALERT !== '0', process.env.EGX_OPS_SUCCESS_ALERT ?? 'default=1');

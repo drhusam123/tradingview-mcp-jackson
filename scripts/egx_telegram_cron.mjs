@@ -81,10 +81,10 @@ if (sent.duplicate && !DRY_RUN) {
 try {
   if (!DRY_RUN) {
     run(`"${NODE}" scripts/egx_prod_prepare_send.mjs --date ${signalDate}`, 'Prepare send (incl. safety check)');
-    run(`"${NODE}" scripts/egx_telegram_daily.mjs`, 'Live Telegram delivery');
+    run(`"${NODE}" scripts/egx_telegram_daily.mjs --prep`, 'Live Telegram delivery (next-session prep)');
   } else {
     run(`"${NODE}" scripts/egx_prod_prepare_send.mjs --date ${signalDate} --skip-score`, 'Prepare (dry)', { optional: true });
-    run(`"${NODE}" scripts/egx_telegram_daily.mjs --dry-run`, 'Telegram dry-run');
+    run(`"${NODE}" scripts/egx_telegram_daily.mjs --dry-run --prep`, 'Telegram dry-run (prep)');
   }
 
   const reconcileOk = run(

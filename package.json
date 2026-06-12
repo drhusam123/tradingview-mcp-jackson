@@ -328,6 +328,7 @@
     "egx:notify:smoke": "node scripts/egx_notify_smoke.mjs",
     "egx:notify:audit": "node scripts/egx_notification_pipeline_audit.mjs",
     "egx:notify:backfill": "node scripts/egx_notify_backfill.mjs",
+    "egx:client:message:audit": "node scripts/egx_client_message_audit.mjs",
     "egx:notify:reconcile": "node scripts/egx_notify_reconcile.mjs",
     "egx:notify:daily-ops": "node scripts/egx_notify_daily_ops.mjs",
     "egx:prod:prepare-send": "node scripts/egx_prod_prepare_send.mjs",

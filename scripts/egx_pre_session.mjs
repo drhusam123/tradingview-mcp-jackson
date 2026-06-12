@@ -56,6 +56,11 @@ run(
   { optional: true },
 );
 run('verify_fast', 'npm run egx:verify:fast', { optional: true, timeout: 300_000 });
+run(
+  'client_message_audit',
+  `"${NODE}" scripts/egx_client_message_audit.mjs --date ${gateSimDate}`,
+  { optional: true, timeout: 180_000 },
+);
 run('runbook', `"${NODE}" scripts/egx_runbook.mjs${useNext ? ' --next' : ''}`, { optional: true });
 
 const report = {

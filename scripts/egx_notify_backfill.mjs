@@ -11,6 +11,7 @@ import {
   countActionable, logDeliveryAttempt, wasAlreadySent, normalizeDeliverableSignals,
 } from './lib/delivery_audit.mjs';
 import { runPreSendCheck } from './lib/pre_send_check.mjs';
+import { buildClientFormatParams } from './lib/client_message_prep.mjs';
 
 const dateArg = process.argv.find((a, i) => process.argv[i - 1] === '--date');
 const SEND = process.argv.includes('--send');
@@ -55,9 +56,11 @@ const pre = runPreSendCheck(signalDate, {
   prepMode: PREP,
 });
 
+const prepBundle = buildClientFormatParams(signalDate, { prep: PREP });
+
 let formatResult;
 try {
-  formatResult = await pythonTgFormatDaily({ report_date: signalDate });
+  formatResult = await pythonTgFormatDaily(prepBundle.params);
 } catch (e) {
   console.error(`Format failed: ${e.message}`);
   process.exit(1);
@@ -102,7 +105,8 @@ if (!isTelegramConfigured()) {
 
 function isSignalMessage(msg, symbols) {
   const body = String(msg ?? '');
-  return symbols.some(s => body.includes(s)) || /أفضل فرص التداول|منطقة الدخول/.test(body);
+  return symbols.some(s => body.includes(s))
+    || /أفضل فرص التداول|توصية الجلسة القادمة|شراء مؤهل|منطقة الدخول/.test(body);
 }
 
 const sent = [];

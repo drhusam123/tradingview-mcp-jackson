@@ -163,6 +163,158 @@ def _conf_ar(c):
     if c >= 0.55: return 'متوسطة',      '🟠'
     return 'منخفضة', '🔴'
 
+def _composite_confidence(sig):
+    """Client-facing weighted confidence from UES + ML + scan."""
+    ues = float(sig.get('ues') or 0)
+    ml = float(sig.get('ml_pct') or 0)
+    scan = float(sig.get('scan_pct') or 0)
+    if ues <= 0 and ml <= 0:
+        return 0.0
+    if scan > 0:
+        return round(min(100.0, ues * 0.45 + ml * 0.40 + min(scan, 100) * 0.15), 1)
+    denom = 0.45 + (0.40 if ml > 0 else 0.0)
+    blend = ues * 0.45 + (ml * 0.40 if ml > 0 else 0.0)
+    return round(min(100.0, blend / denom if denom else ues), 1)
+
+def _confidence_basis_line(sig):
+    parts = []
+    ues = sig.get('ues')
+    ml = sig.get('ml_pct')
+    scan = sig.get('scan_pct')
+    rr = sig.get('r_ratio')
+    if ues is not None:
+        parts.append(f'درجة موحّدة {ues:.0f}')
+    if ml is not None:
+        parts.append(f'نموذج ML {ml:.0f}%')
+    if scan is not None:
+        parts.append(f'مسح {scan:.0f}')
+    if rr:
+        parts.append(f'ع/خ {rr:.1f}×')
+    return ' | '.join(parts) if parts else 'تحليل متعدد المصادر'
+
+def _append_client_signal_block(lines, sig, index, spec_data, half_kelly,
+                                block_reason=None, show_confidence=True):
+    """One stock recommendation block for client message 2."""
+    sym = sig['symbol']
+    conv = sig['conviction']
+    ml = sig['ml_pct']
+    stars, conv_ar = CONV_STARS_AR.get(conv, ('⭐⭐', 'مراقبة'))
+    ml_str = f'  •  النموذج: {C(f"{ml:.0f}%")}' if ml else ''
+
+    bclass = sig.get('behavioral_class', 'UNKNOWN')
+    bclass_tag = {'EXPLOSIVE': '💥 انفجاري', 'STEADY': '📊 مستقر',
+                  'VOLATILE': '⚡ متقلب',  'DORMANT': '😴 خامل'}.get(bclass, '')
+    bclass_str = f'  •  {bclass_tag}' if bclass_tag and bclass not in ('VOLATILE', 'DORMANT', 'UNKNOWN') else ''
+
+    fresh_tag = {'fresh': '', 'extended': '  •  ⚡ تجاوز المنطقة قليلاً',
+                 'chased': '  •  ⚠️ تجاوز — انتظر تصحيحاً',
+                 'stopped': '  •  🛑 وصل الوقف', 'below_zone': '  •  ⬇️ دون المنطقة'}.get(
+        sig.get('freshness', 'unknown'), '')
+
+    trig_tag = ''
+    if sig.get('entry_triggered'):
+        trig_d = sig.get('trigger_date', '')
+        trig_tag = f'  •  ✅ مُفعَّل ({trig_d})' if trig_d else '  •  ✅ مُفعَّل'
+
+    ens_pct = sig.get('ensemble_pct')
+    sing_pct = sig.get('ml_pct')
+    ens_tag = ''
+    if ens_pct is not None and sing_pct is not None:
+        diff = ens_pct - int(sing_pct)
+        if diff >= 10:
+            ens_tag = f'  •  🎯 Ens: {C(f"{ens_pct}%")}'
+        elif diff <= -10:
+            ens_tag = f'  •  ⚠️ Ens: {C(f"{ens_pct}%")}'
+    elif ens_pct is not None:
+        ens_tag = f'  •  Ens: {C(f"{ens_pct}%")}'
+
+    _age = sig.get('signal_age', 1)
+    age_tag = ''
+    if _age == 1:
+        age_tag = '  •  🆕 جديد'
+    elif _age == 2:
+        age_tag = '  •  📅 يوم 2'
+    elif _age >= 3:
+        age_tag = f'  •  ⏳ يوم {_age}'
+
+    _tags = ''.join(filter(None, [ml_str, ens_tag, bclass_str, age_tag, trig_tag, fresh_tag]))
+    lines.append(f'{index}. {stars} {B(esc(sym))}  —  {B(conv_ar)}{_tags}')
+
+    el = sig['entry_low']; eh = sig['entry_high']
+    sl = sig['stop_loss']; t1 = sig['t1']; t2 = sig['t2']
+    rr = sig['r_ratio']
+    sl_p = sig.get('sl_pct'); t1_p = sig.get('t1_pct'); t2_p = sig.get('t2_pct')
+
+    if el and eh and abs(el - eh) > 0.001:
+        lines.append(f'   منطقة الدخول: {C(f"{el:.3f}")}–{C(f"{eh:.3f}")}')
+    elif el:
+        lines.append(f'   الدخول: {C(f"{el:.3f}")}')
+
+    _vr = sig.get('vol_ratio')
+    vol_str = ''
+    if _vr is not None:
+        if _vr >= 10:
+            vol_str = f'  •  🚀 حجم ×{_vr:.1f}'
+        elif _vr >= 3:
+            vol_str = f'  •  💧 حجم ×{_vr:.1f}'
+        elif _vr >= 2:
+            vol_str = f'  •  📈 حجم ×{_vr:.1f}'
+        elif _vr < 0.5:
+            vol_str = f'  •  ⚠️ حجم ضعيف ×{_vr:.1f}'
+
+    rr_parts = []
+    if sl_p is not None:
+        rr_parts.append(f'الوقف: {C(f"{sl_p:.1f}%")}')
+    if t1_p is not None:
+        rr_parts.append(f'هدف 1: {C(f"+{t1_p:.1f}%")}')
+    if t2_p is not None:
+        rr_parts.append(f'هدف 2: {C(f"+{t2_p:.1f}%")}')
+    if rr:
+        rr_parts.append(f'ع/خ: {C(f"{rr:.1f}×")}')
+    if rr_parts:
+        lines.append('   ' + '  •  '.join(rr_parts) + vol_str)
+
+    if show_confidence:
+        conf_pct = _composite_confidence(sig)
+        basis = _confidence_basis_line(sig)
+        lines.append(f'   ثقة التوصية: {C(f"{conf_pct}%")} ← {I(basis)}')
+
+    sp = spec_data.get(sym, {})
+    bp = sp.get('bottom_prox')
+    sr = sp.get('regime')
+    spec_line_parts = []
+    if bp is not None and sr is not None:
+        sr_label, sr_ic = SPECTRAL_REGIME_AR.get(sr, ('غير محدد', '⚪'))
+        bp_pct = bp * 100
+        bp_str = f'قرب القاع: {C(f"{bp_pct:.0f}%")} 🎯' if bp > 0.6 else f'{C(f"{bp_pct:.0f}%")} من القاع'
+        spec_line_parts.append(f'🌊 الدورة الطيفية: {sr_ic} {sr_label}  •  {bp_str}')
+
+    if ml and half_kelly:
+        _ml_adj = (ml / 100.0 - 0.5) * 1.0
+        _sz = half_kelly * (1.0 + 0.4 * _ml_adj)
+        _vr2 = sig.get('vol_ratio')
+        if _vr2 and _vr2 >= 3:
+            _sz *= 1.15
+        if _age >= 3:
+            _sz *= 0.90
+        _sz = round(max(0.5, min(8.0, _sz)), 1)
+        spec_line_parts.append(f'💰 حجم: {C(f"{_sz}%")}')
+
+    if sig.get('evidence_text'):
+        spec_line_parts.append('✅ دليل: تأكيد السعر + الجودة + العائد/المخاطرة')
+
+    _hd = sig.get('hold_days')
+    if _hd:
+        spec_line_parts.append('⏱ احتفاظ: ' + C(f'{_hd} أيام'))
+
+    if spec_line_parts:
+        lines.append('   ' + '  •  '.join(spec_line_parts))
+
+    if block_reason:
+        lines.append(f'   ⏸ {I(esc(str(block_reason)))}')
+
+    lines.append('')
+
 # ── Log loader ────────────────────────────────────────────────────────────────
 
 def load_json_log(path):
@@ -313,6 +465,7 @@ def _get_top_signals(db, date, top_n=5):
                 'hold_days':        _surv_hold,
                 'p_tp_first':       _surv_ptp,
                 'ml_pct':           round(r['explosion_score'], 0) if r['explosion_score'] else None,
+                'scan_pct':         round(r['scan_score'], 0) if r['scan_score'] else None,
                 'liq':              r['liquidity_tier'] or 'UNKNOWN',
                 'entry_low':        entry_l,
                 'entry_high':       entry_h,
@@ -1787,7 +1940,7 @@ def _get_event_alerts(days_ahead: int = 7) -> dict:
 
 # ── Message builder ───────────────────────────────────────────────────────────
 
-def build_daily_messages(db, data, cur_ind, macro, pipe_log=None, report_date=None):
+def build_daily_messages(db, data, cur_ind, macro, pipe_log=None, report_date=None, fmt_params=None):
     """
     2-message institutional Arabic Telegram briefing:
       MSG 1 — ملخص السوق  (Market Summary)
@@ -1811,6 +1964,12 @@ def build_daily_messages(db, data, cur_ind, macro, pipe_log=None, report_date=No
     prev = orch_log[-1] if orch_log else {}
 
     # ── Key values ────────────────────────────────────────────────────────────
+    fmt_params = fmt_params or {}
+    prep_mode = bool(fmt_params.get('prep_mode'))
+    target_session = fmt_params.get('target_session_date')
+    buy_syms = set(fmt_params.get('buy_symbols') or [])
+    watch_reasons = fmt_params.get('watch_reasons') or {}
+
     today_str  = report_date or time.strftime('%Y-%m-%d')
     now_str    = time.strftime('%H:%M')
     regime     = layers['latent']['regime']
@@ -2661,15 +2820,24 @@ def build_daily_messages(db, data, cur_ind, macro, pipe_log=None, report_date=No
     # ══════════════════════════════════════════════════════════════════════════
     # MESSAGE 2 — توصيات التداول
     # ══════════════════════════════════════════════════════════════════════════
-    lines2 = [
-        f'🎯 {B("حالة فرص التداول" if not has_client_signals else "أفضل فرص التداول")}',
-        f'📅 {B(date_ar)}',
-    ]
+    if prep_mode and target_session:
+        target_ar = _ar_date_from_iso(target_session)
+        lines2 = [
+            f'📌 {B("توصية الجلسة القادمة")}',
+            f'🗓 {B("الجلسة المستهدفة")}: {target_ar}',
+            f'📊 {I(f"مبنية على إغلاق جلسة {date_ar}")}',
+            SEP,
+            f'ℹ️ {I("نفّذ عند الافتتاح مع احترام منطقة الدخول والوقف — التوصية استرشادية وليست تعهداً بالربح")}',
+        ]
+    else:
+        lines2 = [
+            f'🎯 {B("حالة فرص التداول" if not has_client_signals else "أفضل فرص التداول")}',
+            f'📅 {B(date_ar)}',
+        ]
 
-    # ── FIX: Context banners before recommendations ────────────────────────────
+    # ── Context banners before recommendations ────────────────────────────────
     _banners = []
-    # Banner A: HALT directive
-    if _bus_st and _bus_st.get('directive') == 'HALT':
+    if not prep_mode and _bus_st and _bus_st.get('directive') == 'HALT':
         halt_lines = [SEP, f'⚠️ {B("تنبيه: ثقة النظام منخفضة")}']
         if top_signals:
             halt_lines += [
@@ -2682,7 +2850,6 @@ def build_daily_messages(db, data, cur_ind, macro, pipe_log=None, report_date=No
                 f'  {I("النظام في وضع مراقبة حتى تتحسن بوابات الجودة")}',
             ]
         _banners += halt_lines
-    # Banner B: extreme RSI overbought (>70% of market)
     _ea_rsi70_b2 = _live_engines.get('ea_rsi_above70', 0) if _live_engines else 0
     _ea_n_b2     = _live_engines.get('ea_n', 254) if _live_engines else 254
     if _ea_rsi70_b2 > 0 and _ea_n_b2 > 0 and (_ea_rsi70_b2 / _ea_n_b2) >= 0.70:
@@ -2691,7 +2858,6 @@ def build_daily_messages(db, data, cur_ind, macro, pipe_log=None, report_date=No
             f'🔴 {B("تحذير ذروة شراء")}: {C(f"{_ea_rsi70_b2}/{_ea_n_b2}")} سهم RSI>70',
             f'  {I("السوق في ذروة — حدد نقطة الدخول بدقة وطبّق الوقف فوراً")}',
         ]
-    # Bearish-filtered symbols stay internal; clients only see accepted signals.
     if _banners:
         lines2 += _banners
 
@@ -2701,136 +2867,27 @@ def build_daily_messages(db, data, cur_ind, macro, pipe_log=None, report_date=No
             f'⏸ {B("لا توجد فرص تنفيذية نهائية لهذا التاريخ.")}',
             f'   {I("لن تُعرض قوائم أسهم للعميل حتى تظهر إشارة نهائية مؤكدة لنفس تاريخ التقرير.")}',
         ]
+    elif prep_mode and target_session:
+        buy_sigs = [s for s in top_signals if s['symbol'] in buy_syms]
+        watch_sigs = [s for s in top_signals if s['symbol'] not in buy_syms]
+        idx = 1
+        if buy_sigs:
+            lines2 += [SEP, f'✅ {B("شراء مؤهل — جاهز للتنفيذ")} ({len(buy_sigs)})']
+            for sig in buy_sigs:
+                _append_client_signal_block(lines2, sig, idx, spec_data, half_kelly)
+                idx += 1
+        if watch_sigs:
+            lines2 += [SEP, f'👁 {B("مراقبة — انتظر تأكيد الدخول")} ({len(watch_sigs)})']
+            for sig in watch_sigs:
+                reason = watch_reasons.get(sig['symbol'], 'لم يجتز بوابات الأمان بعد')
+                _append_client_signal_block(
+                    lines2, sig, idx, spec_data, half_kelly, block_reason=reason,
+                )
+                idx += 1
     else:
         lines2.append(SEP)
         for i, sig in enumerate(top_signals, 1):
-            sym  = sig['symbol']
-            conv = sig['conviction']
-            ml   = sig['ml_pct']
-            stars, conv_ar = CONV_STARS_AR.get(conv, ('⭐⭐', 'مراقبة'))
-            ml_str = f'  •  النموذج: {C(f"{ml:.0f}%")}' if ml else ''
-
-            # Ph 28 — behavioral class tag
-            bclass = sig.get('behavioral_class', 'UNKNOWN')
-            bclass_tag = {'EXPLOSIVE': '💥 انفجاري', 'STEADY': '📊 مستقر',
-                          'VOLATILE': '⚡ متقلب',  'DORMANT': '😴 خامل'}.get(bclass, '')
-            bclass_str = f'  •  {bclass_tag}' if bclass_tag and bclass not in ('VOLATILE', 'DORMANT', 'UNKNOWN') else ''
-
-            # Ph 36 — freshness tag
-            fresh_tag = {'fresh': '', 'extended': '  •  ⚡ تجاوز المنطقة قليلاً',
-                         'chased': '  •  ⚠️ تجاوز — انتظر تصحيحاً',
-                         'stopped': '  •  🛑 وصل الوقف', 'below_zone': '  •  ⬇️ دون المنطقة'}.get(
-                sig.get('freshness', 'unknown'), '')
-
-            # Ph 44 — Entry Trigger tag
-            trig_tag = ''
-            if sig.get('entry_triggered'):
-                trig_d = sig.get('trigger_date', '')
-                trig_tag = f'  •  ✅ مُفعَّل ({trig_d})' if trig_d else '  •  ✅ مُفعَّل'
-
-            # Ph 41 — Ensemble Confirmation tag
-            ens_pct  = sig.get('ensemble_pct')
-            sing_pct = sig.get('ml_pct')
-            ens_tag  = ''
-            if ens_pct is not None and sing_pct is not None:
-                diff = ens_pct - int(sing_pct)
-                if diff >= 10:
-                    ens_tag = f'  •  🎯 Ens: {C(f"{ens_pct}%")}'
-                elif diff <= -10:
-                    ens_tag = f'  •  ⚠️ Ens: {C(f"{ens_pct}%")}'
-                # If within ±10pt, no tag needed (confirmed)
-            elif ens_pct is not None:
-                ens_tag = f'  •  Ens: {C(f"{ens_pct}%")}'
-
-            # Ph 40 — Signal Age tag
-            _age = sig.get('signal_age', 1)
-            age_tag = ''
-            if _age == 1:
-                age_tag = '  •  🆕 جديد'
-            elif _age == 2:
-                age_tag = f'  •  📅 يوم 2'
-            elif _age >= 3:
-                age_tag = f'  •  ⏳ يوم {_age}'
-
-            # Build tags cleanly, grouping them so the header line stays readable
-            _tags = ''.join(filter(None, [
-                ml_str, ens_tag, bclass_str, age_tag, trig_tag, fresh_tag
-            ]))
-            lines2.append(f'{i}. {stars} {B(esc(sym))}  —  {B(conv_ar)}{_tags}')
-
-            # Entry / SL / T1 / T2
-            el  = sig['entry_low'];  eh  = sig['entry_high']
-            sl  = sig['stop_loss'];  t1  = sig['t1'];    t2  = sig['t2']
-            rr  = sig['r_ratio']
-            sl_p = sig.get('sl_pct'); t1_p = sig.get('t1_pct'); t2_p = sig.get('t2_pct')
-
-            if el and eh and abs(el - eh) > 0.001:
-                lines2.append(f'   منطقة الدخول: {C(f"{el:.3f}")}–{C(f"{eh:.3f}")}')
-            elif el:
-                lines2.append(f'   الدخول: {C(f"{el:.3f}")}')
-
-            # Ph 42 — Volume Surge tag
-            _vr = sig.get('vol_ratio')
-            vol_str = ''
-            if _vr is not None:
-                if _vr >= 10:
-                    vol_str = f'  •  🚀 حجم ×{_vr:.1f}'
-                elif _vr >= 3:
-                    vol_str = f'  •  💧 حجم ×{_vr:.1f}'
-                elif _vr >= 2:
-                    vol_str = f'  •  📈 حجم ×{_vr:.1f}'
-                elif _vr < 0.5:
-                    vol_str = f'  •  ⚠️ حجم ضعيف ×{_vr:.1f}'
-
-            rr_parts = []
-            if sl_p is not None:
-                rr_parts.append(f'الوقف: {C(f"{sl_p:.1f}%")}')
-            if t1_p is not None:
-                rr_parts.append(f'هدف 1: {C(f"+{t1_p:.1f}%")}')
-            if t2_p is not None:
-                rr_parts.append(f'هدف 2: {C(f"+{t2_p:.1f}%")}')
-            if rr:
-                rr_parts.append(f'ع/خ: {C(f"{rr:.1f}×")}')
-            if rr_parts:
-                lines2.append('   ' + '  •  '.join(rr_parts) + vol_str)
-
-            # Spectral cycle (only if data available)
-            sp = spec_data.get(sym, {})
-            bp = sp.get('bottom_prox')
-            sr = sp.get('regime')
-            spec_line_parts = []
-            if bp is not None and sr is not None:
-                sr_label, sr_ic = SPECTRAL_REGIME_AR.get(sr, ('غير محدد', '⚪'))
-                bp_pct = bp * 100
-                bp_str = f'قرب القاع: {C(f"{bp_pct:.0f}%")} 🎯' if bp > 0.6 else f'{C(f"{bp_pct:.0f}%")} من القاع'
-                spec_line_parts.append(f'🌊 الدورة الطيفية: {sr_ic} {sr_label}  •  {bp_str}')
-
-            # Ph 43 — Per-Signal Position Sizing (Scaled Half-Kelly)
-            if ml and half_kelly:
-                _ml_adj = (ml / 100.0 - 0.5) * 1.0   # +0.5 (90%ML) .. -0.5 (10%ML)
-                _sz = half_kelly * (1.0 + 0.4 * _ml_adj)
-                # Boost for volume surge
-                _vr2 = sig.get('vol_ratio')
-                if _vr2 and _vr2 >= 3:
-                    _sz *= 1.15
-                # Penalty for old signals (age ≥ 3 days)
-                if _age >= 3:
-                    _sz *= 0.90
-                _sz = round(max(0.5, min(8.0, _sz)), 1)
-                spec_line_parts.append(f'💰 حجم: {C(f"{_sz}%")}')
-
-            if sig.get('evidence_text'):
-                spec_line_parts.append('✅ دليل: تأكيد السعر + الجودة + العائد/المخاطرة')
-
-            # ML-Advanced #8: نافذة الاحتفاظ المثلى من نموذج البقاء (Cox competing risks)
-            _hd = sig.get('hold_days')
-            if _hd:
-                spec_line_parts.append('⏱ احتفاظ: ' + C(f'{_hd} أيام'))
-
-            if spec_line_parts:
-                lines2.append('   ' + '  •  '.join(spec_line_parts))
-
-            lines2.append('')  # blank line between signals
+            _append_client_signal_block(lines2, sig, i, spec_data, half_kelly)
 
     # قائمة المراقبة — أقوى المحجوبين ببوابات الحجم/الامتداد (ليست توصيات)
     # تُعرض دائماً (مع أو بدون إشارات) لتقديم قيمة استباقية: قد يتأهلون مع retest بحجم
@@ -3192,7 +3249,9 @@ def cmd_format_daily(db, data, cur_ind, macro, params=None):
     params = params or {}
     pipe_log   = load_json_log(str(DATA / 'pipeline_log.json'))
     today_str  = params.get('report_date') or params.get('date') or time.strftime('%Y-%m-%d')
-    messages   = build_daily_messages(db, data, cur_ind, macro, pipe_log, report_date=today_str)
+    messages   = build_daily_messages(
+        db, data, cur_ind, macro, pipe_log, report_date=today_str, fmt_params=params,
+    )
     final_actionable_count = _count_final_actionable(db, today_str)
     top_sigs   = _get_top_signals(db, today_str, top_n=10)
     stk_forecast = _get_stock_forecast(db, [s['symbol'] for s in top_sigs if s.get('symbol')])
