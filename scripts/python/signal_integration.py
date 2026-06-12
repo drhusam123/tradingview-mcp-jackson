@@ -1951,6 +1951,7 @@ def collect_quality_gate_failures(ues, ml_score, spectral_regime, behavioral_cla
                                   adaptive_params=None, active_regime=None, rsi14=None,
                                   rsi_slope=None, ad_ratio=None, vol_ratio=None,
                                   close_position=None, scan_volume_ratio=None,
+                                  scan_score=None,
                                   meta_prob=None,
                                   conformal_p_lo=None, conformal_p_hi=None, conformal_confident=None,
                                   survival_p_tp=None, survival_p_sl=None,
@@ -2014,11 +2015,17 @@ def collect_quality_gate_failures(ues, ml_score, spectral_regime, behavioral_cla
             and ml_score >= 85.0
             and rsi14 is not None and rsi14 <= 30.0
         )
+        _volatile_bull_conviction = (
+            regime in ('BULL', 'BULLISH')
+            and ml_score >= 88.0
+            and ues >= 82.0
+            and (false_signal_rate or 0.0) <= 0.72
+        )
         if volatile_ok and ml_score >= volatile_ml:
             pass
         elif _volatile_bear_exception:
             pass
-        elif bclass == 'STEADY' and ml_score >= 80.0 and ues >= 72.0:
+        elif _volatile_bull_conviction:
             pass
         else:
             failures.append('volatile_stock')
@@ -2056,12 +2063,13 @@ def collect_quality_gate_failures(ues, ml_score, spectral_regime, behavioral_cla
         failures.append('high_volume_chase')
 
     if vol_ratio is not None and vol_ratio < 1.50:
+        _scan_s = safe_float(scan_score, 0.0)
         _lower_third_vol_ok = (
             close_position is not None
             and close_position <= 0.34
             and ues >= 72.0
             and ml_score >= 65.0
-            and vol_ratio >= 0.90
+            and vol_ratio >= 0.40
         )
         _scan_day_vol_ok = (
             scan_volume_ratio is not None
@@ -2069,7 +2077,15 @@ def collect_quality_gate_failures(ues, ml_score, spectral_regime, behavioral_cla
             and ues >= 75.0
             and ml_score >= 80.0
         )
-        if not (_lower_third_vol_ok or _scan_day_vol_ok):
+        _high_scan_setup_ok = (
+            _scan_s >= 80.0
+            and ues >= 80.0
+            and ml_score >= 85.0
+            and vol_ratio >= 0.55
+            and close_position is not None
+            and close_position <= 0.50
+        )
+        if not (_lower_third_vol_ok or _scan_day_vol_ok or _high_scan_setup_ok):
             failures.append('low_volume_signal')
 
     _bear_oversold_ues_exception = (
@@ -3073,6 +3089,7 @@ def cmd_score_all(params):
             rsi14=_rsi14_for_gate, rsi_slope=_rsi_slope_gate,
             ad_ratio=_ad_ratio_today, vol_ratio=_vol_now,
             close_position=_close_pos_gate, scan_volume_ratio=_scan_vol_for_gate,
+            scan_score=scan_raw,
             meta_prob=_meta_p,
             conformal_p_lo=_conf[0], conformal_p_hi=_conf[1], conformal_confident=_conf[2],
             survival_p_tp=_surv[0], survival_p_sl=_surv[1],
