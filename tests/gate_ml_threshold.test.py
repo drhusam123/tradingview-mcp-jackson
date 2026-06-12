@@ -36,7 +36,7 @@ def test_volatile_bull_high_ml_passes():
 
 def test_high_scan_low_session_vol_passes():
     fails = collect_quality_gate_failures(
-        87.0, 88.0, 'cyclical', 'EXPLOSIVE', 0.31, 0.9, 'BREADTH_NEUTRAL',
+        78.8, 88.0, 'cyclical', 'EXPLOSIVE', 0.31, 0.9, 'BREADTH_NEUTRAL',
         active_regime='BULL', vol_ratio=0.68, close_position=0.44,
         scan_score=86.0,
     )

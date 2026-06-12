@@ -514,6 +514,7 @@ def _apply_final_edge_gates(symbol, setup_type, scan_score, entry_price, entry_h
                 hard_gate_failure=None,
                 quality_gate_failures=_low_ctx.get('quality_gate_failures'),
                 quality_gate_passed=bool(_low_ctx.get('quality_gate_passed')),
+                close_position=safe_float(_low_ctx.get('close_position'), None),
                 anti_law=bool(_low_ctx.get('anti_law')),
                 used_fallback_risk=used_fallback_risk,
             )
@@ -647,7 +648,17 @@ def _apply_final_edge_gates(symbol, setup_type, scan_score, entry_price, entry_h
         if vol_ratio is None or vol_ratio < 1.5:
             return False, 'FINAL_EDGE:RETEST_ENTRY_VOLUME_LT_1_5X', metrics
         if prior_peak_ratio is not None and prior_peak_ratio < 2.0:
-            return False, 'FINAL_EDGE:WEAK_BREAKOUT_DAY_VOLUME', metrics
+            _marginal_breakout = (
+                qg_passed
+                and ues_ctx >= 78.0
+                and ml_ctx >= 85.0
+                and prior_peak_ratio >= 1.4
+                and close_pos is not None
+                and close_pos <= 0.50
+            )
+            if not _marginal_breakout:
+                return False, 'FINAL_EDGE:WEAK_BREAKOUT_DAY_VOLUME', metrics
+            metrics['marginal_breakout_exception'] = True
         if retention is not None and retention < 0.40:
             return False, 'FINAL_EDGE:VOLUME_COLLAPSE_AFTER_BREAKOUT', metrics
 
@@ -2079,7 +2090,7 @@ def collect_quality_gate_failures(ues, ml_score, spectral_regime, behavioral_cla
         )
         _high_scan_setup_ok = (
             _scan_s >= 80.0
-            and ues >= 80.0
+            and ues >= 78.0
             and ml_score >= 85.0
             and vol_ratio >= 0.55
             and close_position is not None
@@ -3229,6 +3240,7 @@ def cmd_score_all(params):
             'anti_law': bool(is_anti_for_decision),
             'quality_gate_failures': _qg_failures,
             'quality_gate_passed': gate_passed,
+            'close_position': _close_pos_gate,
         }
 
         # ── Hard Gates (applied after UES, before adding to active signals) ──

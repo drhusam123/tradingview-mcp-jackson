@@ -467,6 +467,7 @@ async function main() {
   }
 
   run('node scripts/egx_validate.mjs --quick', 'Validation gate');
+  run(`node scripts/egx_signal_funnel.mjs --date ${signalDate}`, 'Signal funnel diagnose', { critical: false });
   try {
     const proof = writeProofLoopSnapshot();
     log(`Proof loop: ${proof.n_completed}/${proof.samples_needed + proof.n_completed} ULTRA | WR5=${proof.win_rate ?? '—'}%`);

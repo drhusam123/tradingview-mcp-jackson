@@ -120,6 +120,7 @@ def evaluate_low_rule_score_policy(
     hard_gate_failure: str | None = None,
     quality_gate_failures: list | None = None,
     quality_gate_passed: bool = False,
+    close_position: float | None = None,
     anti_law: bool = False,
     used_fallback_risk: bool = False,
 ) -> dict:
@@ -203,15 +204,31 @@ def evaluate_low_rule_score_policy(
         and not anti_law
         and not used_fallback_risk
     )
+    ml_led_lower_third_exempt = (
+        scan_class == "missing_or_zero"
+        and quality_gate_passed
+        and ues >= 80.0
+        and ml_score >= 76.0
+        and close_position is not None
+        and close_position <= 0.34
+        and risk_bucket in VALID_RISK_BUCKETS
+        and risk_valid_for_rr
+        and not structural
+        and not anti_law
+        and not used_fallback_risk
+    )
 
-    if quant_exempt or ml_led_exempt:
+    if quant_exempt or ml_led_exempt or ml_led_lower_third_exempt:
+        _ml_only = (ml_led_exempt or ml_led_lower_third_exempt) and not quant_exempt
         result.update({
             "exception_applies": True,
             "exception_reason": (
-                "LOW_RULE_ML_LED_EXCEPTION" if ml_led_exempt and not quant_exempt
-                else "LOW_RULE_QUANT_PATH_EXCEPTION"
+                "LOW_RULE_ML_LED_LOWER_THIRD" if ml_led_lower_third_exempt and not ml_led_exempt and not quant_exempt
+                else ("LOW_RULE_ML_LED_EXCEPTION" if _ml_only else "LOW_RULE_QUANT_PATH_EXCEPTION")
             ),
-            "policy": "EXEMPT_ML_LED" if ml_led_exempt and not quant_exempt else "EXEMPT_QUANT_PATH",
+            "policy": "EXEMPT_ML_LED_LOWER_THIRD" if ml_led_lower_third_exempt and not ml_led_exempt else (
+                "EXEMPT_ML_LED" if _ml_only else "EXEMPT_QUANT_PATH"
+            ),
             "would_fail_new_low_rule": False,
             "new_block_reason": None,
         })
