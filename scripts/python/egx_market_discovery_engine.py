@@ -523,7 +523,6 @@ def compute_symbol_metrics(
     if avg_turn_20 < LIQUIDITY_GATE_EGP:
         conf -= 20
     confidence = clamp(conf)
-    effective = discovery * (confidence / 100.0)
 
     # Setups (Part 3 — definitions only, testable flags)
     setups: List[str] = []
@@ -541,6 +540,16 @@ def compute_symbol_metrics(
         setups.append("impact_expansion")
 
     primary_setup = setups[0] if setups else None
+
+    # Phase 2.6 — optional behavioral memory (EGX_MDE_BEHAVIOR_MEMORY=1, default off)
+    try:
+        from mde_behavior_memory import apply_confidence_adjustment
+        confidence, _behavior_notes = apply_confidence_adjustment(
+            sym, setups, confidence, hidden_repricing=hidden_repricing
+        )
+    except Exception:
+        pass
+    effective = discovery * (confidence / 100.0)
 
     # Stage
     if discovery >= 80 and effective >= 70 and gates_pass:

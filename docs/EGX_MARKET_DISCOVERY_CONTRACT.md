@@ -7,7 +7,14 @@ MDE Core        = discovery brain (hidden repricing before explosion)
 MDE Integration = safe plug-in to existing machine (deferred until shadow proof)
 ```
 
-## Phase 2 guarantees (current)
+## Phase 2.6 guarantees (current)
+
+- `mde_full_history_mining.py` backfills **full OHLCV history** into `egx_market_discovery_daily`
+- Behavioral outputs: profiles, families, rules, sector map
+- `EGX_MDE_BEHAVIOR_MEMORY=0` (default) — memory hook optional, confidence only
+- **Still no** opp_v2, UES, promotion, Telegram, veto, or Phase 3 boost
+
+## Phase 2 guarantees
 
 - `mine_egx_mde()` proposes `mde_*` fabric atoms (boost only, `hard_negative=0`)
 - `mde_oos_attribution.py` → `discovery_mde_manifest.json` + `mde_shadow_attribution_last.json`
