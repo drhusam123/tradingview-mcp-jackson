@@ -4,7 +4,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts" / "python"))
 
-from signal_integration import _resolve_ml_threshold
+from signal_integration import _resolve_ml_threshold, get_fused_ml_score
 
 
 def test_drift_softer_in_bull():
@@ -22,8 +22,19 @@ def test_high_ues_relief():
     assert t == 63.0
 
 
+def test_scan_confirm_fusion():
+    fused, breakdown = get_fused_ml_score(
+        "TEST", "2026-06-11", None,
+        explosion_score=40.0,
+        scan_score=72.0,
+    )
+    assert breakdown.get("scan_confirm") is not None
+    assert fused >= 64.0
+
+
 if __name__ == "__main__":
     test_drift_softer_in_bull()
     test_lower_third_sweet_spot_relief()
     test_high_ues_relief()
+    test_scan_confirm_fusion()
     print("gate_ml_threshold_ok")

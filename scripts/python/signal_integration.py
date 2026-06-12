@@ -764,8 +764,14 @@ def get_fused_ml_score(symbol, date, conn, explosion_score=50.0, scan_score=0.0,
     if pine_rs is not None and safe_float(pine_rs, 0) >= 75.0:
         engines.append(('pine_rs', min(55.0 + safe_float(pine_rs, 0) * 0.35, 85.0)))
 
-    if safe_float(explosion_score, 50.0) < 35.0 and safe_float(scan_score, 0.0) >= 55.0:
-        engines.append(('scan_proxy', min(safe_float(scan_score, 0.0) * 0.92, 82.0)))
+    _scan_s = safe_float(scan_score, 0.0)
+    _exp_s = safe_float(explosion_score, 50.0)
+    if _exp_s < 35.0 and _scan_s >= 55.0:
+        engines.append(('scan_proxy', min(_scan_s * 0.92, 82.0)))
+    elif _exp_s < 50.0 and _scan_s >= 65.0:
+        engines.append(('scan_confirm', min(_scan_s * 0.90, 80.0)))
+    elif _exp_s < 55.0 and _scan_s >= 80.0:
+        engines.append(('scan_strong', min(_scan_s * 0.88, 85.0)))
 
     try:
         dtw = conn.execute("""
@@ -1974,7 +1980,14 @@ def collect_quality_gate_failures(ues, ml_score, spectral_regime, behavioral_cla
             failures.append('ml_too_low')
 
     if meta_prob is not None and meta_prob < 0.30 and ml_score < 80.0:
-        failures.append('meta_label_low')
+        _meta_lower_third_ok = (
+            close_position is not None
+            and close_position <= 0.34
+            and ues >= 78.0
+            and ml_score >= 76.0
+        )
+        if not _meta_lower_third_ok:
+            failures.append('meta_label_low')
 
     if conformal_p_hi is not None and conformal_p_hi < 0.45 and ml_score < 85.0:
         failures.append('conformal_low_bound')

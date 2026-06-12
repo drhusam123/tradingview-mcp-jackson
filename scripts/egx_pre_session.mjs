@@ -43,6 +43,7 @@ const hardOk = [
 
 run('architecture_audit', `"${NODE}" scripts/egx_architecture_audit.mjs`, { optional: true });
 run('signals_diagnose', `"${NODE}" scripts/egx_signal_funnel.mjs`, { optional: true });
+run('gate_simulate', 'python3 scripts/python/gate_actionable_simulate.py simulate', { optional: true });
 run('verify_fast', 'npm run egx:verify:fast', { optional: true, timeout: 300_000 });
 run('runbook', `"${NODE}" scripts/egx_runbook.mjs${useNext ? ' --next' : ''}`, { optional: true });
 
