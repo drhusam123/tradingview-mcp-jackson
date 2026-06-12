@@ -513,6 +513,7 @@ def _apply_final_edge_gates(symbol, setup_type, scan_score, entry_price, entry_h
                 final_edge_failure=None,
                 hard_gate_failure=None,
                 quality_gate_failures=_low_ctx.get('quality_gate_failures'),
+                quality_gate_passed=bool(_low_ctx.get('quality_gate_passed')),
                 anti_law=bool(_low_ctx.get('anti_law')),
                 used_fallback_risk=used_fallback_risk,
             )
@@ -567,10 +568,41 @@ def _apply_final_edge_gates(symbol, setup_type, scan_score, entry_price, entry_h
     stop_dist_pct = (entry_price - stop_loss) / entry_price * 100.0 if entry_price else None
     metrics['stop_dist_pct'] = stop_dist_pct
     recent_low_8 = safe_float((price_ctx or {}).get('recent_low_8'), None)
-    if stop_dist_pct is None or stop_dist_pct < 1.5 or stop_dist_pct > 10.0:
+    _low_ctx = (price_ctx or {}).get('_low_rule_ctx') or {}
+    ues_ctx = safe_float(_low_ctx.get('ues'), 0.0)
+    ml_ctx = safe_float(_low_ctx.get('ml_score'), 0.0)
+    qg_passed = bool(_low_ctx.get('quality_gate_passed'))
+
+    if stop_dist_pct is None or stop_dist_pct > 10.0:
         return False, 'FINAL_EDGE:STRUCTURAL_SL_IMPLAUSIBLE', metrics
+    if stop_dist_pct < 1.0:
+        return False, 'FINAL_EDGE:STRUCTURAL_SL_IMPLAUSIBLE', metrics
+    if stop_dist_pct < 1.5:
+        tight_ok = (
+            qg_passed
+            and ues_ctx >= 75.0
+            and ml_ctx >= 85.0
+            and effective_rr is not None
+            and effective_rr >= 1.5
+        )
+        if not tight_ok:
+            return False, 'FINAL_EDGE:STRUCTURAL_SL_IMPLAUSIBLE', metrics
+        metrics['tight_sl_exception'] = True
+
     if recent_low_8 and stop_loss > recent_low_8 * 1.01:
-        return False, 'FINAL_EDGE:SL_NOT_BELOW_RECENT_STRUCTURE', metrics
+        sl_breach_pct = (stop_loss / recent_low_8 - 1.0) * 100.0
+        marginal_sl = sl_breach_pct <= 2.5
+        high_conviction_sl = (
+            qg_passed
+            and ues_ctx >= 77.0
+            and ml_ctx >= 85.0
+            and effective_rr is not None
+            and effective_rr >= 1.5
+        )
+        if not (marginal_sl and high_conviction_sl):
+            return False, 'FINAL_EDGE:SL_NOT_BELOW_RECENT_STRUCTURE', metrics
+        metrics['marginal_sl_exception'] = True
+        metrics['sl_breach_pct'] = round(sl_breach_pct, 3)
 
     vol_ratio = safe_float(scan_volume_ratio, None)
     if vol_ratio is None or vol_ratio <= 0:
@@ -588,13 +620,25 @@ def _apply_final_edge_gates(symbol, setup_type, scan_score, entry_price, entry_h
     is_retest = _setup_has(setup, 'institutional retest', 'retest', 'post-breakout')
     is_accum = _setup_has(setup, 'volume accumulation', 'accumulation')
     is_trend = _setup_has(setup, 'trend continuation')
+    close_pos = safe_float((price_ctx or {}).get('close_position'), None)
 
     if is_breakout and (vol_ratio is None or vol_ratio < vmin):
         return False, 'FINAL_EDGE:BREAKOUT_VOLUME_LT_2_5X', metrics
     if is_breakout and vol_ratio is not None and vol_ratio > 3.0:
         return False, 'FINAL_EDGE:BREAKOUT_HIGH_VOLUME_CHASE', metrics
     if is_accum and (vol_ratio is None or vol_ratio < vmin):
-        return False, 'FINAL_EDGE:ACCUMULATION_VOLUME_LT_2_5X', metrics
+        lower_third_accum = (
+            close_pos is not None
+            and close_pos <= 0.34
+            and vol_ratio is not None
+            and vol_ratio >= 1.0
+            and qg_passed
+            and ues_ctx >= 75.0
+            and ml_ctx >= 85.0
+        )
+        if not lower_third_accum:
+            return False, 'FINAL_EDGE:ACCUMULATION_VOLUME_LT_2_5X', metrics
+        metrics['lower_third_accum_exception'] = True
     if is_accum and vol_ratio is not None and vol_ratio > 3.0:
         return False, 'FINAL_EDGE:ACCUMULATION_HIGH_VOLUME_CHASE', metrics
     if is_retest:
@@ -607,7 +651,6 @@ def _apply_final_edge_gates(symbol, setup_type, scan_score, entry_price, entry_h
         if retention is not None and retention < 0.40:
             return False, 'FINAL_EDGE:VOLUME_COLLAPSE_AFTER_BREAKOUT', metrics
 
-    close_pos = safe_float((price_ctx or {}).get('close_position'), None)
     range_pct = safe_float((price_ctx or {}).get('range_pct'), None)
     momentum_3d = safe_float((price_ctx or {}).get('momentum_3d'), None)
 
@@ -1869,11 +1912,40 @@ def load_adaptive_gate_params(conn):
     return defaults
 
 
+def _resolve_ml_threshold(base_ml_thr, drift_on, regime, ues, ml_score,
+                          vol_ratio=None, close_position=None):
+    """
+    Effective ML floor: Bayesian base + regime-aware drift + TRADING_LESSONS relief.
+    Lower-third close + 2.5–3x volume sweet spot may reduce floor by up to 5 pts.
+    """
+    regime_u = (regime or 'BULL').upper()
+    effective = float(base_ml_thr)
+    if drift_on:
+        # Softer drift penalty in BULL — drift throttle was blocking 180+ near-miss names
+        if regime_u in ('BULL', 'BULLISH'):
+            effective = min(effective + 2.0, 78.0)
+        else:
+            effective = min(effective + 4.0, 80.0)
+    if (close_position is not None and close_position <= 0.34
+            and vol_ratio is not None and 2.5 <= vol_ratio <= 3.0
+            and ues >= 75.0):
+        effective = max(effective - 5.0, 60.0)
+    elif (vol_ratio is not None and 2.0 <= vol_ratio < 3.5
+          and ues >= 78.0 and ml_score >= 65.0):
+        effective = max(effective - 3.0, 62.0)
+    elif ues >= 80.0 and ml_score >= 68.0:
+        effective = max(effective - 3.0, 62.0)
+    elif ues >= 78.0 and ml_score >= 70.0:
+        effective = max(effective - 2.0, 63.0)
+    return effective
+
+
 def collect_quality_gate_failures(ues, ml_score, spectral_regime, behavioral_class,
                                   false_signal_rate, cycle_bottom_prox, breadth_signal,
                                   adaptive_params=None, active_regime=None, rsi14=None,
                                   rsi_slope=None, ad_ratio=None, vol_ratio=None,
-                                  close_position=None, meta_prob=None,
+                                  close_position=None, scan_volume_ratio=None,
+                                  meta_prob=None,
                                   conformal_p_lo=None, conformal_p_hi=None, conformal_confident=None,
                                   survival_p_tp=None, survival_p_sl=None,
                                   conviction=None):
@@ -1885,18 +1957,18 @@ def collect_quality_gate_failures(ues, ml_score, spectral_regime, behavioral_cla
     params = adaptive_params or {}
     regime = (active_regime or 'BULL').upper()
 
-    ml_thr = params.get(f'ml_threshold_{regime}',
-             params.get('ml_threshold_OVERALL', 65.0))
+    base_ml_thr = params.get(f'ml_threshold_{regime}',
+                             params.get('ml_threshold_OVERALL', 65.0))
     noisy_prox_thr = params.get('noisy_prox_threshold', 0.55)
     volatile_ok = float(params.get('volatile_allowed', 0.0)) >= 1.0
     volatile_ml = params.get('volatile_ml_premium', 75.0)
     drift_on = float(params.get('drift_throttle', 0.0)) >= 1.0
-    base_ml_thr = ml_thr
-    if drift_on:
-        ml_thr = min(ml_thr + 4.0, 80.0)
+    ml_thr = _resolve_ml_threshold(
+        base_ml_thr, drift_on, regime, ues, ml_score, vol_ratio, close_position,
+    )
 
     if ml_score < ml_thr:
-        if drift_on and ml_score >= base_ml_thr:
+        if drift_on and ml_score >= base_ml_thr and ml_score < ml_thr:
             failures.append('drift_throttle_ml_floor')
         else:
             failures.append('ml_too_low')
@@ -1959,6 +2031,11 @@ def collect_quality_gate_failures(ues, ml_score, spectral_regime, behavioral_cla
         except Exception:
             if not (ues >= 78.0 and ml_score >= 72.0) and not (ues >= 75.0 and ml_score >= 80.0):
                 _nb_hard = True
+        # TRADING_LESSONS: lower-third + vol sweet spot may pass despite weak breadth
+        if (_nb_hard and close_position is not None and close_position <= 0.34
+                and vol_ratio is not None and 2.0 <= vol_ratio <= 3.5
+                and ues >= 78.0 and ml_score >= 68.0):
+            _nb_hard = False
         if _nb_hard:
             failures.append('negative_breadth_ad')
 
@@ -1973,7 +2050,13 @@ def collect_quality_gate_failures(ues, ml_score, spectral_regime, behavioral_cla
             and ml_score >= 65.0
             and vol_ratio >= 0.90
         )
-        if not _lower_third_vol_ok:
+        _scan_day_vol_ok = (
+            scan_volume_ratio is not None
+            and scan_volume_ratio >= 2.0
+            and ues >= 75.0
+            and ml_score >= 80.0
+        )
+        if not (_lower_third_vol_ok or _scan_day_vol_ok):
             failures.append('low_volume_signal')
 
     _bear_oversold_ues_exception = (
@@ -2955,6 +3038,18 @@ def cmd_score_all(params):
         _price_ctx_gate = _get_latest_bar_context(conn, symbol, date)
         _close_pos_gate = safe_float(_price_ctx_gate.get('close_position'), None)
 
+        _scan_vol_for_gate = None
+        try:
+            _sv_row = conn.execute(
+                "SELECT volume_ratio FROM scans WHERE scan_date=? AND symbol=? AND rejected=0 "
+                "ORDER BY score DESC LIMIT 1",
+                (date, symbol),
+            ).fetchone()
+            if _sv_row:
+                _scan_vol_for_gate = safe_float(_sv_row['volume_ratio'], None)
+        except Exception:
+            pass
+
         # Ph 27/50 — Adaptive Quality Gate (Bayesian-calibrated thresholds) + Phase 3 + AD breadth + vol
         _meta_p = (_meta_map.get(symbol) or (None, None))[0]
         _conf = _conformal_map.get(symbol, (None, None, None))
@@ -2964,7 +3059,8 @@ def cmd_score_all(params):
             adaptive_params=adaptive_params, active_regime=regime,
             rsi14=_rsi14_for_gate, rsi_slope=_rsi_slope_gate,
             ad_ratio=_ad_ratio_today, vol_ratio=_vol_now,
-            close_position=_close_pos_gate, meta_prob=_meta_p,
+            close_position=_close_pos_gate, scan_volume_ratio=_scan_vol_for_gate,
+            meta_prob=_meta_p,
             conformal_p_lo=_conf[0], conformal_p_hi=_conf[1], conformal_confident=_conf[2],
             survival_p_tp=_surv[0], survival_p_sl=_surv[1],
             conviction=conviction,
@@ -3102,6 +3198,7 @@ def cmd_score_all(params):
             'ml_score': exp_score,
             'anti_law': bool(is_anti_for_decision),
             'quality_gate_failures': _qg_failures,
+            'quality_gate_passed': gate_passed,
         }
 
         # ── Hard Gates (applied after UES, before adding to active signals) ──

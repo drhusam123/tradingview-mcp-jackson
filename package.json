@@ -691,6 +691,8 @@
     "egx:ml:shap": "node scripts/egx_explosion_ml.mjs shap",
     "egx:ml:tune": "node scripts/egx_explosion_ml.mjs tune --top-n 40",
     "egx:ml:full": "node scripts/egx_explosion_ml.mjs full",
+    "egx:ml:boost": "node scripts/egx_ml_boost.mjs",
+    "egx:gate:simulate": "python3 scripts/python/gate_actionable_simulate.py simulate",
     "egx:portfolio": "node scripts/egx_portfolio.mjs report",
     "egx:portfolio:kelly": "node scripts/egx_portfolio.mjs kelly",
     "egx:portfolio:sharpe": "node scripts/egx_portfolio.mjs sharpe",

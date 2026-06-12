@@ -119,6 +119,7 @@ def evaluate_low_rule_score_policy(
     final_edge_failure: str | None = None,
     hard_gate_failure: str | None = None,
     quality_gate_failures: list | None = None,
+    quality_gate_passed: bool = False,
     anti_law: bool = False,
     used_fallback_risk: bool = False,
 ) -> dict:
@@ -179,8 +180,8 @@ def evaluate_low_rule_score_policy(
         })
         return result
 
-    # missing/zero — quant-path exception (narrow)
-    exempt = (
+    # missing/zero — quant-path or ML-led exception (narrow)
+    quant_exempt = (
         scan_class == "missing_or_zero"
         and quant_matches >= 6
         and ues >= 80.0
@@ -191,12 +192,26 @@ def evaluate_low_rule_score_policy(
         and not anti_law
         and not used_fallback_risk
     )
+    ml_led_exempt = (
+        scan_class == "missing_or_zero"
+        and quality_gate_passed
+        and ues >= 78.0
+        and ml_score >= 85.0
+        and risk_bucket in VALID_RISK_BUCKETS
+        and risk_valid_for_rr
+        and not structural
+        and not anti_law
+        and not used_fallback_risk
+    )
 
-    if exempt:
+    if quant_exempt or ml_led_exempt:
         result.update({
             "exception_applies": True,
-            "exception_reason": "LOW_RULE_QUANT_PATH_EXCEPTION",
-            "policy": "EXEMPT_QUANT_PATH",
+            "exception_reason": (
+                "LOW_RULE_ML_LED_EXCEPTION" if ml_led_exempt and not quant_exempt
+                else "LOW_RULE_QUANT_PATH_EXCEPTION"
+            ),
+            "policy": "EXEMPT_ML_LED" if ml_led_exempt and not quant_exempt else "EXEMPT_QUANT_PATH",
             "would_fail_new_low_rule": False,
             "new_block_reason": None,
         })
