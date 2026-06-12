@@ -384,6 +384,8 @@
     "egx:ml:refresh": "node scripts/egx_ml_boost.mjs --skip-ensemble",
     "egx:ml:gate:verify": "node scripts/egx_ml_gate_pipeline_verify.mjs",
     "egx:ml:gate:verify:ci": "node scripts/egx_ml_gate_pipeline_verify.mjs --ci",
+    "egx:scripts:audit": "node scripts/egx_npm_scripts_audit.mjs",
+    "egx:ops:verify-all": "node scripts/egx_ops_verify_all.mjs",
     "egx:runbook": "node scripts/egx_runbook.mjs",
     "egx:runbook:next": "node scripts/egx_runbook.mjs --next",
     "egx:prod:activate": "node scripts/egx_production_ops.mjs activate",

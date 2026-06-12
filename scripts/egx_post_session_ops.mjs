@@ -19,6 +19,7 @@ loadEnv();
 
 const NODE = process.execPath;
 const FORCE = process.argv.includes('--force');
+const SKIP_RECONCILE = process.argv.includes('--skip-reconcile');
 const today = cairoDateParts().date;
 
 try {
@@ -53,13 +54,20 @@ function runStep(name, cmd, { optional = false, timeout = 600_000 } = {}) {
 }
 
 let reconcileExit = 0;
-try {
-  execSync(`"${NODE}" scripts/egx_notify_reconcile.mjs`, { cwd: PROJECT_ROOT, stdio: 'inherit' });
-} catch (e) {
-  reconcileExit = e.status || 2;
+if (SKIP_RECONCILE) {
+  console.log('⏭  Reconcile skipped (--skip-reconcile)');
+  steps.push({ name: 'reconcile', ok: true, skipped: true });
+} else {
+  try {
+    execSync(`"${NODE}" scripts/egx_notify_reconcile.mjs`, { cwd: PROJECT_ROOT, stdio: 'inherit' });
+    steps.push({ name: 'reconcile', ok: true });
+  } catch (e) {
+    reconcileExit = e.status || 2;
+    steps.push({ name: 'reconcile', ok: false, error: e.message?.slice(0, 80) });
+  }
 }
 
-if (reconcileExit !== 0) {
+if (!SKIP_RECONCILE && reconcileExit !== 0) {
   alertNotification('POST_SESSION_RECONCILE_GAP', { date: today });
   if (process.env.EGX_AUTO_BACKFILL === '1') {
     console.log('\n▶  Auto-recovery (EGX_AUTO_BACKFILL=1)...');
@@ -129,16 +137,6 @@ try {
   console.log(`⚠️  P6 delivered orchestrator: ${e.message?.slice(0, 80)}`);
 }
 
-try {
-  execSync(`"${NODE}" scripts/egx_full_verify.mjs --skip-tests --skip-cdp`, {
-    cwd: PROJECT_ROOT,
-    stdio: 'inherit',
-  });
-} catch {
-  alertNotification('POST_SESSION_VERIFY_FAIL', { date: today });
-  process.exit(1);
-}
-
 const digest = { ...buildDeliveryDigest(signalDate), proof_loop: proof };
 const mlBoost = existsSync(join(PROJECT_ROOT, 'data/ml_boost_last.json'))
   ? JSON.parse(readFileSync(join(PROJECT_ROOT, 'data/ml_boost_last.json'), 'utf8'))
@@ -152,6 +150,22 @@ writeFileSync(join(PROJECT_ROOT, 'data/post_session_last.json'), JSON.stringify(
   digest,
 }, null, 2));
 
-await opsSuccessAlert('POST_SESSION_OK', digest);
+let verifyOk = true;
+try {
+  execSync(`"${NODE}" scripts/egx_full_verify.mjs --skip-tests --skip-cdp`, {
+    cwd: PROJECT_ROOT,
+    stdio: 'inherit',
+  });
+} catch {
+  verifyOk = false;
+  steps.push({ name: 'full_verify', ok: false });
+  alertNotification('POST_SESSION_VERIFY_FAIL', { date: today });
+}
 
-console.log('\n═══ Post-Session OK ═══\n');
+if (verifyOk) {
+  await opsSuccessAlert('POST_SESSION_OK', digest);
+  console.log('\n═══ Post-Session OK ═══\n');
+} else {
+  console.log('\n═══ Post-Session DONE (verify warnings) ═══\n');
+  process.exit(1);
+}
