@@ -89,7 +89,8 @@ export function formatFreshnessLines(kpis) {
   if (kpis.db) {
     const d = kpis.db;
     lines.push(`  Signal date: ${d.signal_date ?? '—'}`);
-    lines.push(`  OHLCV:       ${d.ohlcv_symbols} sym | weekly ${d.weekly_symbols} | intraday60 ${d.intraday_60}`);
+    const intraPct = d.intraday_60 ? Math.round((d.intraday_60 / 80) * 100) : 0;
+    lines.push(`  OHLCV:       ${d.ohlcv_symbols} sym | weekly ${d.weekly_symbols} | intraday60 ${d.intraday_60}/80 (${intraPct}%)`);
     lines.push(`  Indicators:  ${d.indicators_on_date}/${d.indicators} on date | sources ${JSON.stringify(d.indicators_by_source)}`);
     lines.push(`  ML:          meta ${d.meta_label} | explosion ${d.explosion}`);
     lines.push(`  Ghosts:      ${d.unarchived_ghosts} unarchived`);

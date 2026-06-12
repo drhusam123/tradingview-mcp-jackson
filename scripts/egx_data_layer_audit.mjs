@@ -184,6 +184,8 @@ function runAudit() {
   }
   ok('kpi_cross_market_fresh', crossLag == null || crossLag <= 1,
     crossLag == null ? 'cross_market n/a' : `lag_days=${crossLag} (target ≤1)`);
+  ok('kpi_intraday_liquid', (intra60?.sym ?? 0) >= 40,
+    `intraday symbols=${intra60?.sym ?? 0} (liquid tier target ≥40, goal 80)`);
 
   const fail = checks.filter(c => !c.ok);
   return {

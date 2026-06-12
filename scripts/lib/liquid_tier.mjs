@@ -4,6 +4,9 @@
 import Database from 'better-sqlite3';
 import { EGX_UNIVERSE, EGX_UNIVERSE_CORE } from '../../src/egx/index.js';
 
+/** TV/CDP OHLCV extract fails repeatedly — excluded from liquid rotation. */
+export const INTRADAY_TV_SKIP = new Set(['ANCC', 'DCCC', 'HDST', 'ANFI']);
+
 /**
  * @param {Database} db
  * @param {{ limit?: number, offset?: number }} opts
@@ -30,7 +33,9 @@ export function loadLiquidTierSymbols(db, { limit = 80, offset = 0 } = {}) {
     ORDER BY lp.advt_10d DESC
   `).all();
 
-  const liquid = rows.map(r => r.symbol).filter(s => EGX_UNIVERSE.includes(s));
+  const liquid = rows.map(r => r.symbol).filter(s =>
+    EGX_UNIVERSE.includes(s) && !INTRADAY_TV_SKIP.has(s),
+  );
   const coreFirst = [
     ...EGX_UNIVERSE_CORE.filter(s => EGX_UNIVERSE.includes(s)),
     ...liquid.filter(s => !EGX_UNIVERSE_CORE.includes(s)),
