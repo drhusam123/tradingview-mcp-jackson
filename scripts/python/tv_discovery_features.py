@@ -24,6 +24,9 @@ ATOM_WEIGHTS = {
     "PARTICIPATION_SHOCK": 6.0,
     "CVD_BULL_DIV_PROXY": 9.0,
     "CMF_POSITIVE_PROXY": 5.0,
+    "VOLUME_BASELINE": 2.0,
+    "RS_BASELINE": 2.0,
+    "SCAN_WATCHLIST": 1.0,
 }
 
 
@@ -149,6 +152,15 @@ def derive_atoms(pine_row: dict, close: Optional[float]) -> dict:
         if "VWAP_RECLAIM" not in atoms:
             atoms.append("VWAP_RECLAIM")
 
+    # Soft fallback — keep evaluated symbols in tv_discovery_features (Phase 3 target ≥40/day)
+    if not atoms:
+        if vol_ratio is not None and vol_ratio >= 1.0:
+            atoms.append("VOLUME_BASELINE")
+        elif rs_score is not None and rs_score >= 48:
+            atoms.append("RS_BASELINE")
+        else:
+            atoms.append("SCAN_WATCHLIST")
+
     tv_score = round(sum(ATOM_WEIGHTS.get(a, 4.0) for a in atoms), 2)
     return {
         "atoms": atoms,
@@ -175,6 +187,19 @@ def select_symbols(db: sqlite3.Connection, trade_date: str, limit: int = 30) -> 
         (trade_date, limit),
     ).fetchall()
     symbols.extend(r["symbol"] for r in opp)
+
+    if len(symbols) < limit:
+        opp_soft = db.execute(
+            """
+            SELECT symbol FROM opportunity_score_v2
+            WHERE trade_date=? AND opportunity_score >= 55
+            ORDER BY opportunity_score DESC LIMIT ?
+            """,
+            (trade_date, limit),
+        ).fetchall()
+        for r in opp_soft:
+            if r["symbol"] not in symbols:
+                symbols.append(r["symbol"])
 
     if len(symbols) < limit:
         scans = db.execute(

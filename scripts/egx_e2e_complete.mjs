@@ -16,7 +16,8 @@ loadEnv();
 const NODE = process.execPath;
 const SKIP_AUTOMATE = process.argv.includes('--skip-automate');
 const SKIP_CDP = process.argv.includes('--skip-cdp');
-const SKIP_GO_LIVE = process.argv.includes('--skip-go-live');
+const SKIP_GO_LIVE = process.argv.includes('--skip-go-live')
+  || process.argv.includes('--skip-cron');
 const AS_JSON = process.argv.includes('--json');
 
 const steps = [];

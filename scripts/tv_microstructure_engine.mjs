@@ -51,6 +51,16 @@ function selectSymbols(limit) {
   `).all(signalDate, limit);
   for (const r of opp) out.push(r.symbol);
   if (out.length < limit) {
+    const oppSoft = db.prepare(`
+      SELECT symbol FROM opportunity_score_v2
+      WHERE trade_date=? AND opportunity_score >= 55
+      ORDER BY opportunity_score DESC LIMIT ?
+    `).all(signalDate, limit);
+    for (const r of oppSoft) {
+      if (!out.includes(r.symbol)) out.push(r.symbol);
+    }
+  }
+  if (out.length < limit) {
     const scans = db.prepare(`
       SELECT symbol FROM scans
       WHERE scan_date=? AND rejected=0

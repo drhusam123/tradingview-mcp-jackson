@@ -212,8 +212,10 @@ function runAudit() {
   ok('kpi_exclusions_consistent', exclusionDelta <= 5,
     `raw-exec=${rawN - execN} exclusions=${exclusionsN} delta=${exclusionDelta}`);
   if (signalDate) {
-    ok('kpi_tv_discovery', tvDiscSyms >= 25,
-      `tv_discovery @ ${signalDate}: ${tvDiscSyms} symbols (target ≥25)`);
+    ok('kpi_tv_discovery', tvDiscSyms >= 40,
+      `tv_discovery @ ${signalDate}: ${tvDiscSyms} symbols (Phase 3 target ≥40)`);
+    ok('kpi_ensemble_coverage', explosionSyms >= 150,
+      `ensemble/explosion @ ${signalDate}: ${explosionSyms} symbols (target ≥150)`);
   }
 
   const fail = checks.filter(c => !c.ok);

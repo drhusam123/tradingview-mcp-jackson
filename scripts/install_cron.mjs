@@ -128,7 +128,7 @@ const CRON_FABRIC_W   = `42 18 * * 0 cd "${ROOT}" && ${CRON_ENV} ${NODE_BIN} "${
 const TV_MICRO_SCRIPT = join(ROOT, 'scripts', 'tv_microstructure_engine.mjs');
 const TV_MICRO_LOG    = join(ROOT, 'logs', 'tv_microstructure.log');
 const MARKER_TV_MICRO = '# EGX-TV-MICRO-D';
-const CRON_TV_MICRO   = `0 11 * * 0-4 cd "${ROOT}" && ${NODE_BIN} "${TV_MICRO_SCRIPT}" --local-fallback --max-symbols 30 >> "${TV_MICRO_LOG}" 2>&1 ${MARKER_TV_MICRO}`;
+const CRON_TV_MICRO   = `0 11 * * 0-4 cd "${ROOT}" && ${NODE_BIN} "${TV_MICRO_SCRIPT}" --local-fallback --max-symbols 40 >> "${TV_MICRO_LOG}" 2>&1 ${MARKER_TV_MICRO}`;
 
 // Gap repair — purge test final_signals, closed loop, acceptance (daily light)
 const GAP_REPAIR_SCRIPT = join(ROOT, 'scripts', 'egx_gap_repair.mjs');

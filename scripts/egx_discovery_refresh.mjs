@@ -63,7 +63,7 @@ console.log(`  Date: ${signalDate} | feedback=${ctx.feedback.n_items} | strict=$
 
 stage('tv_microstructure', () => {
   try {
-    execFileSync(NODE, [join(ROOT, 'scripts/tv_microstructure_engine.mjs'), '--local-only', '--max-symbols', '30', '--date', signalDate], {
+    execFileSync(NODE, [join(ROOT, 'scripts/tv_microstructure_engine.mjs'), '--local-only', '--max-symbols', '40', '--date', signalDate], {
       cwd: ROOT,
       encoding: 'utf8',
       timeout: 900_000,
