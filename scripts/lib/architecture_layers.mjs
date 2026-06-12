@@ -26,7 +26,7 @@ export const LAYER_GRAPH = [
     anchors: ['pine_analytics', 'tv_discovery_features', 'closing_pressure_daily', 'market_breadth_enhanced'],
     upstream: ['L0', 'L1'],
     downstream: ['L4', 'L7', 'L11'],
-    producers: ['fetch_pine_analytics', 'tv_microstructure_engine', 'egx_cross_market'],
+    producers: ['fetch_pine_analytics', 'tv_microstructure_engine', 'egx_x_pro_engine', 'egx_cross_market'],
   },
   {
     id: 'L3',
@@ -100,7 +100,7 @@ export const LAYER_GRAPH = [
     anchors: ['discovery_atom_registry', 'discovery_fabric_runs'],
     upstream: ['L2', 'L4', 'L8', 'L9'],
     downstream: ['L7', 'L4'],
-    producers: ['egx_discovery_fabric', 'discovery_domain_miners'],
+    producers: ['egx_discovery_fabric', 'discovery_domain_miners', 'egx_causal78', 'structural_laws_bridge'],
   },
 ];
 

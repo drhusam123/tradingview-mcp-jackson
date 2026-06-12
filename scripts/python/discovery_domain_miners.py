@@ -85,6 +85,17 @@ def mine_json_sources() -> list[dict]:
             out.append(_atom(f"tv_{flag}", "L2", "tv_discovery_features", "tv_microstructure",
                              cond={"tv_flag": flag}, boost=1.1))
 
+    causal = _read_json("causal_discovery_last.json")
+    if causal:
+        for drv in causal.get("causal_drivers") or []:
+            aid = f"causal_{str(drv).lower().replace(' ', '_')[:24]}"
+            out.append(_atom(aid, "L2", "causal_discovery_last.json", "causal_discovery_miner",
+                             cond={"driver": drv}, boost=1.06))
+        for pair in causal.get("priority_pairs") or []:
+            if isinstance(pair, (list, tuple)) and len(pair) == 2:
+                out.append(_atom(f"causal_{pair[0]}_{pair[1]}", "L2", "causal_discovery_last.json",
+                                 "causal_discovery_miner", cond={"pair": pair}, boost=1.08))
+
     return out
 
 
@@ -320,9 +331,177 @@ def mine_spectral(db) -> list[dict]:
     return out
 
 
+def mine_institutional_retest(db) -> list[dict]:
+    """A1 / F8 — institutional retest setups (TRADING_LESSONS +9.95% avg win)."""
+    out = []
+    try:
+        rows = db.execute(
+            """
+            SELECT symbol, setup_type, MAX(score) AS score
+            FROM scans
+            WHERE scan_date >= date('now', '-12 days')
+              AND rejected = 0
+              AND (
+                LOWER(setup_type) LIKE '%retest%'
+                OR LOWER(setup_type) LIKE '%break%'
+                OR LOWER(setup_type) LIKE '%accum%'
+                OR LOWER(setup_type) LIKE '%inst%'
+              )
+            GROUP BY symbol
+            HAVING score >= 65
+            ORDER BY score DESC
+            LIMIT 12
+            """
+        ).fetchall()
+        if rows:
+            out.append(_atom(
+                "institutional_retest_gate", "L3", "scans", "institutional_retest_miner",
+                cond={"n_symbols": len(rows)}, boost=1.09, n=len(rows),
+            ))
+            for sym, stype, score in rows[:8]:
+                out.append(_atom(
+                    f"retest_{sym}", "L3", "scans", "institutional_retest_miner",
+                    cond={"symbol": sym, "setup_type": str(stype or "")[:40]},
+                    boost=1.06, wr=float(score or 0), n=1,
+                ))
+        out.append(_atom(
+            "retest_vol_ok", "L3", "scans", "institutional_retest_miner",
+            cond={"vol_ratio": "2.5-3.5", "retest_confirmed": True}, boost=1.10,
+        ))
+        out.append(_atom(
+            "retest_vol_fail", "L3", "scans", "institutional_retest_miner",
+            cond={"vol_ratio_lt": 2.5, "near_ath_no_vol": True}, penalize=0.65, hard_neg=1,
+        ))
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
+def mine_volume_accumulation(db) -> list[dict]:
+    """A2 — volume accumulation / VCP cluster (TRADING_LESSONS 24.7% WR)."""
+    out = []
+    try:
+        row = db.execute(
+            """
+            SELECT COUNT(DISTINCT symbol) AS n
+            FROM scans
+            WHERE scan_date >= date('now', '-7 days')
+              AND rejected = 0
+              AND (
+                LOWER(setup_type) LIKE '%accum%'
+                OR LOWER(setup_type) LIKE '%vcp%'
+                OR LOWER(setup_type) LIKE '%squeeze%'
+                OR LOWER(setup_type) LIKE '%base%'
+              )
+            """
+        ).fetchone()
+        n = int(row[0]) if row and row[0] else 0
+        if n >= 2:
+            out.append(_atom(
+                "volume_accumulation_cluster", "L3", "scans", "volume_accumulation_miner",
+                cond={"n_symbols": n}, boost=1.10, n=n,
+            ))
+        out.extend([
+            _atom("vol_accumulation_3d", "L0", "ohlcv_history", "volume_accumulation_miner",
+                  cond={"rising_vol_days": 3, "range_compression": True}, boost=1.08),
+            _atom("vol_sweet_spot_2_5_3", "L0", "ohlcv_history", "volume_accumulation_miner",
+                  cond={"vol_ratio_min": 2.5, "vol_ratio_max": 3.5}, boost=1.10),
+        ])
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
+def mine_quality_universe_v3(db) -> list[dict]:
+    """A3 — historical quality symbols (backtest v3 WR leaders)."""
+    quality = (
+        "MOSC", "UTOP", "TORA", "ADRI", "AMES", "KWIN", "SNFI",
+        "AALR", "HBCO", "AIFI", "WKOL", "IBCT",
+    )
+    out = [
+        _atom("quality_universe_v3_gate", "L9", "stock_universe", "quality_universe_v3_miner",
+              cond={"n_symbols": len(quality)}, boost=1.06, n=len(quality)),
+    ]
+    for sym in quality:
+        out.append(_atom(
+            f"quality_v3_{sym}", "L9", "stock_universe", "quality_universe_v3_miner",
+            cond={"symbol": sym}, boost=1.05,
+        ))
+    try:
+        row = db.execute(
+            """
+            SELECT COUNT(*) n FROM recommendation_outcomes ro
+            WHERE ro.symbol IN ({})
+              AND ro.outcome_filled >= 5
+              AND ro.hit_t5 = 1
+              AND ro.signal_date >= date('now', '-365 days')
+            """.format(",".join("?" * len(quality))),
+            quality,
+        ).fetchone()
+        if row and row[0]:
+            out[0]["backtest_n"] = int(row[0])
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
+def mine_near_ath_300(db) -> list[dict]:
+    """B2 — Near-ATH requires 300-bar context + volume (TRADING_LESSONS #9)."""
+    return [
+        _atom("near_ath_300bar_vol", "L0", "ohlcv_history", "near_ath_miner",
+              cond={"lookback_bars": 300, "vol_ratio_gte": 2.5}, boost=1.05),
+        _atom("near_ath_no_vol_penalty", "L0", "ohlcv_history", "near_ath_miner",
+              cond={"near_ath": True, "vol_ratio_lt": 2.5}, penalize=0.55, hard_neg=1),
+    ]
+
+
+def mine_delivery_feedback(db) -> list[dict]:
+    """B4 — delivered-to-client symbol outcomes → boost/penalize atoms."""
+    out = []
+    try:
+        cols = {r[1] for r in db.execute("PRAGMA table_info(recommendation_outcomes)").fetchall()}
+        if "client_delivered" not in cols:
+            return out
+        rows = db.execute(
+            """
+            SELECT symbol,
+                   SUM(CASE WHEN hit_t5 = 1 THEN 1 ELSE 0 END) AS wins,
+                   COUNT(*) AS n
+            FROM recommendation_outcomes
+            WHERE COALESCE(client_delivered, 0) = 1
+              AND outcome_filled >= 5
+              AND signal_date >= date('now', '-180 days')
+            GROUP BY symbol
+            HAVING n >= 2
+            """
+        ).fetchall()
+        for sym, wins, n in rows:
+            wr = (wins / n * 100.0) if n else 0.0
+            if wr >= 45:
+                out.append(_atom(
+                    f"delivered_win_{sym}", "L10", "recommendation_outcomes", "delivery_feedback_miner",
+                    cond={"symbol": sym}, boost=1.07, wr=round(wr, 1), n=n,
+                ))
+            elif wr < 20:
+                out.append(_atom(
+                    f"delivered_loss_{sym}", "L10", "recommendation_outcomes", "delivery_feedback_miner",
+                    cond={"symbol": sym}, penalize=0.72, wr=round(wr, 1), n=n,
+                ))
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
 def mine_post_breakout_vol(db) -> list[dict]:
-    return [_atom("post_breakout_vol_collapse", "L0", "ohlcv_history_execution", "post_breakout_vol_miner",
-                  cond={"vol_ratio_next_lt": 0.4}, penalize=0.55, hard_neg=1)]
+    """A5 / F6 — post-breakout volume decay penalize + retest volume confirm."""
+    return [
+        _atom("post_breakout_vol_collapse", "L0", "ohlcv_history_execution", "post_breakout_vol_miner",
+              cond={"vol_ratio_next_lt": 0.4}, penalize=0.55, hard_neg=1),
+        _atom("post_breakout_vol_ok", "L0", "ohlcv_history_execution", "post_breakout_vol_miner",
+              cond={"vol_ratio_gte": 0.4, "days_after_breakout": 1}, boost=1.04),
+        _atom("breakout_day_vol_confirm", "L0", "ohlcv_history_execution", "post_breakout_vol_miner",
+              cond={"vol_ratio": "2.5-3.5", "breakout_bar": True}, boost=1.08),
+    ]
 
 
 def mine_cross_market(db) -> list[dict]:
@@ -605,6 +784,7 @@ def mine_grid_winners(db) -> list[dict]:
 
 
 def mine_dmids_structural(db) -> list[dict]:
+    """DMIDS structural laws → fabric atoms (unified path with structural_laws_bridge)."""
     out = []
     kb = DATA / "knowledge_base"
     if not kb.exists():
@@ -615,24 +795,75 @@ def mine_dmids_structural(db) -> list[dict]:
     try:
         data = json.loads(files[0].read_text(encoding="utf-8"))
         laws = data.get("laws") or data.get("up_laws") or []
-        up = []
+        up, down = [], []
         for l in laws:
             dirs = l.get("directions") or l.get("direction") or l.get("bias") or []
             if isinstance(dirs, str):
                 dirs = [dirs]
+            sup = float(l.get("support_pct") or l.get("support") or 0)
             if any(str(d).upper() in ("UP", "BULL", "LONG", "BULLISH") for d in dirs):
                 up.append(l)
-            elif float(l.get("support_pct") or 0) >= 60:
+            elif any(str(d).upper() in ("DOWN", "BEAR", "SHORT", "BEARISH") for d in dirs):
+                if sup >= 25:
+                    down.append(l)
+            elif sup >= 60:
                 up.append(l)
         if up:
             out.append(_atom("dmids_up_law_gate", "L9", files[0].name, "dmids_structural_miner",
-                             cond={"n_up_laws": len(up)}, boost=1.05, n=len(up)))
-            for law in up[:5]:
-                lid = str(law.get("id") or law.get("law_number") or "law")[:20]
+                             cond={"n_up_laws": len(up), "kb_date": files[0].stem}, boost=1.05, n=len(up)))
+            for law in up[:12]:
+                lid = str(law.get("id") or law.get("law_number") or "law")[:24]
+                sup = float(law.get("support_pct") or 0)
+                eff = float(law.get("effect_size") or 1.0)
+                boost = min(1.12, 1.02 + eff * 0.02) if eff else 1.04
                 out.append(_atom(f"dmids_{lid}", "L9", files[0].name, "dmids_structural_miner",
-                                 cond={"law_id": lid}, boost=1.03,
-                                 wr=float(law.get("support_pct") or 0), n=1))
+                                 cond={"law_id": lid, "title": (law.get("title") or "")[:60]},
+                                 boost=boost, wr=sup, n=int(law.get("n_samples") or 1)))
+        for law in down[:4]:
+            lid = str(law.get("id") or law.get("law_number") or "law")[:24]
+            out.append(_atom(f"dmids_penalize_{lid}", "L9", files[0].name, "dmids_structural_miner",
+                             cond={"law_id": lid, "bias": "DOWN"}, penalize=0.75, hard_neg=0,
+                             wr=float(law.get("support_pct") or 0), n=1))
+        bridge = _read_json("egx_rules_runtime.json")
+        if bridge and bridge.get("structural_laws"):
+            out.append(_atom("dmids_runtime_sync", "L9", "egx_rules_runtime.json", "dmids_structural_miner",
+                             cond={"n_runtime_laws": len(bridge["structural_laws"])}, boost=1.02))
     except Exception:
+        pass
+    return out
+
+
+def mine_egx_x_pro(db: sqlite3.Connection) -> list[dict]:
+    """EGX-X Pro liquidity/RS scores → discovery atoms."""
+    out = []
+    try:
+        row = db.execute("SELECT MAX(trade_date) AS d FROM egx_x_pro_daily").fetchone()
+        td = row[0] if row else None
+        if not td:
+            return out
+        top = db.execute(
+            """
+            SELECT symbol, x_score, stage, rs_market_score, liquidity_expansion_score, compression_score
+            FROM egx_x_pro_daily
+            WHERE trade_date=? AND x_score >= 70
+            ORDER BY x_score DESC LIMIT 8
+            """,
+            (td,),
+        ).fetchall()
+        if top:
+            out.append(_atom("xpro_high_score_gate", "L2", "egx_x_pro_daily", "egx_x_pro_miner",
+                             cond={"trade_date": td, "n_high": len(top)}, boost=1.06, n=len(top)))
+        for sym, xs, stage, rs_m, liq, comp in top:
+            out.append(_atom(f"xpro_{sym}", "L2", "egx_x_pro_daily", "egx_x_pro_miner",
+                             cond={"symbol": sym, "stage": stage}, boost=1.04,
+                             wr=float(xs or 0), n=1))
+            if liq and float(liq) >= 65:
+                out.append(_atom(f"xpro_liq_exp_{sym}", "L2", "egx_x_pro_daily", "egx_x_pro_miner",
+                                 cond={"symbol": sym, "liquidity_expansion": float(liq)}, boost=1.05))
+            if comp and float(comp) >= 60:
+                out.append(_atom(f"xpro_compress_{sym}", "L2", "egx_x_pro_daily", "egx_x_pro_miner",
+                                 cond={"symbol": sym, "compression": float(comp)}, boost=1.04))
+    except sqlite3.OperationalError:
         pass
     return out
 
@@ -985,6 +1216,7 @@ def run_all_miners() -> tuple[list[dict], dict]:
     atoms.extend(mine_sector_rotation(db))
     atoms.extend(mine_grid_winners(db))
     atoms.extend(mine_dmids_structural(db))
+    atoms.extend(mine_egx_x_pro(db))
     atoms.extend(mine_sandbox_hypotheses(db))
     atoms.extend(mine_pine_analytics(db))
     atoms.extend(mine_markov_regime(db))
@@ -999,6 +1231,11 @@ def run_all_miners() -> tuple[list[dict], dict]:
     atoms.extend(mine_law_competition(db))
     atoms.extend(mine_contagion(db))
     atoms.extend(mine_spectral(db))
+    atoms.extend(mine_institutional_retest(db))
+    atoms.extend(mine_volume_accumulation(db))
+    atoms.extend(mine_quality_universe_v3(db))
+    atoms.extend(mine_near_ath_300(db))
+    atoms.extend(mine_delivery_feedback(db))
     atoms.extend(mine_post_breakout_vol(db))
     atoms.extend(mine_cross_market(db))
     atoms.extend(mine_tsfresh_patterns(db))

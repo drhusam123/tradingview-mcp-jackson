@@ -62,6 +62,7 @@ const scripts = [
   'scripts/egx_prod_ready.mjs',
   'scripts/lib/pre_send_check.mjs',
   'scripts/lib/client_message_prep.mjs',
+  'scripts/lib/run_quant_discovery.mjs',
   'scripts/egx_client_message_audit.mjs',
   'scripts/egx_notify_backfill.mjs',
   'scripts/lib/delivery_audit.mjs',
@@ -150,6 +151,14 @@ const tgCron = existsSync(join(PROJECT_ROOT, 'scripts/egx_telegram_cron.mjs'))
   ? readFileSync(join(PROJECT_ROOT, 'scripts/egx_telegram_cron.mjs'), 'utf8')
   : '';
 ok('telegram cron prep flag', tgCron.includes('egx_telegram_daily.mjs --prep'));
+const tvAuto = existsSync(join(PROJECT_ROOT, 'scripts/egx_tv_auto_update.mjs'))
+  ? readFileSync(join(PROJECT_ROOT, 'scripts/egx_tv_auto_update.mjs'), 'utf8')
+  : '';
+ok('eod light fabric', tvAuto.includes('egx_discovery_fabric.mjs --light'));
+const reg = existsSync(join(PROJECT_ROOT, 'scripts/lib/discovery_engine_registry.mjs'))
+  ? readFileSync(join(PROJECT_ROOT, 'scripts/lib/discovery_engine_registry.mjs'), 'utf8')
+  : '';
+ok('registry causal+xpro', reg.includes('causal_discovery') && reg.includes('egx_x_pro'));
 ok('Recovery script', existsSync(join(PROJECT_ROOT, 'scripts/egx_notify_recovery.mjs')));
 ok('EGX_ALERT_TELEGRAM', process.env.EGX_ALERT_TELEGRAM !== '0', process.env.EGX_ALERT_TELEGRAM ?? 'default=1');
 ok('EGX_OPS_SUCCESS_ALERT', process.env.EGX_OPS_SUCCESS_ALERT !== '0', process.env.EGX_OPS_SUCCESS_ALERT ?? 'default=1');

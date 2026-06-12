@@ -133,6 +133,33 @@ export const DISCOVERY_ENGINES = {
     feeds: ['quant_rules', 'opportunity_v2', 'egx_ml_trainer'],
     triggers: ['DISCOVERY_QUALITY_LOW', 'INVESTIGATE_PATTERN', 'PROMOTION_GAP'],
   },
+  discovery_fabric_light: {
+    id: 'discovery_fabric_light',
+    layer: 'daily',
+    cadence_hours: 24,
+    npm: 'egx:discovery:fabric:light',
+    outputs: ['discovery_atom_registry', 'discovery_ml_manifest.json'],
+    feeds: ['opportunity_v2', 'quant_rules'],
+    notes: 'EOD merge+gate without hydrate — used by tv_auto_update',
+  },
+  causal_discovery: {
+    id: 'causal_discovery',
+    layer: 'weekly',
+    cadence_hours: 168,
+    npm: 'egx:causal78',
+    outputs: ['causal_discovery_last.json'],
+    feeds: ['discovery_fabric', 'quant_rules', 'opportunity_v2'],
+    triggers: ['DISCOVERY_QUALITY_LOW', 'INVESTIGATE_PATTERN'],
+  },
+  egx_x_pro: {
+    id: 'egx_x_pro',
+    layer: 'daily',
+    cadence_hours: 24,
+    npm: 'egx:xpro',
+    outputs: ['egx_x_pro_daily', 'egx_signal_tracker'],
+    feeds: ['opportunity_v2', 'discovery_fabric', 'ml_feature_bridge'],
+    triggers: ['MISSED_HIGH_OPP', 'TV_EDGE_GAP'],
+  },
 };
 
 const MANIFEST_PATH = join(PROJECT_ROOT, 'data/discovery_engine_manifest.json');

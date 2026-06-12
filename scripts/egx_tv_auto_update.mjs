@@ -431,14 +431,19 @@ async function main() {
   run(`${PYTHON3} scripts/python/signal_integration.py apply_arbitration_veto '${scoreParams}'`, 'Apply arbitration veto to final_signals');
   const tvMicroMode = tvReady ? '--local-fallback' : '--local-only';
   run(
-    `node scripts/tv_microstructure_engine.mjs ${tvMicroMode} --max-symbols 40`,
-    'TV microstructure → tv_discovery_features',
+    `node scripts/tv_microstructure_engine.mjs ${tvMicroMode} --wide --max-symbols 50 --date ${signalDate}`,
+    'TV microstructure → tv_discovery_features (wide universe)',
     { critical: false, timeoutMs: 900_000 },
   );
   run(
     `${PYTHON3} scripts/python/counterfactual_atom_miner.py`,
     'Counterfactual atom seeds (learning loop → opp boosts)',
     { critical: false },
+  );
+  run(
+    'node scripts/egx_discovery_fabric.mjs --light --no-ml-loop',
+    'Discovery fabric light (DMIDS bridge + merge + gate, EOD)',
+    { critical: false, timeoutMs: 600_000 },
   );
   run(
     `${PYTHON3} scripts/python/opportunity_score_v2.py run '${discoveryParamsJson}'`,

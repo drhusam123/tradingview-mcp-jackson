@@ -80,7 +80,7 @@ stage('counterfactual_atoms', () =>
 
 stage('discovery_fabric', () => {
   try {
-    execFileSync(NODE, [join(ROOT, 'scripts/egx_discovery_fabric.mjs')], {
+    execFileSync(NODE, [join(ROOT, 'scripts/egx_discovery_fabric.mjs'), '--light'], {
       cwd: ROOT,
       encoding: 'utf8',
       timeout: 900_000,

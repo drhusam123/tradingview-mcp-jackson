@@ -62,6 +62,7 @@ const requiredFiles = [
   'scripts/egx_architecture_audit.mjs',
   'scripts/lib/final_signals_query.mjs',
   'scripts/python/discovery_constants.py',
+  'scripts/lib/run_quant_discovery.mjs',
 ];
 
 for (const f of requiredFiles) {
@@ -92,9 +93,22 @@ ok('closed_loop_promo_audit', closed.includes('promotion_audit'));
 ok('closed_loop_cf_miner', closed.includes('counterfactual_atom_miner'));
 
 const tvAuto = readFileSync(join(PROJECT_ROOT, 'scripts/egx_tv_auto_update.mjs'), 'utf8');
+const tvMicro = readFileSync(join(PROJECT_ROOT, 'scripts/tv_microstructure_engine.mjs'), 'utf8');
+const minersPy = readFileSync(join(PROJECT_ROOT, 'scripts/python/discovery_domain_miners.py'), 'utf8');
+const registrySrc = readFileSync(join(PROJECT_ROOT, 'scripts/lib/discovery_engine_registry.mjs'), 'utf8');
 ok('daily_tv_micro', tvAuto.includes('tv_microstructure_engine'));
+ok('daily_tv_wide', tvAuto.includes('--wide') && tvMicro.includes('--wide'));
+ok('daily_fabric_light', tvAuto.includes('egx_discovery_fabric.mjs --light'));
+const cfIdx = tvAuto.indexOf('counterfactual_atom_miner');
+const fabIdx = tvAuto.indexOf('egx_discovery_fabric.mjs');
+ok('daily_cf_before_fabric', cfIdx >= 0 && fabIdx > cfIdx, `cf@${cfIdx} fab@${fabIdx}`);
 ok('daily_opp_v2', tvAuto.includes('opportunity_score_v2'));
 ok('daily_promotion', tvAuto.includes('client_signal_promotion'));
+ok('registry_causal_xpro', registrySrc.includes('causal_discovery') && registrySrc.includes('egx_x_pro'));
+ok('unified_quant_runner', fileExists('scripts/lib/run_quant_discovery.mjs'));
+ok('miners_institutional_retest', minersPy.includes('mine_institutional_retest'));
+ok('miners_volume_accumulation', minersPy.includes('mine_volume_accumulation'));
+ok('miners_quality_v3', minersPy.includes('mine_quality_universe_v3'));
 
 const post = readFileSync(join(PROJECT_ROOT, 'scripts/egx_post_session_ops.mjs'), 'utf8');
 ok('post_session_closed_loop', post.includes('egx_closed_loop'));
@@ -116,6 +130,9 @@ for (const a of artifacts) {
   const age = ageHours(a);
   ok(`fresh:${a.split('/').pop()}`, age != null && age <= MAX_AGE_H, age == null ? 'missing' : `${age}h`);
 }
+const causalAge = ageHours('data/causal_discovery_last.json');
+ok('fresh:causal_discovery_last.json', causalAge == null || causalAge <= MAX_AGE_H * 2,
+  causalAge == null ? 'optional-not-run-yet' : `${causalAge}h`);
 
 // DB sanity
 const signalDate = latestReadySignalDate();

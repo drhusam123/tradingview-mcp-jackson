@@ -163,7 +163,86 @@ if (registry.includes('DISCOVERY_ENGINES') && perpetual.includes('planDiscoveryR
   fail('perpetual_orchestrator', 'Perpetual discovery orchestrator missing');
 }
 
-// 17. Directive stats
+// 17. EOD light fabric in tv_auto_update
+if (tvAuto.includes('egx_discovery_fabric.mjs --light')) {
+  pass('eod_light_fabric', 'tv_auto_update runs light fabric before opportunity_score_v2');
+} else {
+  fail('eod_light_fabric', 'EOD pipeline missing light fabric before opp_v2');
+}
+
+// 18. TV micro wide universe
+if (tvMicro.includes('final_signals') && tvMicro.includes('--wide')) {
+  pass('tv_micro_wide_universe', 'TV micro scans actionable + volume leaders + wide mode');
+} else {
+  fail('tv_micro_wide_universe', 'TV micro still opp-only symbol selection');
+}
+
+// 19. Causal + X-Pro in engine registry
+if (registry.includes('causal_discovery') && registry.includes('egx_x_pro')) {
+  pass('registry_causal_xpro', 'causal_discovery + egx_x_pro registered');
+} else {
+  fail('registry_causal_xpro', 'causal or x_pro missing from DISCOVERY_ENGINES');
+}
+
+// 20. Unified quant runner
+if (existsSync(join(ROOT, 'scripts/lib/run_quant_discovery.mjs'))) {
+  pass('unified_quant_runner', 'run_quant_discovery.mjs SSOT for quant_discovery.py');
+} else {
+  fail('unified_quant_runner', 'run_quant_discovery.mjs missing');
+}
+
+// 21. DMIDS fabric bridge miners
+const minersPy = readText('scripts/python/discovery_domain_miners.py');
+if (minersPy.includes('mine_egx_x_pro') && minersPy.includes('causal_discovery_last.json')) {
+  pass('fabric_miners_extended', 'x_pro + causal JSON wired into domain miners');
+} else {
+  fail('fabric_miners_extended', 'domain miners missing x_pro/causal bridge');
+}
+
+// 22. JSON orphan order — counterfactual before fabric in EOD
+const cfIdx = tvAuto.indexOf('counterfactual_atom_miner');
+const fabIdx = tvAuto.indexOf('egx_discovery_fabric.mjs');
+if (cfIdx >= 0 && fabIdx > cfIdx) {
+  pass('json_orphan_order', 'counterfactual_atom_miner runs before discovery_fabric in EOD');
+} else {
+  fail('json_orphan_order', 'EOD must run counterfactual before fabric merge (F6)');
+}
+
+// 23. TRADING_LESSONS miners (F8 / Level A)
+if (
+  minersPy.includes('mine_institutional_retest')
+  && minersPy.includes('mine_volume_accumulation')
+  && minersPy.includes('mine_quality_universe_v3')
+) {
+  pass('trading_lessons_miners', 'institutional retest + vol accumulation + quality v3 miners');
+} else {
+  fail('trading_lessons_miners', 'Missing A1/A2/A3 domain miners');
+}
+
+// 24. DMIDS fabric bridge
+const fabricJs = readText('scripts/egx_discovery_fabric.mjs');
+if (fabricJs.includes('mergeStructuralLawsIntoRuntime') && minersPy.includes('mine_dmids_structural')) {
+  pass('dmids_fabric_bridge', 'DMIDS structural laws merged into fabric runtime');
+} else {
+  fail('dmids_fabric_bridge', 'DMIDS ↔ fabric bridge incomplete (F2)');
+}
+
+// 25. L11 documented
+const layerDoc = readText('docs/LAYER_REGISTRY.md');
+if (layerDoc.includes('| L11') || layerDoc.includes('L11')) {
+  pass('layer_registry_l11', 'LAYER_REGISTRY documents Discovery Fabric L11');
+} else {
+  fail('layer_registry_l11', 'LAYER_REGISTRY missing L11 (F10)');
+}
+
+// 26. Near-ATH + delivery feedback miners
+if (minersPy.includes('mine_near_ath_300') && minersPy.includes('mine_delivery_feedback')) {
+  pass('context_miners_b2_b4', 'near_ath_300 + delivery_feedback miners wired');
+} else {
+  fail('context_miners_b2_b4', 'Missing B2/B4 miners');
+}
+
+// 27. Directive stats
 const dirs = countDirectiveStats();
 pass('directive_stats', `pending=${dirs.pending} completed=${dirs.completed}`);
 

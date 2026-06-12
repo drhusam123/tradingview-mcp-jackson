@@ -17,6 +17,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { execFileSync } from 'child_process';
 import { buildDiscoveryParams, discoveryContextSummary } from './lib/discovery_context.mjs';
+import { runQuantDiscovery } from './lib/run_quant_discovery.mjs';
 import { resolveDiscoveryDirectives } from './lib/directive_resolver.mjs';
 import { mergeStructuralLawsIntoRuntime } from './lib/structural_laws_bridge.mjs';
 import { runDiscoveryQualityLoop } from './lib/discovery_quality_loop.mjs';
@@ -25,7 +26,6 @@ import { parsePythonJson } from './lib/parse_python_json.mjs';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DATA_DIR  = join(__dirname, '../data');
 const LOG_FILE  = join(DATA_DIR, 'discovery_log.json');
-const QUANT_SCRIPT = join(__dirname, 'python', 'quant_discovery.py');
 const OPP_SCRIPT   = join(__dirname, 'python', 'opportunity_score_v2.py');
 
 const NOTIFY = process.argv.includes('--notify');
@@ -82,13 +82,8 @@ if (p6?.p6_gate && !p6.p6_gate.gate_pass) {
 let quant = null;
 if (!QUICK) {
   wl('  🧪 Quant discovery — mining OOS entry rules...');
-  const quantParams = JSON.stringify(discoveryParams);
   try {
-    quant = JSON.parse(execFileSync(PYTHON3, [QUANT_SCRIPT, 'run', quantParams], {
-      cwd: join(__dirname, '..'),
-      encoding: 'utf8',
-      timeout: 1000 * 60 * 20,
-    }));
+    quant = runQuantDiscovery({ signalDate: discoveryParams.signal_date, includeDirectives: true }).result;
     if (quant?.success) {
       const fb = quant.feedback_applied?.n_items ?? 0;
       wl(`  ✅ Quant rules: ${quant.rules_kept}/${quant.rules_tested} kept | baseline=${(quant.baseline_precision * 100).toFixed(1)}% | feedback=${fb}`);

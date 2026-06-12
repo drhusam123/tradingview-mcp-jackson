@@ -15,14 +15,19 @@ Client-facing output must flow through `final_signals.actionable=1` only.
 | ML predictions | L4 | `explosion_predictions`, `feature_store` | `egx_explosion_ml.mjs`, `egx_ml_trainer.py` `predict_ensemble` | `signal_integration.py` UES |
 | Product gate | L5 | `final_signals` | `signal_integration.py` `write_final_signal` | Telegram, alerts, cards, `egx_client_report.py` |
 | Arbitration | L6 | `arbitration_decisions` | `cognitive_arbitration.py` | `apply_arbitration_veto` → updates L5 |
-| Opportunity rank | L7 | `opportunity_score_v2` | `opportunity_score_v2.py` | Research, Telegram enrichment |
+| Opportunity rank | L7 | `opportunity_score_v2`, `quant_discovery_rules` | `opportunity_score_v2.py`, `quant_discovery.py` | UES, promotion, research |
 | Outcomes / WR | L8 | `recommendation_outcomes`, `forward_test_predictions`, `bayesian_wr` | `track_outcomes`, `egx_outcome_tracker.py`, `phase46` | `egx_status.mjs`, drift monitors |
-| Alpha research | L9 | `grid_runs`, `alpha_rankings`, `evolved_hypotheses` | `research_director.py`, `night_lab.py` | UES modifiers, weekly research |
-| Delivery | L10 | `telegram_cards_log` | `egx_telegram_daily.mjs` | Client Telegram only |
+| Alpha research | L9 | `grid_runs`, `alpha_rankings`, `evolved_hypotheses`, `structural_laws_*` | `research_director.py`, `night_lab.py`, `egx_discover.mjs` | UES modifiers, fabric miners |
+| Delivery | L10 | `notification_delivery_audit` | `egx_telegram_cron.mjs` | Client Telegram only |
+| Discovery fabric | L11 | `discovery_atom_registry`, `discovery_fabric_runs` | `egx_discovery_fabric.mjs`, `discovery_domain_miners.py` | `opportunity_score_v2`, `quant_discovery` manifest |
 
 ## Canonical daily orchestrator
 
 **Production:** `scripts/egx_tv_auto_update.mjs` (`npm run egx:daily`)
+
+**Discovery refresh (post-loop):** `egx_discovery_refresh.mjs` — TV micro → fabric light → opp_v2 → promotion
+
+**DMIDS → Fabric:** `structural_laws_bridge.mjs` + `mine_dmids_structural()` unify DMIDS laws into L11 atoms
 
 **Compat wrapper:** `scripts/run_daily.mjs` (delegates unless `--legacy`)
 

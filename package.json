@@ -51,6 +51,7 @@
     "egx:discovery:regime:sweep": "node scripts/egx_regime_conditional_sweep.mjs",
     "egx:discovery:hypothesis:bridge": "node scripts/egx_hypothesis_sandbox_bridge.mjs",
     "egx:discovery:fabric": "node scripts/egx_discovery_fabric.mjs",
+    "egx:discovery:fabric:light": "node scripts/egx_discovery_fabric.mjs --light --no-ml-loop",
     "egx:discovery:automate": "node scripts/egx_discovery_automate.mjs",
     "egx:e2e:complete": "node scripts/egx_e2e_complete.mjs",
     "egx:gap:repair": "node scripts/egx_gap_repair.mjs",

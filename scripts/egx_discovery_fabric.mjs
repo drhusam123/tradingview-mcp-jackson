@@ -11,6 +11,7 @@ import { writeFileSync, mkdirSync, readFileSync, existsSync } from 'fs';
 import { createHash } from 'crypto';
 import { loadEnv, PROJECT_ROOT } from './lib/load_env.mjs';
 import { parsePythonJson } from './lib/parse_python_json.mjs';
+import { mergeStructuralLawsIntoRuntime } from './lib/structural_laws_bridge.mjs';
 
 loadEnv();
 
@@ -18,7 +19,8 @@ const PYTHON3 = process.env.PYTHON_BIN || process.env.PYTHON3 || 'python3';
 const AS_JSON = process.argv.includes('--json');
 const MERGE_ONLY = process.argv.includes('--merge-only');
 const GATE_ONLY = process.argv.includes('--gate-only');
-const NO_ML_LOOP = process.argv.includes('--no-ml-loop');
+const LIGHT = process.argv.includes('--light');
+const NO_ML_LOOP = process.argv.includes('--no-ml-loop') || LIGHT;
 
 const PY = (script, args = '{}') => {
   const out = execFileSync(PYTHON3, [join(PROJECT_ROOT, script), args], {
@@ -43,7 +45,7 @@ function stage(name, fn) {
   }
 }
 
-console.log('\n═══ Discovery Fabric (L11) ═══\n');
+console.log(`\n═══ Discovery Fabric (L11)${LIGHT ? ' [light]' : ''} ═══\n`);
 
 const manifestPath = join(PROJECT_ROOT, 'data/discovery_ml_manifest.json');
 const manifestHashBefore = existsSync(manifestPath)
@@ -51,10 +53,13 @@ const manifestHashBefore = existsSync(manifestPath)
   : null;
 
 if (!GATE_ONLY) {
-  const hydrateParams = process.env.EGX_DISCOVERY_FETCH_L0 === '1'
-    ? '{}'
-    : '{"skip_fetch":true}';
-  stage('data_hydrate', () => PY('scripts/python/discovery_data_hydrate.py', hydrateParams));
+  stage('dmids_runtime_bridge', () => mergeStructuralLawsIntoRuntime({ minSupportPct: 28 }));
+  if (!LIGHT) {
+    const hydrateParams = process.env.EGX_DISCOVERY_FETCH_L0 === '1'
+      ? '{}'
+      : '{"skip_fetch":true}';
+    stage('data_hydrate', () => PY('scripts/python/discovery_data_hydrate.py', hydrateParams));
+  }
   const merge = stage('fabric_merge', () => PY('scripts/python/discovery_fabric_merge.py'));
   console.log(`  ✅ Merge: ${merge.n_proposed} atoms | ${merge.miners_run} miners`);
 }
