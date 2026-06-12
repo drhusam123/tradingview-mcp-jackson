@@ -53,6 +53,20 @@ run('pillow_check', () => {
   }
 }, { optional: true });
 
+run('parquet_deps', () => {
+  try {
+    execSync(`${PYTHON} -c "import duckdb, pyarrow; print('ok')"`, {
+      cwd: PROJECT_ROOT, encoding: 'utf8', stdio: 'pipe',
+    });
+    return { ok: true };
+  } catch {
+    execSync(`${PYTHON} -m pip install duckdb pyarrow -q`, {
+      cwd: PROJECT_ROOT, stdio: 'inherit', timeout: 180_000,
+    });
+    return { installed: true };
+  }
+}, { optional: true });
+
 if (!SKIP_PINE) {
   run('pine_analytics', () => {
     execSync(`${NODE} scripts/fetch_pine_analytics.mjs session`, {

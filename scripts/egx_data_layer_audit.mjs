@@ -62,9 +62,9 @@ function runAudit() {
   const intra15 = db.prepare('SELECT COUNT(*) n, COUNT(DISTINCT symbol) sym FROM ohlcv_15min').get();
   db.close();
 
-  ok('l0_intraday_60min', (intra60?.n ?? 0) > 0 || (intra60?.sym ?? 0) === 0,
-    `bars=${intra60?.n ?? 0} symbols=${intra60?.sym ?? 0} (optional — run egx:intraday:fetch)`);
-  ok('l0_intraday_15min', (intra15?.n ?? 0) > 0 || (intra15?.sym ?? 0) === 0,
+  ok('l0_intraday_60min', (intra60?.sym ?? 0) >= 20,
+    `bars=${intra60?.n ?? 0} symbols=${intra60?.sym ?? 0} (core target ≥20)`);
+  ok('l0_intraday_15min', (intra15?.sym ?? 0) >= 20,
     `bars=${intra15?.n ?? 0} symbols=${intra15?.sym ?? 0}`);
 
   if (signalDate) {
