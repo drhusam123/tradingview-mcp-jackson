@@ -159,6 +159,27 @@ function recordStep({ label, cmd, status, durationSec = 0, error = null, started
   }
 }
 
+function pauseSec(sec) {
+  try { execSync(`sleep ${Math.max(1, sec)}`, { stdio: 'ignore' }); } catch { /* */ }
+}
+
+function runScoreAll(py, signalDate, { critical = true } = {}) {
+  const scoreParams = JSON.stringify({ date: signalDate });
+  const cmd = `${py} scripts/python/signal_integration.py score_all '${scoreParams}'`;
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    const r = run(cmd, `Final signal scoring${attempt > 1 ? ` (retry ${attempt})` : ''}`, {
+      critical: critical && attempt === 4,
+      timeoutMs: 600_000,
+    });
+    if (r?.success) return true;
+    if (attempt < 4) {
+      log(`score_all upstream not ready — wait 30s (${attempt}/4)`);
+      pauseSec(30);
+    }
+  }
+  return false;
+}
+
 function run(cmd, label, { critical = false, timeoutMs = 1000 * 60 * 90 } = {}) {
   STEP_NO += 1;
   const startedAt = new Date().toISOString();
@@ -405,7 +426,7 @@ async function main() {
   const scoreParams = JSON.stringify({ date: signalDate });
   const discoveryParamsJson = JSON.stringify(discoveryCtx.params);
   const promotionParams = JSON.stringify({ date: signalDate, ...discoveryCtx.params });
-  run(`${PYTHON3} scripts/python/signal_integration.py score_all '${scoreParams}'`, 'Final signal scoring', { critical: true });
+  runScoreAll(PYTHON3, signalDate, { critical: true });
   run(`${PYTHON3} scripts/python/cognitive_arbitration.py arbitrate_all '{}'`, 'Cognitive arbitration (Phase 34)');
   run(`${PYTHON3} scripts/python/signal_integration.py apply_arbitration_veto '${scoreParams}'`, 'Apply arbitration veto to final_signals');
   const tvMicroMode = tvReady ? '--local-fallback' : '--local-only';

@@ -42,7 +42,7 @@ Cron wrapper: `egx_telegram_cron.mjs` = prepare-send → live → reconcile → 
 
 | Command | Purpose |
 |---------|---------|
-| `egx:ml:boost` | Full ensemble → mladv → phase50 → score → diagnose |
+| `egx:ml:boost` | Full ensemble (date-aware, 30m) → mladv → phase50 → score (retry) → diagnose |
 | `egx:ml:refresh` | Fast re-score (`--skip-ensemble`) — runs in post-session |
 | `egx:gate:simulate` | Gate blocker histogram + actionable breakdown |
 | `egx:ml:gate:verify` | Wiring verify (local, includes crontab) |

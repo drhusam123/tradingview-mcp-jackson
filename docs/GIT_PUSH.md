@@ -43,7 +43,7 @@ npm run egx:runbook:next
 
 | المرحلة | الأمر / Cron | ماذا يفعل |
 |---------|--------------|-----------|
-| **EOD** | `egx:tv:auto` — `14:30 UTC` | OHLCV + `predict_ensemble` + mladv + `score_all` + arbitration + funnel |
+| **EOD** | `egx:tv:auto` — `14:30 UTC` | OHLCV + `predict_ensemble` (date-aware) + `phase50` + mladv + `score_all` (retry) + arbitration + funnel |
 | **Funnel** | `egx:signals:diagnose` — `15:05 UTC` | تفصيل QG / FINAL_EDGE / actionable |
 | **Telegram** | `egx:telegram:cron` — `15:20 UTC` | إرسال الإشارات |
 | **Post-session** | `egx:post:session` — `15:45 UTC` | reconcile → outcome → **ml_refresh** → closed_loop → verify |
@@ -51,9 +51,10 @@ npm run egx:runbook:next
 | **Session ready** | `egx:session:ready` — `05:10 UTC` | upstream + cron health |
 
 ```bash
-npm run egx:ml:boost              # ensemble كامل + score + diagnose
+npm run egx:ml:boost              # ensemble كامل + score + diagnose (~20min)
 npm run egx:ml:refresh            # إعادة score سريعة (--skip-ensemble)
 npm run egx:gate:simulate         # محاكاة قرارات البوابات
+npm run egx:pre:session:today     # pre-session ليوم اليوم (بدون --next)
 npm run egx:ml:gate:verify        # تحقق wiring (scripts + cron + tests)
 npm run egx:automation:verify     # تحقق أتمتة الإنتاج الكاملة
 ```

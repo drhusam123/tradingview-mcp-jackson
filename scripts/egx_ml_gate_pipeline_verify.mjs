@@ -30,6 +30,7 @@ const requiredFiles = [
   'tests/gate_ml_threshold.test.py',
   'tests/final_edge_relaxations.test.py',
   'tests/explosion_score_date.test.py',
+  'tests/predict_ensemble_date.test.py',
 ];
 for (const f of requiredFiles) ok(`file ${f}`, existsSync(join(PROJECT_ROOT, f)));
 
@@ -38,6 +39,7 @@ ok('npm egx:ml:refresh', scripts['egx:ml:refresh']?.includes('--skip-ensemble'))
 ok('npm egx:post:session → post_session_ops', scripts['egx:post:session']?.includes('egx_post_session_ops.mjs'));
 ok('npm egx:post-session alias', scripts['egx:post-session']?.includes('egx_post_session_ops.mjs'));
 ok('npm egx:pre:session', scripts['egx:pre:session']?.includes('egx_pre_session.mjs'));
+ok('npm egx:pre:session:today', scripts['egx:pre:session:today']?.includes('egx_pre_session.mjs'));
 ok('npm egx:signals:diagnose', scripts['egx:signals:diagnose']?.includes('egx_signal_funnel.mjs'));
 ok('npm egx:gate:simulate', scripts['egx:gate:simulate']?.includes('gate_actionable_simulate.py'));
 
@@ -47,6 +49,9 @@ ok('tv:auto → score_all', tvAuto.includes('score_all'));
 ok('tv:auto → apply_arbitration_veto', tvAuto.includes('apply_arbitration_veto'));
 ok('tv:auto → signals diagnose', tvAuto.includes('egx_signal_funnel.mjs'));
 ok('tv:auto → phase50', tvAuto.includes('phase50'));
+ok('tv:auto → ensemble date param', tvAuto.includes('predict_ensemble') && tvAuto.includes('date: signalDate'));
+ok('tv:auto → ensemble 30m timeout', tvAuto.includes('1_800_000'));
+ok('tv:auto → score_all retry', tvAuto.includes('runScoreAll'));
 
 const postOps = readFileSync(join(PROJECT_ROOT, 'scripts/egx_post_session_ops.mjs'), 'utf8');
 ok('post_session → ml refresh', postOps.includes('egx_ml_boost.mjs'));
@@ -73,7 +78,7 @@ if (!CI) {
 }
 
 const PY = process.env.PYTHON_BIN || process.env.PYTHON3 || 'python3';
-for (const t of ['gate_ml_threshold.test.py', 'explosion_score_date.test.py', 'final_edge_relaxations.test.py']) {
+for (const t of ['gate_ml_threshold.test.py', 'explosion_score_date.test.py', 'final_edge_relaxations.test.py', 'predict_ensemble_date.test.py']) {
   try {
     execSync(`${PY} tests/${t}`, { cwd: PROJECT_ROOT, stdio: 'pipe', timeout: 30_000, env: { ...process.env, PYTHONPATH: 'scripts/python' } });
     ok(`python test ${t}`, true);
