@@ -53,6 +53,8 @@ if (!SKIP_AUTOMATE) {
 run('closed_loop', `"${NODE}" scripts/egx_closed_loop.mjs`, { timeout: 600_000 });
 run('learning_loop', `"${NODE}" scripts/egx_learning_loop.mjs`, { timeout: 300_000, optional: true });
 run('loop_audit', `"${NODE}" scripts/egx_loop_audit.mjs`, { timeout: 120_000 });
+run('data_layer_audit', `"${NODE}" scripts/egx_data_layer_audit.mjs`, { timeout: 60_000 });
+run('architecture_audit', `"${NODE}" scripts/egx_architecture_audit.mjs`, { timeout: 60_000 });
 run('offline_tests', 'npm test', { timeout: 180_000 });
 
 if (!SKIP_CDP) {
