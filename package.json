@@ -113,6 +113,7 @@
     "egx:gate:doctor:score-shadow": "/usr/bin/python3 scripts/python/risk_level_validator.py audit_score_shadow",
     "egx:gate:doctor:shadow-outcome": "/usr/bin/python3 scripts/python/risk_level_validator.py audit_shadow_outcome",
     "egx:funnel": "node scripts/egx_signal_funnel.mjs",
+    "egx:signals:diagnose": "node scripts/egx_signal_funnel.mjs",
     "egx:promote": "python3 scripts/python/client_signal_promotion.py",
     "egx:train:full": "node scripts/egx_full_train.mjs",
     "egx:train:full:quick": "node scripts/egx_full_train.mjs --quick",

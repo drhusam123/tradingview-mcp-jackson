@@ -28,6 +28,14 @@ npm run egx:data:audit
 npm run egx:exclusions:report
 npm run egx:parquet:export
 npm run egx:ops                 # Freshness KPIs
+npm run egx:signals:diagnose    # لماذا 0 actionable؟ (gate funnel)
+```
+
+## قبل الجلسة القادمة
+
+```bash
+npm run egx:session:next
+npm run egx:runbook:next
 ```
 
 ## Cron

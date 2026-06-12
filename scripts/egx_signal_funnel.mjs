@@ -12,12 +12,15 @@
 import Database from 'better-sqlite3';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { writeFileSync, mkdirSync } from 'fs';
 import { latestFinalSignalDate } from './lib/final_signals_query.mjs';
+import { PROJECT_ROOT } from './lib/load_env.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DB = join(__dirname, '../data/egx_trading.db');
 
 const dateArg = process.argv.find((a, i) => process.argv[i - 1] === '--date');
+const AS_JSON = process.argv.includes('--json');
 
 function section(title) {
   console.log(`\n${'═'.repeat(60)}\n  ${title}\n${'═'.repeat(60)}`);
@@ -56,6 +59,26 @@ const vetoes = db.prepare(`
 `).all(tradeDate);
 for (const v of vetoes) {
   console.log(`  ${String(v.n).padStart(4)}  ${v.reason?.slice(0, 50).padEnd(50)}  UES≤${v.top_ues} ML≤${v.top_ml}`);
+}
+
+let gateBlockers = [];
+try {
+  gateBlockers = db.prepare(`
+    SELECT first_blocking_gate gate, COUNT(*) n,
+           ROUND(AVG(ues),1) avg_ues, ROUND(AVG(ml_score),1) avg_ml
+    FROM gate_audit_snapshots
+    WHERE signal_date=? AND COALESCE(actionable,0)=0
+    GROUP BY first_blocking_gate
+    ORDER BY n DESC LIMIT 20
+  `).all(tradeDate);
+  section('First Blocking Gate (gate_audit_snapshots)');
+  if (!gateBlockers.length) console.log('  (no gate_audit rows)');
+  for (const g of gateBlockers) {
+    console.log(`  ${String(g.n).padStart(4)}  ${(g.gate || 'unknown').padEnd(45)}  avg UES=${g.avg_ues} ML=${g.avg_ml}`);
+  }
+} catch {
+  section('First Blocking Gate');
+  console.log('  (gate_audit_snapshots unavailable)');
 }
 
 section('Near-Misses (UES≥70, blocked)');
@@ -100,5 +123,18 @@ if (!act.length) console.log('  (none)');
 for (const r of act) {
   console.log(`  ${r.symbol.padEnd(6)} UES=${r.score} ML=${r.source_ml} scan=${r.source_rules} R:R=${r.r_ratio}`);
 }
+
+const report = {
+  at: new Date().toISOString(),
+  trade_date: tradeDate,
+  totals,
+  vetoes,
+  gate_blockers: gateBlockers,
+  near_misses: near,
+  actionable: act,
+};
+mkdirSync(join(PROJECT_ROOT, 'data'), { recursive: true });
+writeFileSync(join(PROJECT_ROOT, 'data/signal_funnel_last.json'), JSON.stringify(report, null, 2));
+if (AS_JSON) console.log(JSON.stringify(report, null, 2));
 
 db.close();
