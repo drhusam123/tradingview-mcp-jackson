@@ -160,6 +160,15 @@ export const DISCOVERY_ENGINES = {
     feeds: ['opportunity_v2', 'discovery_fabric', 'ml_feature_bridge'],
     triggers: ['MISSED_HIGH_OPP', 'TV_EDGE_GAP'],
   },
+  egx_market_discovery: {
+    id: 'egx_market_discovery',
+    layer: 'daily',
+    cadence_hours: 24,
+    npm: 'egx:mde',
+    outputs: ['egx_market_discovery_daily', 'mde_shadow_last.json'],
+    feeds: [],
+    notes: 'Phase 1 shadow — discovery brain + scoring + setups; no opp/promotion/UES',
+  },
 };
 
 const MANIFEST_PATH = join(PROJECT_ROOT, 'data/discovery_engine_manifest.json');

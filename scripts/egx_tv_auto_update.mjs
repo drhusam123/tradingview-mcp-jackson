@@ -435,6 +435,13 @@ async function main() {
     'TV microstructure → tv_discovery_features (wide universe)',
     { critical: false, timeoutMs: 900_000 },
   );
+  if (process.env.EGX_MDE_ENABLED !== '0') {
+    run(
+      `${PYTHON3} scripts/python/egx_market_discovery_engine.py run '${JSON.stringify({ trade_date: signalDate })}'`,
+      'MDE shadow — discovery brain + scoring + setups (no client path)',
+      { critical: false, timeoutMs: 600_000 },
+    );
+  }
   run(
     `${PYTHON3} scripts/python/counterfactual_atom_miner.py`,
     'Counterfactual atom seeds (learning loop → opp boosts)',

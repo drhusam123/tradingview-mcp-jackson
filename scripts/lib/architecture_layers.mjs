@@ -26,7 +26,7 @@ export const LAYER_GRAPH = [
     anchors: ['pine_analytics', 'tv_discovery_features', 'closing_pressure_daily', 'market_breadth_enhanced'],
     upstream: ['L0', 'L1'],
     downstream: ['L4', 'L7', 'L11'],
-    producers: ['fetch_pine_analytics', 'tv_microstructure_engine', 'egx_x_pro_engine', 'egx_cross_market'],
+    producers: ['fetch_pine_analytics', 'tv_microstructure_engine', 'egx_x_pro_engine', 'egx_market_discovery_engine', 'egx_cross_market'],
   },
   {
     id: 'L3',
