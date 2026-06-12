@@ -37,6 +37,7 @@ console.log('\n═══ EGX Production Ready (full gate) ═══');
 console.log(`Cairo: ${cairoDateParts().date}`);
 
 if (!run('Automation verify', `"${NODE}" scripts/egx_automation_verify.mjs`)) process.exit(1);
+if (!run('ML+Gate pipeline verify', `"${NODE}" scripts/egx_ml_gate_pipeline_verify.mjs --ci`)) process.exit(1);
 if (!run('Session ready (today)', `"${NODE}" scripts/egx_session_ready.mjs --skip-verify-check`)) process.exit(1);
 run('Session ready (next)', `"${NODE}" scripts/egx_session_ready.mjs --next --skip-verify-check`, { optional: true });
 run('Cron log check', `"${NODE}" scripts/egx_cron_log_check.mjs --hours 48`, { optional: true });

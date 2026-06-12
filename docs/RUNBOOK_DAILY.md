@@ -72,7 +72,15 @@ npm run egx:ops:digest          # delivery reconcile summary
 npm run egx:cron:log-check      # scan logs for failures (48h)
 ```
 
-Cron chain (Cairo, Sun–Thu): verify 05:15 → status 07:00 → session ready 07:10 → log scan 07:15 → TV sync 16:30 → Telegram 17:20 → post-session 17:45.
+Cron chain (Cairo, Sun–Thu): verify 05:15 → status 07:00 → session ready 07:10 → log scan 07:15 → **pre-session 07:25** → TV sync 16:30 → funnel 17:05 → Telegram 17:20 → post-session 17:45 (ml_refresh + closed_loop).
+
+```bash
+npm run egx:ml:boost              # full ensemble + score (manual / after EOD)
+npm run egx:ml:refresh            # fast re-score (also in post-session cron)
+npm run egx:gate:simulate         # gate blocker breakdown
+npm run egx:ml:gate:verify        # automation wiring check
+npm run egx:pre:session           # pre-session bundle (next day)
+```
 
 Ops alerts: failures (`EGX_ALERT_TELEGRAM=1`) + success digest after send (`EGX_OPS_SUCCESS_ALERT=1`).
 

@@ -154,7 +154,9 @@ async function status() {
   }
   console.log('  npm run egx:notify:reconcile   — فجوات التسليم actionable vs audit');
   console.log('  npm run egx:notify:recovery    — استعادة الإرسالات المعلقة');
-  console.log('  npm run egx:post-session       — reconcile + verify بعد الجلسة');
+  console.log('  npm run egx:post:session       — reconcile + ml_refresh + closed_loop بعد الجلسة');
+  console.log('  npm run egx:pre:session        — audit + funnel + gate_simulate قبل الجلسة');
+  console.log('  npm run egx:ml:gate:verify       — تحقق أتمتة ML+Gates');
   console.log('  npm run egx:alert:test         — اختبار تنبيهات الأعطال');
   console.log('  npm run egx:session:ready      — جاهزية الجلسة (upstream+cron)');
   console.log('  npm run egx:session:next       — جاهزية الجلسة القادمة');

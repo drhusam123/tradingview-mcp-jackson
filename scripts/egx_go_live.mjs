@@ -77,7 +77,7 @@ const p6Plan = {
     'npm run egx:tv:auto (or wait cron 16:30)',
     'npm run egx:prod:prepare-send',
     'npm run egx:telegram:cron (live — no --dry-run)',
-    'npm run egx:post:session (reconcile + closed_loop + p6_sync:light)',
+    'npm run egx:post:session (reconcile + ml_refresh + closed_loop + verify)',
   ],
   note: 'P6 delivered gate counts ULTRA_CONVICTION with client_delivered=1 and outcome_filled≥5. HIGH-only days do not advance delivered P6.',
 };
@@ -132,7 +132,10 @@ if (!SKIP_CRON) {
     const markers = [
       'EGX-TELEGRAM-DAILY',
       'EGX-POST-SESSION-DAILY',
+      'EGX-PRE-SESSION-DAILY',
       'EGX-DAILY-AUTOMATION',
+      'EGX-FUNNEL-DAILY',
+      'EGX-FULL-VERIFY-DAILY',
       'EGX-LEARNING-LOOP-WEEKLY',
       'EGX-DISCOVERY-FABRIC-D',
       'EGX-TV-MICRO-D',

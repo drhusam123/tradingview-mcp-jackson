@@ -10,6 +10,9 @@ import { execSync } from 'child_process';
 import { writeFileSync, mkdirSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { loadEnv, PROJECT_ROOT } from './lib/load_env.mjs';
+import { cairoDateParts, nextTradingDay } from './lib/egx_calendar.mjs';
+import { latestOhlcvDate } from './lib/delivery_audit.mjs';
+import { alertNotification } from './lib/notification_alert.mjs';
 
 loadEnv();
 
@@ -41,9 +44,17 @@ const hardOk = [
   run('session_ready', `"${NODE}" scripts/egx_session_ready.mjs${nextFlag}`, { timeout: 120_000 }),
 ].every(Boolean);
 
+const PYTHON = process.env.PYTHON_BIN || process.env.PYTHON3 || 'python3';
+const cairo = cairoDateParts();
+const gateSimDate = latestOhlcvDate() || (useNext ? nextTradingDay(cairo.date).next_trading_day : cairo.date);
+
 run('architecture_audit', `"${NODE}" scripts/egx_architecture_audit.mjs`, { optional: true });
 run('signals_diagnose', `"${NODE}" scripts/egx_signal_funnel.mjs`, { optional: true });
-run('gate_simulate', 'python3 scripts/python/gate_actionable_simulate.py simulate', { optional: true });
+run(
+  'gate_simulate',
+  `"${PYTHON}" scripts/python/gate_actionable_simulate.py simulate '{"date":"${gateSimDate}"}'`,
+  { optional: true },
+);
 run('verify_fast', 'npm run egx:verify:fast', { optional: true, timeout: 300_000 });
 run('runbook', `"${NODE}" scripts/egx_runbook.mjs${useNext ? ' --next' : ''}`, { optional: true });
 
@@ -68,4 +79,11 @@ writeFileSync(join(PROJECT_ROOT, 'data/pre_session_last.json'), JSON.stringify(r
 
 const fail = steps.filter(s => !s.ok && !s.optional).length;
 console.log(`\n═══ Pre-Session: ${steps.length - fail}/${steps.length} OK | L0 hard gate: ${hardOk ? 'PASS' : 'FAIL'} ═══\n`);
+if (!hardOk) {
+  alertNotification('PRE_SESSION_FAIL', {
+    next_mode: useNext,
+    gate_date: gateSimDate,
+    failed: steps.filter(s => !s.ok && !s.optional).map(s => s.name),
+  });
+}
 process.exit(hardOk ? 0 : 1);

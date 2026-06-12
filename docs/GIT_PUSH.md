@@ -34,15 +34,34 @@ npm run egx:signals:diagnose    # لماذا 0 actionable؟ (gate funnel)
 ## قبل الجلسة القادمة
 
 ```bash
-npm run egx:pre:session        # audit + session + funnel + verify (موصى به)
+npm run egx:pre:session        # audit + funnel + gate_simulate + verify
 npm run egx:session:next
 npm run egx:runbook:next
+```
+
+## ML + Gates + Actionable (أتمتة كاملة)
+
+| المرحلة | الأمر / Cron | ماذا يفعل |
+|---------|--------------|-----------|
+| **EOD** | `egx:tv:auto` — `14:30 UTC` | OHLCV + `predict_ensemble` + mladv + `score_all` + arbitration + funnel |
+| **Funnel** | `egx:signals:diagnose` — `15:05 UTC` | تفصيل QG / FINAL_EDGE / actionable |
+| **Telegram** | `egx:telegram:cron` — `15:20 UTC` | إرسال الإشارات |
+| **Post-session** | `egx:post:session` — `15:45 UTC` | reconcile → outcome → **ml_refresh** → closed_loop → verify |
+| **Pre-session** | `egx:pre:session --next` — `05:25 UTC` | جاهزية الجلسة القادمة + gate_simulate |
+| **Session ready** | `egx:session:ready` — `05:10 UTC` | upstream + cron health |
+
+```bash
+npm run egx:ml:boost              # ensemble كامل + score + diagnose
+npm run egx:ml:refresh            # إعادة score سريعة (--skip-ensemble)
+npm run egx:gate:simulate         # محاكاة قرارات البوابات
+npm run egx:ml:gate:verify        # تحقق wiring (scripts + cron + tests)
+npm run egx:automation:verify     # تحقق أتمتة الإنتاج الكاملة
 ```
 
 ## Cron
 
 ```bash
-npm run egx:cron:install        # تثبيت/تحديث 75+ مهمة
+npm run egx:cron:install        # تثبيت/تحديث 75+ مهمة (يشمل PRE-SESSION)
 npm run egx:cron:dedupe         # إزالة تكرارات EGX-*
 npm run egx:cron:show
 ```

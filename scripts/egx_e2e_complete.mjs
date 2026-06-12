@@ -64,6 +64,7 @@ if (!SKIP_CDP) {
 }
 
 run('automation_verify', `"${NODE}" scripts/egx_automation_verify.mjs`, { timeout: 120_000 });
+run('ml_gate_verify', `"${NODE}" scripts/egx_ml_gate_pipeline_verify.mjs --ci`, { timeout: 120_000 });
 run('production_acceptance', `"${NODE}" scripts/egx_production_acceptance.mjs`, { timeout: 300_000 });
 
 if (!SKIP_GO_LIVE) {

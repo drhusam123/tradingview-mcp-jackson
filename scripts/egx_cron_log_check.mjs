@@ -39,7 +39,12 @@ const issues = [
   ...scan('tv_sync', 'logs/tv_auto_daily.log', l =>
     /\[tv-auto\] fatal:/.test(l)),
   ...scan('post_session', 'logs/post_session.log', l =>
-    /⛔ Pending deliveries/.test(l) || /POST_SESSION_VERIFY_FAIL/.test(l)),
+    /⛔ Pending deliveries/.test(l) || /POST_SESSION_VERIFY_FAIL/.test(l)
+    || /POST_SESSION_ML_REFRESH_FAIL/.test(l) || /ML Boost:.*0\//.test(l)
+    || /⚠️\s+ml_refresh/.test(l)),
+  ...scan('pre_session', 'logs/pre_session.log', l =>
+    /L0 hard gate: FAIL/.test(l) || /PRE_SESSION_FAIL/.test(l)
+    || /Pre-Session:.*FAIL/.test(l)),
   ...scan('full_verify', 'logs/full_verify.log', l => {
     const m = l.match(/Full Verify: (\d+)\/(\d+) PASS/);
     return m && Number(m[1]) < Number(m[2]);

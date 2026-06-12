@@ -73,6 +73,7 @@ if (dup.duplicate) {
 ok('Cron TV sync', /egx-tv-sync.*egx_tv_auto_update/.test(cron));
 ok('Cron Telegram', /egx-telegram.*egx_telegram_cron/.test(cron));
 ok('Cron post-session', /EGX-POST-SESSION-DAILY/.test(cron));
+ok('Cron pre-session', /EGX-PRE-SESSION-DAILY/.test(cron));
 
 try {
   const gate = runDailyQualityGate();

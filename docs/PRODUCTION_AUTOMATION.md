@@ -30,11 +30,25 @@ Cron wrapper: `egx_telegram_cron.mjs` = prepare-send → live → reconcile → 
 | 07:00 | `egx:prod:status` | `logs/prod_status.log` |
 | 07:10 | `egx_session_ready` | `logs/session_ready.log` |
 | 07:15 | `egx_cron_log_check --hours 48` | `logs/cron_log_check.log` |
+| 07:25 | `egx_pre_session --next` | `logs/pre_session.log` |
 | 12:30 | `fetch_intraday_live` | `logs/tv_live.log` |
 | 15:15 | `fetch_intraday_live` | `logs/tv_live.log` |
 | 16:30 | `egx_tv_auto_update --launch --pine --tech` | `logs/tv_auto_daily.log` |
 | 17:20 | `egx_telegram_cron` | `logs/telegram.log` |
-| 17:45 | `egx_post_session_ops` | `logs/post_session.log` |
+| 17:05 | `egx_signal_funnel` | `logs/signal_funnel.log` |
+| 17:45 | `egx_post_session_ops` (incl. `ml_refresh`) | `logs/post_session.log` |
+
+## ML + Gates pipeline
+
+| Command | Purpose |
+|---------|---------|
+| `egx:ml:boost` | Full ensemble → mladv → phase50 → score → diagnose |
+| `egx:ml:refresh` | Fast re-score (`--skip-ensemble`) — runs in post-session |
+| `egx:gate:simulate` | Gate blocker histogram + actionable breakdown |
+| `egx:ml:gate:verify` | Wiring verify (local, includes crontab) |
+| `egx:ml:gate:verify:ci` | Structural verify (GitHub Actions) |
+
+Artifacts: `data/ml_boost_last.json` | `data/pre_session_last.json` | `data/post_session_last.json` | `data/signal_funnel_last.json`
 
 **Weekly (Sun 06:30):** `egx_quality_weekly` → `build_full` deep audit → `logs/quality_weekly.log`
 
@@ -64,7 +78,7 @@ Locks: `egx-tv-sync` | `egx-telegram` | `egx-post-session` (separate — no bloc
 | `EGX_OPS_SUCCESS_ALERT` | 1 | Post-send success digest |
 | `EGX_AUTO_BACKFILL` | 0 | Auto-recover pending in post-session |
 
-**Failures:** `CRON_DELIVERY_FAILED` | `TV_SYNC_FAILED` | `SESSION_READY_FAIL` | `FULL_VERIFY_FAILED` | `CRON_LOG_FAILURES` | `PROD_READY_FAIL`
+**Failures:** `CRON_DELIVERY_FAILED` | `TV_SYNC_FAILED` | `SESSION_READY_FAIL` | `PRE_SESSION_FAIL` | `POST_SESSION_ML_REFRESH_FAIL` | `FULL_VERIFY_FAILED` | `CRON_LOG_FAILURES` | `PROD_READY_FAIL`
 
 **Success:** `CRON_DELIVERY_OK` | `POST_SESSION_OK` | `PROD_READY_OK`
 
@@ -74,8 +88,10 @@ Test: `npm run egx:alert:test` | `npm run egx:alert:test:success`
 
 | Command | What |
 |---------|------|
-| `egx:automation:verify` | 40 checks (cron, env, scripts) |
-| `egx:automation:verify:ci` | 27 structural (GitHub Actions) |
+| `egx:automation:verify` | cron, env, scripts, ML npm aliases |
+| `egx:automation:verify:ci` | structural (GitHub Actions) |
+| `egx:ml:gate:verify` | ML+gate files, tv:auto/post/pre wiring, python tests |
+| `egx:ml:gate:verify:ci` | structural only (no crontab) |
 | `egx:verify:fast` | MCP + automation + reconcile + decision bot |
 | `egx:verify:all` | + TV CDP + unit tests |
 | `egx:tv:verify` | 19 TV MCP integration checks |
@@ -111,7 +127,7 @@ npm run egx:cron:telegram:dry      # full cron dry-run
 ## Activate / reinstall
 
 ```bash
-npm run egx:prod:activate   # cron (51 jobs) + env sync + verify
+npm run egx:prod:activate   # cron (55+ jobs) + env sync + verify
 npm run egx:env:sync        # merge .env.template → .env
 ```
 

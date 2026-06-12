@@ -36,3 +36,6 @@ jobs:
 
       - name: Automation scripts verify (CI mode)
         run: node scripts/egx_automation_verify.mjs --ci
+
+      - name: ML+Gate pipeline verify (CI mode)
+        run: npm run egx:ml:gate:verify:ci

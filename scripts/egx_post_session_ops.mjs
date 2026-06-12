@@ -6,8 +6,8 @@
  * Cron: 45 15 * * 0-4 (5:45 PM Cairo)
  */
 import { execSync } from 'child_process';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
+import { writeFileSync, mkdirSync, readFileSync, existsSync } from 'fs';
+import { join } from 'path';
 import { loadEnv, PROJECT_ROOT } from './lib/load_env.mjs';
 import { isTradingDay, cairoDateParts } from './lib/egx_calendar.mjs';
 import { alertNotification, opsSuccessAlert } from './lib/notification_alert.mjs';
@@ -31,8 +31,26 @@ try {
   console.log(`⚠️  Calendar check failed: ${e.message} — continuing`);
 }
 
+const signalDate = latestOhlcvDate() || today;
+const steps = [];
+
 console.log('\n═══ EGX Post-Session Ops ═══');
-console.log(`Date: ${latestOhlcvDate() || today}`);
+console.log(`Date: ${signalDate}`);
+
+function runStep(name, cmd, { optional = false, timeout = 600_000 } = {}) {
+  const t0 = Date.now();
+  console.log(`\n▶  ${name}`);
+  try {
+    execSync(cmd, { cwd: PROJECT_ROOT, stdio: 'inherit', timeout });
+    steps.push({ name, ok: true, ms: Date.now() - t0 });
+    return true;
+  } catch (e) {
+    steps.push({ name, ok: false, ms: Date.now() - t0, optional, error: e.message?.slice(0, 120) });
+    if (!optional) throw e;
+    console.log(`  ⚠️  ${name}: ${e.message?.slice(0, 80)}`);
+    return false;
+  }
+}
 
 let reconcileExit = 0;
 try {
@@ -76,9 +94,20 @@ try {
   console.log(`⚠️  Proof loop: ${e.message?.slice(0, 80)}`);
 }
 
+const mlOk = runStep(
+  'ml_refresh',
+  `"${NODE}" scripts/egx_ml_boost.mjs --skip-ensemble --date ${signalDate}`,
+  { optional: true, timeout: 900_000 },
+);
+if (!mlOk) {
+  alertNotification('POST_SESSION_ML_REFRESH_FAIL', { date: signalDate, signal_date: signalDate });
+}
+
 try {
   execSync(`"${NODE}" scripts/egx_closed_loop.mjs`, { cwd: PROJECT_ROOT, stdio: 'inherit', timeout: 360_000 });
+  steps.push({ name: 'closed_loop', ok: true });
 } catch (e) {
+  steps.push({ name: 'closed_loop', ok: false, error: e.message?.slice(0, 80) });
   console.log(`⚠️  Closed loop: ${e.message?.slice(0, 80)}`);
 }
 
@@ -110,7 +139,19 @@ try {
   process.exit(1);
 }
 
-const digest = { ...buildDeliveryDigest(latestOhlcvDate() || today), proof_loop: proof };
+const digest = { ...buildDeliveryDigest(signalDate), proof_loop: proof };
+const mlBoost = existsSync(join(PROJECT_ROOT, 'data/ml_boost_last.json'))
+  ? JSON.parse(readFileSync(join(PROJECT_ROOT, 'data/ml_boost_last.json'), 'utf8'))
+  : null;
+mkdirSync(join(PROJECT_ROOT, 'data'), { recursive: true });
+writeFileSync(join(PROJECT_ROOT, 'data/post_session_last.json'), JSON.stringify({
+  at: new Date().toISOString(),
+  signal_date: signalDate,
+  steps,
+  ml_boost: mlBoost,
+  digest,
+}, null, 2));
+
 await opsSuccessAlert('POST_SESSION_OK', digest);
 
 console.log('\n═══ Post-Session OK ═══\n');

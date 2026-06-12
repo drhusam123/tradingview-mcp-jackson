@@ -51,6 +51,12 @@ const scripts = [
   'scripts/egx_notify_reconcile.mjs',
   'scripts/egx_runbook.mjs',
   'scripts/egx_session_ready.mjs',
+  'scripts/egx_pre_session.mjs',
+  'scripts/egx_ml_boost.mjs',
+  'scripts/egx_ml_gate_pipeline_verify.mjs',
+  'scripts/egx_signal_funnel.mjs',
+  'scripts/python/gate_actionable_simulate.py',
+  'scripts/python/signal_integration.py',
   'scripts/egx_cron_log_check.mjs',
   'scripts/egx_automation_status.mjs',
   'scripts/egx_prod_ready.mjs',
@@ -111,6 +117,8 @@ ok('Full verify script', existsSync(join(PROJECT_ROOT, 'scripts/egx_full_verify.
 if (!CI_MODE) {
   ok('Cron pre-market verify', /EGX-FULL-VERIFY-DAILY/.test(cron));
   ok('Cron post-session ops', /EGX-POST-SESSION-DAILY/.test(cron));
+  ok('Cron pre-session bundle', /EGX-PRE-SESSION-DAILY/.test(cron));
+  ok('Cron signal funnel', /EGX-FUNNEL-DAILY/.test(cron));
   ok('Cron session ready', /EGX-SESSION-READY-DAILY/.test(cron));
   ok('Cron log check', /EGX-CRON-LOG-CHECK-DAILY/.test(cron));
   ok('Cron TV microstructure', /EGX-TV-MICRO-D/.test(cron));
@@ -119,8 +127,21 @@ if (!CI_MODE) {
   ok('Cron DMIDS weekly rescore', /EGX-DMIDS-WEEKLY/.test(cron));
 } else {
   ok('install_cron.mjs', existsSync(join(PROJECT_ROOT, 'scripts/install_cron.mjs')));
+  const installCron = readFileSync(join(PROJECT_ROOT, 'scripts/install_cron.mjs'), 'utf8');
+  ok('install_cron pre-session marker', installCron.includes('EGX-PRE-SESSION-DAILY'));
+  ok('install_cron post-session marker', installCron.includes('EGX-POST-SESSION-DAILY'));
+  ok('install_cron funnel marker', installCron.includes('EGX-FUNNEL-DAILY'));
 }
 ok('Post-session script', existsSync(join(PROJECT_ROOT, 'scripts/egx_post_session_ops.mjs')));
+const pkg = JSON.parse(readFileSync(join(PROJECT_ROOT, 'package.json'), 'utf8'));
+const npmScripts = pkg.scripts || {};
+ok('npm egx:ml:boost', npmScripts['egx:ml:boost']?.includes('egx_ml_boost.mjs'));
+ok('npm egx:ml:refresh', npmScripts['egx:ml:refresh']?.includes('--skip-ensemble'));
+ok('npm egx:post:session', npmScripts['egx:post:session']?.includes('egx_post_session_ops.mjs'));
+ok('npm egx:gate:simulate', npmScripts['egx:gate:simulate']?.includes('gate_actionable_simulate.py'));
+ok('npm egx:ml:gate:verify', npmScripts['egx:ml:gate:verify']?.includes('egx_ml_gate_pipeline_verify.mjs'));
+ok('npm egx:ml:gate:verify:ci', npmScripts['egx:ml:gate:verify:ci']?.includes('--ci'));
+ok('npm egx:pre:session', npmScripts['egx:pre:session']?.includes('egx_pre_session.mjs'));
 ok('Recovery script', existsSync(join(PROJECT_ROOT, 'scripts/egx_notify_recovery.mjs')));
 ok('EGX_ALERT_TELEGRAM', process.env.EGX_ALERT_TELEGRAM !== '0', process.env.EGX_ALERT_TELEGRAM ?? 'default=1');
 ok('EGX_OPS_SUCCESS_ALERT', process.env.EGX_OPS_SUCCESS_ALERT !== '0', process.env.EGX_OPS_SUCCESS_ALERT ?? 'default=1');

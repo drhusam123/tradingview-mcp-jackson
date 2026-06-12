@@ -46,6 +46,10 @@ export function auditClosedLoops({ maxAgeHours = 168 } = {}) {
     { file: 'data/egx_rules_runtime.json', label: 'runtime_rules' },
     { file: 'data/learning_loop_last.json', label: 'learning_loop' },
     { file: 'data/proof_loop_last.json', label: 'proof_loop' },
+    { file: 'data/pre_session_last.json', label: 'pre_session' },
+    { file: 'data/post_session_last.json', label: 'post_session' },
+    { file: 'data/ml_boost_last.json', label: 'ml_boost' },
+    { file: 'data/signal_funnel_last.json', label: 'signal_funnel' },
   ];
 
   for (const { file, label } of artifacts) {
