@@ -15,10 +15,11 @@ import { runPreSendCheck } from './lib/pre_send_check.mjs';
 const dateArg = process.argv.find((a, i) => process.argv[i - 1] === '--date');
 const SEND = process.argv.includes('--send');
 const FORCE = process.argv.includes('--force');
+const PREP = process.argv.includes('--prep');
 const signalDate = dateArg;
 
 if (!signalDate) {
-  console.error('Usage: egx_notify_backfill.mjs --date YYYY-MM-DD [--dry-run|--send] [--force]');
+  console.error('Usage: egx_notify_backfill.mjs --date YYYY-MM-DD [--dry-run|--send] [--force] [--prep]');
   process.exit(2);
 }
 
@@ -28,7 +29,7 @@ const dup = wasAlreadySent(signalDate);
 
 console.log('\n=== EGX Notification Backfill ===');
 console.log(`Date: ${signalDate} (LATE BACKFILL)`);
-console.log(`Mode: ${SEND ? 'LIVE SEND' : 'DRY-RUN'}`);
+console.log(`Mode: ${SEND ? 'LIVE SEND' : 'DRY-RUN'}${PREP ? ' (PREP — study bulletin before next session)' : ''}`);
 console.log(`Actionable: ${act.db} | Deliverable: ${act.deliverable}`);
 console.log(`Symbols: ${act.symbols.join(', ') || '(none)'}`);
 
@@ -51,6 +52,7 @@ const pre = runPreSendCheck(signalDate, {
   allowDuplicate: FORCE,
   skipLegacyDedup: true,
   logBlock: SEND,
+  prepMode: PREP,
 });
 
 let formatResult;

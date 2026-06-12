@@ -40,6 +40,7 @@ export function runPreSendCheck(reportDate, opts = {}) {
     allowDuplicate = false,
     skipLegacyDedup = false,
     logBlock = true,
+    prepMode = false,
   } = opts;
 
   normalizeDeliverableSignals(reportDate);
@@ -73,12 +74,16 @@ export function runPreSendCheck(reportDate, opts = {}) {
   let safety = null;
   let safetyExtraBlockers = [];
   if (act.deliverable > 0 && safetyVeto) {
-    safety = runEgxSafetyCheck(reportDate, { veto: true });
-    const safetyOk = safety.ok && safety.deliverable_after > 0;
+    safety = runEgxSafetyCheck(reportDate, { veto: !prepMode });
+    const safetyOk = prepMode
+      ? act.deliverable > 0
+      : (safety.ok && safety.deliverable_after > 0);
     record(
       safetyOk || act.deliverable === 0,
       'safety_veto',
-      `passed=${safety.passed_symbols.join(',') || 'none'} blocked=${safety.blocked_symbols.join(',') || 'none'}`,
+      prepMode
+        ? `prep_mode study bulletin | passed=${safety.passed_symbols.join(',') || 'none'} blocked=${safety.blocked_symbols.join(',') || 'none'}`
+        : `passed=${safety.passed_symbols.join(',') || 'none'} blocked=${safety.blocked_symbols.join(',') || 'none'}`,
     );
     if (!safetyOk && act.deliverable > 0) {
       safetyExtraBlockers.push(`safety_veto: ${safety.blocked_symbols.join(',')}`);
