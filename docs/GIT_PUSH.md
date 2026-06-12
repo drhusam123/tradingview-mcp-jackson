@@ -34,6 +34,7 @@ npm run egx:signals:diagnose    # لماذا 0 actionable؟ (gate funnel)
 ## قبل الجلسة القادمة
 
 ```bash
+npm run egx:pre:session        # audit + session + funnel + verify (موصى به)
 npm run egx:session:next
 npm run egx:runbook:next
 ```

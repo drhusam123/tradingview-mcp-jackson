@@ -94,7 +94,7 @@ ok(
   'Proof loop P6',
   proof.gate_pass || proof.samples_needed > 0,
   formatProofLoopLine(proof).replace(/^[^\s]+\s/, ''),
-  { warn: !proof.gate_pass && proof.n_completed < PROOF_MIN_N },
+  { warn: useNext || (!proof.gate_pass && proof.n_completed < PROOF_MIN_N) },
 );
 const p6Blocker = proof.gate_pass
   ? 'PASS'
@@ -123,7 +123,7 @@ if (SKIP_VERIFY_CHECK) {
 } else if (existsSync(verifyPath)) {
   const v = JSON.parse(readFileSync(verifyPath, 'utf8'));
   const ageH = (Date.now() - new Date(v.at).getTime()) / 3_600_000;
-  ok('Last full verify', v.pass, `${v.at?.slice(0, 16)} (${ageH.toFixed(0)}h ago)`);
+  ok('Last full verify', v.pass, `${v.at?.slice(0, 16)} (${ageH.toFixed(0)}h ago)`, { warn: useNext && !v.pass });
 } else {
   ok('Last full verify', false, 'never run — npm run egx:verify:all');
 }

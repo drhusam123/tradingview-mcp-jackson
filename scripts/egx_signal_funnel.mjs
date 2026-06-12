@@ -76,6 +76,10 @@ try {
   for (const g of gateBlockers) {
     console.log(`  ${String(g.n).padStart(4)}  ${(g.gate || 'unknown').padEnd(45)}  avg UES=${g.avg_ues} ML=${g.avg_ml}`);
   }
+  const top = gateBlockers[0];
+  if (top?.gate?.includes('ml_too_low')) {
+    console.log('\n  ℹ️  ml_too_low: default ML threshold ~65% (BULL) — see signal_integration quality_gate');
+  }
 } catch {
   section('First Blocking Gate');
   console.log('  (gate_audit_snapshots unavailable)');

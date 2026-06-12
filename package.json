@@ -378,6 +378,7 @@
     "egx:ops": "node scripts/egx_production_ops.mjs status",
     "egx:session:ready": "node scripts/egx_session_ready.mjs",
     "egx:session:next": "node scripts/egx_session_ready.mjs --next",
+    "egx:pre:session": "node scripts/egx_pre_session.mjs --next",
     "egx:runbook": "node scripts/egx_runbook.mjs",
     "egx:runbook:next": "node scripts/egx_runbook.mjs --next",
     "egx:prod:activate": "node scripts/egx_production_ops.mjs activate",
