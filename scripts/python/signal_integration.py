@@ -711,28 +711,33 @@ def _apply_ml_governance_dampening(score, date, conn):
 def get_explosion_score(symbol, date, conn):
     """Get ML explosion probability (0-100).
 
-    pred_date may lag signal_date by 1 day. Within a 7-day window we prefer the
-  highest non-zero prob_pct (not merely the newest row) so a broken ensemble run
-    cannot zero-out symbols that still have valid lgbm predictions from prior days.
+    Prefer pred_date <= signal_date (highest prob in 7d) so a later ensemble run
+    cannot contaminate historical score_all.  If none on/before signal_date, allow
+    signal_date+1 once (EOD preds sometimes stamped next calendar day).
     """
     try:
         d = datetime.date.fromisoformat(date)
-        lookback  = (d - datetime.timedelta(days=7)).strftime('%Y-%m-%d')
-        lookahead = (d + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
-        row = conn.execute(
-            """SELECT prob_pct, pred_date, model_version FROM explosion_predictions
-               WHERE symbol=? AND pred_date>=? AND pred_date<=?
-                 AND prob_pct IS NOT NULL AND prob_pct > 0
-               ORDER BY prob_pct DESC, pred_date DESC LIMIT 1""",
-            (symbol, lookback, lookahead)
-        ).fetchone()
-        if not row:
-            row = conn.execute(
-                """SELECT prob_pct FROM explosion_predictions
-                   WHERE symbol=? AND pred_date>=? AND pred_date<=?
-                   ORDER BY pred_date DESC LIMIT 1""",
-                (symbol, lookback, lookahead)
+        lookback = (d - datetime.timedelta(days=7)).strftime('%Y-%m-%d')
+        signal_date = d.isoformat()
+        next_day = (d + datetime.timedelta(days=1)).isoformat()
+
+        def _fetch(through_date, require_positive=True):
+            pos_clause = 'AND prob_pct IS NOT NULL AND prob_pct > 0' if require_positive else ''
+            return conn.execute(
+                f"""SELECT prob_pct, pred_date, model_version FROM explosion_predictions
+                    WHERE symbol=? AND pred_date>=? AND pred_date<=?
+                      {pos_clause}
+                    ORDER BY prob_pct DESC, pred_date DESC LIMIT 1""",
+                (symbol, lookback, through_date),
             ).fetchone()
+
+        row = _fetch(signal_date, require_positive=True)
+        if not row:
+            row = _fetch(signal_date, require_positive=False)
+        if not row:
+            row = _fetch(next_day, require_positive=True)
+        if not row:
+            row = _fetch(next_day, require_positive=False)
         if row:
             score = _apply_ml_governance_dampening(safe_float(row['prob_pct'], 50.0), date, conn)
             return score
@@ -767,8 +772,11 @@ def get_fused_ml_score(symbol, date, conn, explosion_score=50.0, scan_score=0.0,
                WHERE symbol=? AND trade_date<=? ORDER BY trade_date DESC LIMIT 1""",
             (symbol, date),
         ).fetchone()
-        if opp and safe_float(opp['opportunity_score'], 0) >= 70.0:
-            engines.append(('opportunity', safe_float(opp['opportunity_score'], 0)))
+        opp_s = safe_float(opp['opportunity_score'], 0) if opp else 0.0
+        if opp_s >= 70.0:
+            engines.append(('opportunity', opp_s))
+        elif opp_s >= 62.0 and safe_float(scan_score, 0.0) >= 55.0:
+            engines.append(('opportunity_scan', min(opp_s * 1.05, 78.0)))
     except Exception:
         pass
 
@@ -779,10 +787,12 @@ def get_fused_ml_score(symbol, date, conn, explosion_score=50.0, scan_score=0.0,
     _exp_s = safe_float(explosion_score, 50.0)
     if _exp_s < 35.0 and _scan_s >= 55.0:
         engines.append(('scan_proxy', min(_scan_s * 0.92, 82.0)))
-    elif _exp_s < 50.0 and _scan_s >= 65.0:
+    elif _exp_s < 50.0 and _scan_s >= 60.0:
         engines.append(('scan_confirm', min(_scan_s * 0.90, 80.0)))
-    elif _exp_s < 55.0 and _scan_s >= 80.0:
+    elif _exp_s < 58.0 and _scan_s >= 75.0:
         engines.append(('scan_strong', min(_scan_s * 0.88, 85.0)))
+    elif _exp_s < 65.0 and _scan_s >= 85.0:
+        engines.append(('scan_ultra', min(_scan_s * 0.86, 88.0)))
 
     try:
         dtw = conn.execute("""
