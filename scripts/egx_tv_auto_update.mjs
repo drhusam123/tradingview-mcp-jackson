@@ -21,6 +21,7 @@ import { enforceDailyQualityGate } from './lib/data_quality_gate.mjs';
 import { writeProofLoopSnapshot } from './lib/proof_loop.mjs';
 import { checkIndicatorCacheCoverage } from './lib/indicator_cache_gate.mjs';
 import { buildDiscoveryParams } from './lib/discovery_context.mjs';
+import { recordLineageStep } from './lib/pipeline_lineage.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -477,6 +478,38 @@ async function main() {
     run('node scripts/egx_telegram_daily.mjs', 'Send Telegram daily report');
   } else {
     run('node scripts/egx_telegram_daily.mjs --dry-run', 'Render Telegram report dry-run');
+  }
+
+  if (!DRY_RUN) {
+    try {
+      const db = getDB();
+      const signalDate = latestDailyDate();
+      const metrics = {
+        ohlcv_bars: db.prepare('SELECT COUNT(*) n FROM ohlcv_history').get()?.n ?? 0,
+        ohlcv_symbols: db.prepare('SELECT COUNT(DISTINCT symbol) n FROM ohlcv_history').get()?.n ?? 0,
+        indicators: db.prepare('SELECT COUNT(*) n FROM indicators_cache').get()?.n ?? 0,
+        intraday_60: db.prepare('SELECT COUNT(DISTINCT symbol) n FROM ohlcv_60min').get()?.n ?? 0,
+        tv_discovery: signalDate
+          ? db.prepare('SELECT COUNT(DISTINCT symbol) n FROM tv_discovery_features WHERE trade_date=?').get(signalDate)?.n ?? 0
+          : 0,
+        explosion: signalDate
+          ? db.prepare('SELECT COUNT(DISTINCT symbol) n FROM explosion_predictions WHERE pred_date=?').get(signalDate)?.n ?? 0
+          : 0,
+        steps: STEP_NO,
+      };
+      recordLineageStep(db, {
+        run_id: RUN_ID,
+        pipeline: 'egx_tv_auto_update',
+        step: 'pipeline_summary',
+        signal_date: signalDate,
+        rows_affected: STEP_NO,
+        status: 'OK',
+        started_at: RUN_ID,
+        notes: JSON.stringify(metrics),
+      });
+    } catch (e) {
+      log(`lineage summary skipped: ${e.message}`);
+    }
   }
 
   log('Done.');

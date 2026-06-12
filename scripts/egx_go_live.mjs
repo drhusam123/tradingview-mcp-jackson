@@ -126,7 +126,7 @@ if (!SKIP_CRON) {
     execSync(`"${NODE}" scripts/install_cron.mjs`, {
       cwd: PROJECT_ROOT,
       stdio: 'inherit',
-      timeout: 120_000,
+      timeout: 300_000,
     });
     const cron = execSync('crontab -l 2>/dev/null', { encoding: 'utf8' });
     const markers = [

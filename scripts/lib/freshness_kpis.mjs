@@ -60,6 +60,22 @@ export function loadFreshnessKpis(projectRoot, dbPath) {
       indicators_by_source: hasSource
         ? db.prepare('SELECT source, COUNT(*) n FROM indicators_cache GROUP BY source').all()
         : [],
+      tv_discovery: signalDate
+        ? db.prepare('SELECT COUNT(DISTINCT symbol) n FROM tv_discovery_features WHERE trade_date=?').get(signalDate)?.n ?? 0
+        : 0,
+      lineage_age_h: (() => {
+        try {
+          const row = db.prepare(`
+            SELECT finished_at FROM data_pipeline_lineage
+            WHERE pipeline='egx_tv_auto_update' AND step='pipeline_summary' AND status='OK'
+            ORDER BY finished_at DESC LIMIT 1
+          `).get();
+          if (!row?.finished_at) return null;
+          return Math.round((Date.now() - Date.parse(row.finished_at)) / 36e5 * 10) / 10;
+        } catch {
+          return null;
+        }
+      })(),
     };
     db.close();
   }
@@ -92,8 +108,11 @@ export function formatFreshnessLines(kpis) {
     const intraPct = d.intraday_60 ? Math.round((d.intraday_60 / 80) * 100) : 0;
     lines.push(`  OHLCV:       ${d.ohlcv_symbols} sym | weekly ${d.weekly_symbols} | intraday60 ${d.intraday_60}/80 (${intraPct}%)`);
     lines.push(`  Indicators:  ${d.indicators_on_date}/${d.indicators} on date | sources ${JSON.stringify(d.indicators_by_source)}`);
-    lines.push(`  ML:          meta ${d.meta_label} | explosion ${d.explosion}`);
+    lines.push(`  ML:          meta ${d.meta_label} | explosion ${d.explosion} | tv_disc ${d.tv_discovery ?? '—'}`);
     lines.push(`  Ghosts:      ${d.unarchived_ghosts} unarchived`);
+    if (d.lineage_age_h != null) {
+      lines.push(`  Lineage:     last tv_auto ${d.lineage_age_h}h ago`);
+    }
   }
   if (kpis.parquet) {
     lines.push(`  Parquet:     age ${kpis.parquet.age_h ?? '?'}h | tables ${(kpis.parquet.tables || []).length}`);

@@ -133,6 +133,18 @@ function runAudit() {
   }
   const exclusionDelta = Math.abs((rawN - execN) - exclusionsN);
 
+  let lineageAgeH = null;
+  try {
+    const row = db.prepare(`
+      SELECT finished_at FROM data_pipeline_lineage
+      WHERE pipeline='egx_tv_auto_update' AND step='pipeline_summary' AND status='OK'
+      ORDER BY finished_at DESC LIMIT 1
+    `).get();
+    if (row?.finished_at) {
+      lineageAgeH = Math.round((Date.now() - Date.parse(row.finished_at)) / 36e5 * 10) / 10;
+    }
+  } catch { /* optional until migration 007 */ }
+
   db.close();
 
   ok('l0_intraday_60min', (intra60?.sym ?? 0) >= 20,
@@ -217,6 +229,8 @@ function runAudit() {
     ok('kpi_ensemble_coverage', explosionSyms >= 150,
       `ensemble/explosion @ ${signalDate}: ${explosionSyms} symbols (target ≥150)`);
   }
+  ok('kpi_pipeline_lineage', lineageAgeH == null || lineageAgeH <= 72,
+    lineageAgeH == null ? 'pipeline_lineage n/a (run migrate + egx:tv:auto)' : `last tv_auto summary ${lineageAgeH}h ago (target ≤72h)`);
 
   const fail = checks.filter(c => !c.ok);
   return {
