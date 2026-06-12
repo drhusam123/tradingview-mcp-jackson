@@ -363,6 +363,7 @@
     "egx:cron:install": "node scripts/install_cron.mjs",
     "egx:cron:remove": "node scripts/install_cron.mjs --remove",
     "egx:cron:show": "node scripts/install_cron.mjs --show",
+    "egx:cron:dedupe": "node scripts/cron_dedupe.mjs",
     "egx:cron:telegram:dry": "node scripts/egx_telegram_cron.mjs --dry-run",
     "egx:automation:verify": "node scripts/egx_automation_verify.mjs",
     "egx:automation:verify:ci": "node scripts/egx_automation_verify.mjs --ci",

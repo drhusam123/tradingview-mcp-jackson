@@ -18,23 +18,13 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
 function resolveCronPython() {
-  const candidates = [
-    process.env.PYTHON_BIN,
-    process.env.PYTHON3,
-    execSync('which python3', { encoding: 'utf8' }).trim(),
-    '/usr/bin/python3',
-    'python3',
-  ].filter(Boolean);
-  const seen = new Set();
-  for (const bin of candidates) {
-    if (seen.has(bin)) continue;
-    seen.add(bin);
-    try {
-      execSync(`"${bin}" -c "import numpy"`, { stdio: 'pipe', timeout: 5000 });
-      return bin;
-    } catch { /* try next */ }
+  if (process.env.PYTHON_BIN) return process.env.PYTHON_BIN;
+  if (process.env.PYTHON3) return process.env.PYTHON3;
+  try {
+    return execSync('which python3', { encoding: 'utf8', timeout: 3000 }).trim();
+  } catch {
+    return '/usr/bin/python3';
   }
-  return candidates[0] || 'python3';
 }
 
 const __dirname  = dirname(fileURLToPath(import.meta.url));
@@ -437,7 +427,20 @@ function getCurrentCron() {
 }
 
 function setCron(content) {
-  execSync(`echo ${JSON.stringify(content.trim())} | crontab -`);
+  execSync('crontab -', { input: `${content.trim()}\n` });
+}
+
+function dedupeCronLines(content) {
+  const seen = new Set();
+  return content.split('\n').filter((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return true;
+    const marker = trimmed.match(/#\s*(EGX-[^\s]+)/)?.[1];
+    if (!marker) return true;
+    if (seen.has(marker)) return false;
+    seen.add(marker);
+    return true;
+  }).join('\n');
 }
 
 if (SHOW) {
@@ -533,7 +536,7 @@ const ALL_CRONS = [
   CRON_GOVERNANCE_D, CRON_COGBUS_D, CRON_PRESSURE_W, CRON_EXECREAL_W,
   CRON_HEALTH_D, CRON_FUNNEL_D, CRON_PROD_STATUS_D, CRON_SESSION_READY, CRON_LOG_CHECK, CRON_QUALITY_W, CRON_LEARNING_W, CRON_PROD_READY_W, CRON_VERIFY_D, CRON_POST_SESSION, CRON_DEPS_W, CRON_TRAIN_W, CRON_NIGHT_W, CRON_MLADV_W
 ].join('\n');
-const newCron  = filtered ? `${filtered}\n${ALL_CRONS}` : ALL_CRONS;
+const newCron  = dedupeCronLines(filtered ? `${filtered}\n${ALL_CRONS}` : ALL_CRONS);
 
 setCron(newCron);
 
