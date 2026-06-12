@@ -21,6 +21,7 @@ import { getOhlcv }                from '../src/core/data.js';
 import { getDB, saveOHLCVTimeframe,
          getTimeframeCoverage, EGX_UNIVERSE, EGX_UNIVERSE_CORE } from '../src/egx/index.js';
 import { loadLiquidTierSymbols } from './lib/liquid_tier.mjs';
+import { withTvRetry } from './lib/tv_fetch_retry.mjs';
 import { waitForChartReady }       from '../src/wait.js';
 import { toTvSymbol }              from '../src/egx/tv_symbols.js';
 
@@ -81,13 +82,15 @@ const ALL_SYMBOLS = [
 
 async function fetchTF(symbol, tf, tableName) {
   const tvSymbol = toTvSymbol(symbol);
-  await setSymbol({ symbol: tvSymbol });
-  await setTimeframe({ timeframe: tf });
-  const ready = await waitForChartReady(tvSymbol, null, 8000);
-  if (!ready) await sleep(1500); // fallback — 600+900 original total
-  const data = await getOhlcv({ count: MAX_BARS });
-  if (!data?.bars?.length) return 0;
-  return saveOHLCVTimeframe(tableName, symbol, data.bars);
+  return withTvRetry(async () => {
+    await setSymbol({ symbol: tvSymbol });
+    await setTimeframe({ timeframe: tf });
+    const ready = await waitForChartReady(tvSymbol, null, 8000);
+    if (!ready) await sleep(1500);
+    const data = await getOhlcv({ count: MAX_BARS });
+    if (!data?.bars?.length) throw new Error('Could not extract OHLCV data. The chart may still be loading.');
+    return saveOHLCVTimeframe(tableName, symbol, data.bars);
+  }, { label: `${symbol}:${tf}` });
 }
 
 async function main() {

@@ -115,6 +115,24 @@ function runAudit() {
     }
   } catch { /* optional */ }
 
+  let trustScore = null;
+  let tvDiscSyms = 0;
+  try {
+    const trustRow = db.prepare(`
+      SELECT trust_score FROM data_trust_scores
+      WHERE source='ohlcv_history' ORDER BY last_checked DESC LIMIT 1
+    `).get();
+    trustScore = trustRow?.trust_score ?? null;
+  } catch { /* optional */ }
+  if (signalDate) {
+    try {
+      tvDiscSyms = db.prepare(
+        'SELECT COUNT(DISTINCT symbol) n FROM tv_discovery_features WHERE trade_date=?',
+      ).get(signalDate)?.n ?? 0;
+    } catch { /* optional */ }
+  }
+  const exclusionDelta = Math.abs((rawN - execN) - exclusionsN);
+
   db.close();
 
   ok('l0_intraday_60min', (intra60?.sym ?? 0) >= 20,
@@ -150,6 +168,9 @@ function runAudit() {
     `indicators parquet rows=${pqIc} (run egx:parquet:export)`);
   ok('l0_parquet_universe', pqUni >= 200,
     `universe parquet rows=${pqUni}`);
+  const pqIntra = manifest?.ohlcv_60min?.rows ?? manifest?.tables?.ohlcv_60min?.rows ?? 0;
+  ok('l0_parquet_intraday', pqIntra > 5000,
+    `ohlcv_60min parquet rows=${pqIntra} (run egx:parquet:export)`);
 
   const hydratePy = readFileSync(join(PROJECT_ROOT, 'scripts/python/discovery_data_hydrate.py'), 'utf8');
   ok('hydrate_l0_wired', hydratePy.includes('stock_universe') && hydratePy.includes('ohlcv_history'),
@@ -186,6 +207,14 @@ function runAudit() {
     crossLag == null ? 'cross_market n/a' : `lag_days=${crossLag} (target ≤1)`);
   ok('kpi_intraday_liquid', (intra60?.sym ?? 0) >= 40,
     `intraday symbols=${intra60?.sym ?? 0} (liquid tier target ≥40, goal 80)`);
+  ok('kpi_trust_score', trustScore == null || trustScore >= 85,
+    trustScore == null ? 'trust_score n/a' : `ohlcv_history trust=${trustScore} (target ≥85)`);
+  ok('kpi_exclusions_consistent', exclusionDelta <= 5,
+    `raw-exec=${rawN - execN} exclusions=${exclusionsN} delta=${exclusionDelta}`);
+  if (signalDate) {
+    ok('kpi_tv_discovery', tvDiscSyms >= 25,
+      `tv_discovery @ ${signalDate}: ${tvDiscSyms} symbols (target ≥25)`);
+  }
 
   const fail = checks.filter(c => !c.ok);
   return {

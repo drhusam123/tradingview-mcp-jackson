@@ -91,6 +91,15 @@ _EXPORT_TABLES: dict[str, str] = {
         WHERE bar_date NOT LIKE '2099-%'
         ORDER BY bar_date, symbol
     """,
+    'ohlcv_60min': """
+        SELECT symbol,
+               bar_time,
+               date(bar_time, 'unixepoch') AS trade_date,
+               open, high, low, close, volume
+        FROM ohlcv_60min
+        WHERE close > 0
+        ORDER BY bar_time, symbol
+    """,
 }
 
 # Maximum age (seconds) before a Parquet file is considered stale.

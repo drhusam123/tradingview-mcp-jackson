@@ -60,6 +60,7 @@
     "egx:universe:hygiene:apply": "node scripts/universe_hygiene.mjs --apply",
     "egx:weekly:backfill": "node scripts/backfill_weekly_from_daily.mjs",
     "egx:indicators:merge-tv": "node scripts/merge_technical_indicators.mjs",
+    "egx:exclusions:report": "node scripts/exclusions_daily_report.mjs",
     "egx:ohlcv:daily": "node scripts/daily_update.mjs",
     "egx:parquet:export": "python3 scripts/python/duckdb_layer.py --force",
     "egx:intraday:fetch": "node scripts/fetch_egx_intraday.mjs --core-only --resume",

@@ -301,6 +301,23 @@ async function main() {
   }
   run('node scripts/repair_cross_market_quality.mjs', 'Cross-market deterministic quality repair');
 
+  if (!DRY_RUN && tvReady) {
+    try {
+      const dbLag = getDB();
+      const ohlcvD = dbLag.prepare(
+        "SELECT MAX(date(bar_time,'unixepoch')) d FROM ohlcv_history",
+      ).get()?.d;
+      const crossD = dbLag.prepare(
+        "SELECT MAX(date(bar_time,'unixepoch')) d FROM cross_market_daily",
+      ).get()?.d;
+      if (ohlcvD && crossD && Date.parse(ohlcvD) > Date.parse(crossD)) {
+        run('node scripts/fetch_cross_market.mjs --daily', 'Cross-market catch-up (lag behind OHLCV)');
+      }
+    } catch { /* non-blocking */ }
+  }
+
+  run('node scripts/exclusions_daily_report.mjs', 'Data quality exclusions daily report', { critical: false });
+
   STEP_NO += 1;
   const gateLabel = 'Layer-2 data quality gate (gate_daily — mandatory before ML)';
   const gateT0 = Date.now();

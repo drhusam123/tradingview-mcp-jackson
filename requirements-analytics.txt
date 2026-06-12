@@ -1,0 +1,7 @@
+# EGX analytics layer — parquet / DuckDB / ML exports
+# macOS: brew install libomp  (required for lightgbm)
+duckdb>=0.10.0
+pyarrow>=14.0.0
+pandas>=2.0.0
+lightgbm>=4.0.0
+numpy>=1.24.0
