@@ -7,7 +7,13 @@ MDE Core        = discovery brain (hidden repricing before explosion)
 MDE Integration = safe plug-in to existing machine (deferred until shadow proof)
 ```
 
-## Phase 2.6 guarantees (current)
+## Phase 2.7 guarantees (current)
+
+- `mde_walkforward_shadow.py` — causal walk-forward: memory built only from data before T
+- Compares baseline MDE vs memory-adjusted confidence (shadow only)
+- `EGX_MDE_BEHAVIOR_MEMORY=0` remains default — walk-forward must prove edge first
+
+## Phase 2.6 guarantees
 
 - `mde_full_history_mining.py` backfills **full OHLCV history** into `egx_market_discovery_daily`
 - Behavioral outputs: profiles, families, rules, sector map

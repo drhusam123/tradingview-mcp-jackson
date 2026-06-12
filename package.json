@@ -84,6 +84,7 @@
     "egx:mde:attribution": "EGX_MDE_SHADOW=1 EGX_MDE_OPP_BOOST=0 python3 scripts/python/mde_oos_attribution.py",
     "egx:mde:forensics": "EGX_MDE_SHADOW=1 EGX_MDE_OPP_BOOST=0 python3 scripts/python/mde_shadow_forensics.py",
     "egx:mde:mine-history": "EGX_MDE_SHADOW=1 EGX_MDE_OPP_BOOST=0 python3 scripts/python/mde_full_history_mining.py",
+    "egx:mde:walkforward": "EGX_MDE_SHADOW=1 EGX_MDE_OPP_BOOST=0 EGX_MDE_BEHAVIOR_MEMORY=0 python3 scripts/python/mde_walkforward_shadow.py",
     "egx:xpro": "python3 scripts/python/egx_x_pro_engine.py run",
     "egx:xpro:report": "python3 scripts/python/egx_x_pro_engine.py report",
     "egx:xpro:backtest": "python3 scripts/python/egx_x_pro_engine.py backtest",
