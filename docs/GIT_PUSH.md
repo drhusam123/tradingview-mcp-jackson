@@ -13,10 +13,29 @@
 
 ```bash
 npm test
-npm run egx:data:audit
-npm run egx:architecture:audit
+npm run egx:data:audit          # 31 فحص L0→L1
+npm run egx:architecture:audit  # 12/12 طبقة
 npm run egx:discovery:verify
 npm run egx:loop:audit
+npm run egx:e2e:complete -- --skip-automate --skip-go-live
+```
+
+## تشغيل يومي (بعد إغلاق الجلسة)
+
+```bash
+npm run egx:tv:auto             # orchestrator الرسمي
+npm run egx:data:audit
+npm run egx:exclusions:report
+npm run egx:parquet:export
+npm run egx:ops                 # Freshness KPIs
+```
+
+## Cron
+
+```bash
+npm run egx:cron:install        # تثبيت/تحديث 75+ مهمة
+npm run egx:cron:dedupe         # إزالة تكرارات EGX-*
+npm run egx:cron:show
 ```
 
 ## Push (جاهز للصق)
