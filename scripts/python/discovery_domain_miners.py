@@ -1346,6 +1346,195 @@ def mine_contagion(db) -> list[dict]:
     return out
 
 
+def mine_precursor_sequence(db) -> list[dict]:
+    """C1 — DMIDS precursor patterns before 5%+ explosions."""
+    out = []
+    try:
+        rows = db.execute(
+            """
+            SELECT pattern_name, support_rate, effect_size, n_explosions
+            FROM precursor_patterns
+            WHERE support_rate >= 0.25 AND effect_size >= 0.15 AND n_explosions >= 5
+            ORDER BY effect_size DESC
+            LIMIT 10
+            """
+        ).fetchall()
+        if rows:
+            for pname, sr, es, n_exp in rows:
+                key = str(pname or "prec").replace(" ", "_")[:28]
+                out.append(_atom(
+                    f"precursor_{key}", "L9", "precursor_patterns", "precursor_sequence_miner",
+                    cond={"pattern_name": pname, "support_rate_gte": sr},
+                    boost=1.07, wr=round(float(sr or 0) * 100, 1), n=n_exp,
+                ))
+            out.insert(0, _atom(
+                "precursor_sequence_gate", "L9", "precursor_patterns", "precursor_sequence_miner",
+                cond={"n_patterns": len(rows)}, boost=1.05, n=len(rows),
+            ))
+            return out
+        rows = db.execute(
+            """
+            SELECT pattern_name, confidence, historical_accuracy, lead_time_days
+            FROM regime_precursor_detections
+            WHERE confidence >= 0.55
+            ORDER BY confidence DESC
+            LIMIT 8
+            """
+        ).fetchall()
+        for pname, conf, acc, lead in rows:
+            key = str(pname or "prec").replace(" ", "_")[:28]
+            out.append(_atom(
+                f"precursor_{key}", "L9", "regime_precursor_detections", "precursor_sequence_miner",
+                cond={"pattern_name": pname, "lead_time_days": lead},
+                boost=1.06, wr=round(float(acc or conf or 0) * 100, 1), n=1,
+            ))
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
+def mine_cross_market_leadlag(db) -> list[dict]:
+    """C2 — USD/DXY/SPY lead-lag vs EGX (1–3 day macro spillover)."""
+    out = []
+    try:
+        def _ret(asset: str, days: int = 3) -> float | None:
+            rows = db.execute(
+                """
+                SELECT close FROM cross_market_daily
+                WHERE asset = ?
+                ORDER BY bar_time DESC LIMIT ?
+                """,
+                (asset, days + 1),
+            ).fetchall()
+            if len(rows) < 2:
+                return None
+            c0, c1 = float(rows[0][0] or 0), float(rows[-1][0] or 0)
+            return (c0 - c1) / c1 if c1 else None
+
+        dxy_r = _ret("DXY", 3)
+        spy_r = _ret("SPY", 3)
+        egx_r = _ret("EGX30", 3)
+        if dxy_r is not None and dxy_r >= 0.008:
+            out.append(_atom(
+                "leadlag_dxy_strength", "L2", "cross_market_daily", "cross_market_leadlag_miner",
+                cond={"asset": "DXY", "ret3d_gte": 0.008}, penalize=0.78,
+            ))
+        if spy_r is not None and spy_r <= -0.015:
+            out.append(_atom(
+                "leadlag_spy_weakness", "L2", "cross_market_daily", "cross_market_leadlag_miner",
+                cond={"asset": "SPY", "ret3d_lte": -0.015}, penalize=0.82,
+            ))
+        if spy_r is not None and spy_r >= 0.01 and egx_r is not None and egx_r < spy_r * 0.3:
+            out.append(_atom(
+                "leadlag_egx_lags_spy", "L2", "cross_market_daily", "cross_market_leadlag_miner",
+                cond={"lag_days": "1-3", "spy_leading": True}, boost=1.06,
+            ))
+        eurusd_r = _ret("EURUSD", 3)
+        if eurusd_r is not None and abs(eurusd_r) >= 0.012:
+            out.append(_atom(
+                "leadlag_fx_volatility", "L2", "cross_market_daily", "cross_market_leadlag_miner",
+                cond={"asset": "EURUSD", "ret3d_abs_gte": 0.012}, boost=1.04,
+            ))
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
+def mine_dom_regime(db) -> list[dict]:
+    """C3 — order-book regime: real vs fake liquidity (spread + depth persistence)."""
+    out = []
+    try:
+        rows = db.execute(
+            """
+            SELECT symbol, spread_pct, snapshot_time
+            FROM dom_snapshots
+            WHERE snapshot_time >= strftime('%s', datetime('now', '-21 days'))
+            ORDER BY snapshot_time DESC
+            LIMIT 300
+            """
+        ).fetchall()
+        if len(rows) < 15:
+            return out
+        wide = [r for r in rows if r[1] is not None and r[1] >= 0.85]
+        tight = [r for r in rows if r[1] is not None and r[1] <= 0.30]
+        if len(wide) >= 12:
+            out.append(_atom(
+                "dom_fake_liquidity_wide", "L2", "dom_snapshots", "dom_regime_miner",
+                cond={"spread_pct_gte": 0.85}, penalize=0.72, hard_neg=1, n=len(wide),
+            ))
+        if len(tight) >= 15:
+            out.append(_atom(
+                "dom_real_liquidity_tight", "L2", "dom_snapshots", "dom_regime_miner",
+                cond={"spread_pct_lte": 0.30}, boost=1.06, n=len(tight),
+            ))
+        by_sym: dict[str, list[float]] = {}
+        for sym, sp, _ in rows:
+            if sp is None:
+                continue
+            by_sym.setdefault(sym, []).append(float(sp))
+        volatile = [s for s, vals in by_sym.items() if len(vals) >= 3
+                    and (max(vals) - min(vals)) >= 0.5]
+        if len(volatile) >= 4:
+            out.append(_atom(
+                "dom_spread_volatility", "L2", "dom_snapshots", "dom_regime_miner",
+                cond={"spread_range_gte": 0.5}, penalize=0.75, n=len(volatile),
+            ))
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
+def mine_ensemble_disagreement(db) -> list[dict]:
+    """C4 — ML high + quant/opp low (or inverse) → opportunity or trap atoms."""
+    out = []
+    try:
+        row = db.execute("SELECT MAX(pred_date) AS d FROM explosion_predictions").fetchone()
+        if not row or not row[0]:
+            return out
+        d = row[0]
+        rows = db.execute(
+            """
+            SELECT e.symbol, e.explosion_prob, o.opportunity_score, o.stage
+            FROM explosion_predictions e
+            LEFT JOIN opportunity_score_v2 o
+              ON o.symbol = e.symbol AND o.trade_date = e.pred_date
+            WHERE e.pred_date = ?
+              AND e.explosion_prob IS NOT NULL
+            """,
+            (d,),
+        ).fetchall()
+        ml_high_opp_low = 0
+        ml_low_opp_high = 0
+        for sym, prob, opp, stage in rows:
+            p = float(prob or 0)
+            o = float(opp or 0) if opp is not None else 0.0
+            if p >= 0.65 and o < 58:
+                ml_high_opp_low += 1
+                out.append(_atom(
+                    f"ensemble_trap_{sym}", "L4", "explosion_predictions", "ensemble_disagreement_miner",
+                    cond={"symbol": sym, "ml_prob_gte": 0.65, "opp_lt": 58}, penalize=0.70, n=1,
+                ))
+            elif p < 0.35 and o >= 72:
+                ml_low_opp_high += 1
+                out.append(_atom(
+                    f"ensemble_alpha_{sym}", "L4", "explosion_predictions", "ensemble_disagreement_miner",
+                    cond={"symbol": sym, "ml_prob_lt": 0.35, "opp_gte": 72}, boost=1.08, n=1,
+                ))
+        if ml_high_opp_low >= 3:
+            out.append(_atom(
+                "ensemble_ml_trap_cluster", "L4", "explosion_predictions", "ensemble_disagreement_miner",
+                cond={"n_symbols": ml_high_opp_low}, penalize=0.75, n=ml_high_opp_low,
+            ))
+        if ml_low_opp_high >= 2:
+            out.append(_atom(
+                "ensemble_hidden_alpha", "L4", "explosion_predictions", "ensemble_disagreement_miner",
+                cond={"n_symbols": ml_low_opp_high}, boost=1.07, n=ml_low_opp_high,
+            ))
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
 def run_all_miners() -> tuple[list[dict], dict]:
     """Execute all domain miners; return atoms + extras for manifest."""
     if not DB_PATH.exists():
@@ -1385,6 +1574,10 @@ def run_all_miners() -> tuple[list[dict], dict]:
     atoms.extend(mine_validation_results(db))
     atoms.extend(mine_law_competition(db))
     atoms.extend(mine_contagion(db))
+    atoms.extend(mine_precursor_sequence(db))
+    atoms.extend(mine_cross_market_leadlag(db))
+    atoms.extend(mine_dom_regime(db))
+    atoms.extend(mine_ensemble_disagreement(db))
     atoms.extend(mine_spectral(db))
     atoms.extend(mine_institutional_retest(db))
     atoms.extend(mine_volume_accumulation(db))

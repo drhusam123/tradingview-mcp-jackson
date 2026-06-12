@@ -58,6 +58,8 @@ CATALOG = {
         "setup_performance_miner", "pine_analytics_miner", "markov_regime_miner", "delivery_p6_miner",
         "explosive_moves_miner", "market_experience_miner", "anti_law_miner", "stock_profiles_miner",
         "meta_label_miner", "validation_results_miner", "law_competition_miner", "contagion_miner",
+        "precursor_sequence_miner", "cross_market_leadlag_miner", "dom_regime_miner",
+        "ensemble_disagreement_miner",
     ],
     "json_artifacts": [
         "counterfactual_atoms_last.json", "regime_conditional_sweep_last.json",

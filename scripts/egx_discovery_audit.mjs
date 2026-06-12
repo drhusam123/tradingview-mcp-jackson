@@ -259,7 +259,19 @@ if (oppPy.includes('POST_BREAKOUT_VOL_COLLAPSE')) {
   fail('opp_post_breakout_vol', 'A5 not linked in opportunity_score_v2');
 }
 
-// 28. Directive stats
+// 28. Level C miners (C1–C4)
+if (
+  minersPy.includes('mine_precursor_sequence')
+  && minersPy.includes('mine_cross_market_leadlag')
+  && minersPy.includes('mine_dom_regime')
+  && minersPy.includes('mine_ensemble_disagreement')
+) {
+  pass('level_c_miners', 'precursor + leadlag + dom_regime + ensemble disagreement miners');
+} else {
+  fail('level_c_miners', 'Missing C1–C4 domain miners');
+}
+
+// 29. Directive stats
 const dirs = countDirectiveStats();
 pass('directive_stats', `pending=${dirs.pending} completed=${dirs.completed}`);
 

@@ -114,6 +114,8 @@ ok('miners_session_micro', minersPy.includes('mine_session_microstructure'));
 ok('miners_defensive_sector', minersPy.includes('mine_defensive_sector_rotation'));
 const oppPy = readFileSync(join(PROJECT_ROOT, 'scripts/python/opportunity_score_v2.py'), 'utf8');
 ok('opp_post_breakout_penalty', oppPy.includes('POST_BREAKOUT_VOL_COLLAPSE'));
+ok('miners_level_c', minersPy.includes('mine_precursor_sequence')
+  && minersPy.includes('mine_ensemble_disagreement'));
 
 const post = readFileSync(join(PROJECT_ROOT, 'scripts/egx_post_session_ops.mjs'), 'utf8');
 ok('post_session_closed_loop', post.includes('egx_closed_loop'));
