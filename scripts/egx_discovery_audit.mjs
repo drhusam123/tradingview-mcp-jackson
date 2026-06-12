@@ -242,7 +242,24 @@ if (minersPy.includes('mine_near_ath_300') && minersPy.includes('mine_delivery_f
   fail('context_miners_b2_b4', 'Missing B2/B4 miners');
 }
 
-// 27. Directive stats
+// 27. Level A/B miners (A4, F9, B3) + opp A5 direct link
+if (minersPy.includes('mine_peer_rs_leader') && minersPy.includes('mine_session_microstructure')) {
+  pass('level_ab_miners', 'peer_rs_leader + session_microstructure miners wired');
+} else {
+  fail('level_ab_miners', 'Missing A4/F9 session miners');
+}
+if (minersPy.includes('mine_defensive_sector_rotation')) {
+  pass('defensive_sector_miner', 'B3 defensive sector rotation miner (banks/services)');
+} else {
+  fail('defensive_sector_miner', 'Missing B3 defensive sector miner');
+}
+if (oppPy.includes('POST_BREAKOUT_VOL_COLLAPSE')) {
+  pass('opp_post_breakout_vol', 'opportunity_score_v2 penalizes post-breakout vol collapse (A5)');
+} else {
+  fail('opp_post_breakout_vol', 'A5 not linked in opportunity_score_v2');
+}
+
+// 28. Directive stats
 const dirs = countDirectiveStats();
 pass('directive_stats', `pending=${dirs.pending} completed=${dirs.completed}`);
 

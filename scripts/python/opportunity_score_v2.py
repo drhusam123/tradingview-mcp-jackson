@@ -491,6 +491,17 @@ def score_symbol(
     # TRADING_LESSONS #1 — near ATH without volume confirmation
     if pct_from_ath <= 0.03 and vol10_vs20 < 2.5:
         failure_penalty += 14
+    # TRADING_LESSONS #2 / A5 — post-breakout session volume collapse
+    post_breakout_vol_collapse = False
+    if len(rows) >= 6:
+        prior_vols = [float(b.get("volume") or 0) for b in rows[-6:-1]]
+        today_vol = float(rows[-1].get("volume") or 0)
+        avg20v = avg_volume(rows, 20) or 0.0
+        if prior_vols and avg20v > 0:
+            peak = max(prior_vols)
+            if peak >= avg20v * 2.5 and today_vol < peak * 0.4:
+                post_breakout_vol_collapse = True
+                failure_penalty += 12
     false_rate = safe_float(dna_row["false_breakout_rate_pct"], None) if dna_row else None
     if false_rate is not None:
         failure_penalty += clamp(false_rate - 35, 0, 25)
@@ -611,6 +622,8 @@ def score_symbol(
         flags.append("QUALITY_V3")
     if recent_wick_fail:
         flags.append("RECENT_WICK_FAIL")
+    if post_breakout_vol_collapse:
+        flags.append("POST_BREAKOUT_VOL_COLLAPSE")
     if final_row and int(final_row["actionable"] or 0) == 1:
         flags.append("FINAL_ACTIONABLE")
     if final_veto:

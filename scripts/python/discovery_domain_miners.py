@@ -492,6 +492,161 @@ def mine_delivery_feedback(db) -> list[dict]:
     return out
 
 
+def mine_peer_rs_leader(db) -> list[dict]:
+    """A4 — sector RS leaders vs market (pine_analytics rs_score + stock_universe sector)."""
+    out = []
+    try:
+        row = db.execute("SELECT MAX(trade_date) AS d FROM pine_analytics").fetchone()
+        if not row or not row[0]:
+            return out
+        d = row[0]
+        rows = db.execute(
+            """
+            SELECT p.symbol, p.rs_score, p.rs_percentile, u.sector
+            FROM pine_analytics p
+            LEFT JOIN stock_universe u ON u.symbol = p.symbol
+            WHERE p.trade_date = ?
+              AND p.rs_score IS NOT NULL
+              AND p.rs_percentile IS NOT NULL
+            ORDER BY p.rs_percentile DESC
+            LIMIT 80
+            """
+            ,
+            (d,),
+        ).fetchall()
+        if not rows:
+            return out
+        leaders = [r for r in rows if (r[2] or 0) >= 75]
+        if leaders:
+            out.append(_atom(
+                "sector_rs_leader_gate", "L2", "pine_analytics", "peer_rs_leader_miner",
+                cond={"min_rs_percentile": 75, "n": len(leaders)}, boost=1.07, n=len(leaders),
+            ))
+        by_sector: dict[str, list] = {}
+        for sym, rs, pct, sector in rows:
+            sec = str(sector or "UNKNOWN").strip()
+            by_sector.setdefault(sec, []).append((sym, rs, pct))
+        for sec, items in by_sector.items():
+            if len(items) < 2:
+                continue
+            best = max(items, key=lambda x: x[2] or 0)
+            if (best[2] or 0) >= 70:
+                key = sec.replace(" ", "_")[:20]
+                out.append(_atom(
+                    f"peer_rs_{key}_{best[0]}", "L2", "pine_analytics", "peer_rs_leader_miner",
+                    cond={"symbol": best[0], "sector": sec, "rs_percentile_gte": 70},
+                    boost=1.06, wr=float(best[2] or 0), n=1,
+                ))
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
+def mine_session_microstructure(db) -> list[dict]:
+    """F9 / B1 — opening 30m + closing pressure patterns (EGX session-sensitive)."""
+    out = []
+    try:
+        row = db.execute("SELECT MAX(trade_date) AS d FROM pine_analytics").fetchone()
+        d = row[0] if row else None
+        if d:
+            opens = db.execute(
+                """
+                SELECT symbol, opening_range_high, opening_range_low, session_bias, rs_score
+                FROM pine_analytics
+                WHERE trade_date = ?
+                  AND opening_range_high IS NOT NULL
+                  AND opening_range_low IS NOT NULL
+                  AND opening_range_high > opening_range_low
+                """
+                ,
+                (d,),
+            ).fetchall()
+            bullish_open = 0
+            for sym, or_h, or_l, bias, rs in opens:
+                bias_u = str(bias or "").upper()
+                if bias_u in {"LONG", "BULL", "BULLISH"} or (rs and rs >= 55):
+                    bullish_open += 1
+                    out.append(_atom(
+                        f"session_open_bull_{sym}", "L2", "pine_analytics", "session_microstructure_miner",
+                        cond={"symbol": sym, "session_bias": bias_u or "BULL"}, boost=1.05, n=1,
+                    ))
+            if bullish_open >= 3:
+                out.append(_atom(
+                    "session_open_cluster", "L2", "pine_analytics", "session_microstructure_miner",
+                    cond={"bullish_open_count": bullish_open}, boost=1.06, n=bullish_open,
+                ))
+        cp_rows = db.execute(
+            """
+            SELECT symbol, closing_pressure, close_pos
+            FROM closing_pressure_daily
+            WHERE trade_date >= date('now', '-5 days')
+              AND closing_pressure >= 0.55
+              AND close_pos <= 0.40
+            ORDER BY closing_pressure DESC
+            LIMIT 10
+            """
+        ).fetchall()
+        for sym, cp, pos in cp_rows:
+            out.append(_atom(
+                f"session_close_pressure_{sym}", "L2", "closing_pressure_daily",
+                "session_microstructure_miner",
+                cond={"symbol": sym, "closing_pressure_gte": 0.55, "close_pos_lte": 0.4},
+                boost=1.08, wr=round(float(cp or 0) * 100, 1), n=1,
+            ))
+        if cp_rows:
+            out.append(_atom(
+                "session_close_pressure_cluster", "L2", "closing_pressure_daily",
+                "session_microstructure_miner", cond={"n_symbols": len(cp_rows)}, boost=1.07, n=len(cp_rows),
+            ))
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
+def mine_defensive_sector_rotation(db) -> list[dict]:
+    """B3 — bank/services strength in risk-off (TRADING_LESSONS #5)."""
+    out = []
+    defensive = {"BANK", "BANKS", "FINANCIAL", "FINANCIALS", "SERVICES", "SERVICE", "INSURANCE", "FINANCE"}
+    try:
+        risk_off = False
+        row = db.execute(
+            """
+            SELECT risk_on_score FROM cross_market_regime
+            ORDER BY date DESC LIMIT 1
+            """
+        ).fetchone()
+        if row and row[0] is not None and float(row[0]) < 45:
+            risk_off = True
+            out.append(_atom(
+                "defensive_risk_off_gate", "L2", "cross_market_regime", "defensive_sector_miner",
+                cond={"risk_on_score_lt": 45}, boost=1.05,
+            ))
+        rows = db.execute(
+            """
+            SELECT sector, pct_above_ema20, ad_ratio
+            FROM sector_breadth_daily
+            WHERE date >= date('now', '-7 days')
+            ORDER BY date DESC
+            """
+        ).fetchall()
+        seen = set()
+        for sector, pct20, ad_ratio in rows[:40]:
+            sec = str(sector or "").upper()
+            if sec in seen:
+                continue
+            is_def = any(d in sec for d in defensive)
+            if is_def and (pct20 or 0) >= 0.48:
+                out.append(_atom(
+                    f"defensive_{sec.replace(' ', '_')[:18]}", "L2", "sector_breadth_daily",
+                    "defensive_sector_miner",
+                    cond={"sector": sector, "risk_off": risk_off}, boost=1.08 if risk_off else 1.04,
+                ))
+                seen.add(sec)
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
 def mine_post_breakout_vol(db) -> list[dict]:
     """A5 / F6 — post-breakout volume decay penalize + retest volume confirm."""
     return [
@@ -1236,6 +1391,9 @@ def run_all_miners() -> tuple[list[dict], dict]:
     atoms.extend(mine_quality_universe_v3(db))
     atoms.extend(mine_near_ath_300(db))
     atoms.extend(mine_delivery_feedback(db))
+    atoms.extend(mine_peer_rs_leader(db))
+    atoms.extend(mine_session_microstructure(db))
+    atoms.extend(mine_defensive_sector_rotation(db))
     atoms.extend(mine_post_breakout_vol(db))
     atoms.extend(mine_cross_market(db))
     atoms.extend(mine_tsfresh_patterns(db))
