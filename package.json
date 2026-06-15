@@ -80,6 +80,7 @@
     "egx:phase12:bootstrap": "node scripts/egx_phase12_bootstrap.mjs",
     "egx:phase13:live-validation": "node scripts/egx_phase13_live_validation.mjs",
     "egx:phase14:graduation": "node scripts/egx_phase14_graduation.mjs",
+    "egx:phase15:client-beta": "node scripts/egx_phase15_client_beta.mjs",
     "egx:env:activate-phase14": "node scripts/egx_env_activate_phase14.mjs",
     "egx:p6:historical-backfill": "node scripts/egx_p6_historical_backfill.mjs",
     "egx:discovery:strategy:sweep": "node scripts/egx_discovery.mjs --section sweep",

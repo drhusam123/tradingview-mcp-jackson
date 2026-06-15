@@ -57,11 +57,10 @@ Outputs: `data/phase14_graduation_last.json`, `data/research_client_env.json`
 
 ---
 
-## Phase 15 — Next
+## Phase 16 — Next
 
-1. First live session with `MED_CLIENT_SIGNAL=1` effective env — monitor opp delta
-2. Enable `MED_FEED_BOOST` when streak hits 5
-3. MDE behavior memory after day 14
-4. Client beta sign-off checklist
+1. Live beta session monitoring post sign-off
+2. MED_FEED_BOOST when A/B streak = 5
+3. MDE behavior memory day 14
 
-**Phase 14 complete.**
+**Phase 15 runs via `npm run egx:phase15:client-beta`.**

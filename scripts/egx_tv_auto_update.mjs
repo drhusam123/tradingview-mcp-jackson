@@ -639,6 +639,13 @@ async function main() {
         { critical: false, timeoutMs: 60_000 },
       );
     }
+    if (process.env.MED_CLIENT_SIGNAL === '1' || process.env.EGX_PHASE11_AUTO_PROMOTE === '1') {
+      run(
+        `${rePrefix} ${PYTHON3} scripts/python/med_opp_delta_monitor.py '${JSON.stringify({ trade_date: signalDate })}'`,
+        'MED opp delta monitor (Phase 15)',
+        { critical: false, timeoutMs: 60_000 },
+      );
+    }
   }
   run(
     `${PYTHON3} scripts/python/counterfactual_atom_miner.py`,

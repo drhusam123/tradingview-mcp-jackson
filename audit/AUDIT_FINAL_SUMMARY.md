@@ -23,6 +23,7 @@
 | 12 | [PHASE_12_HISTORICAL_BOOTSTRAP_REPORT.md](./PHASE_12_HISTORICAL_BOOTSTRAP_REPORT.md) | OHLCV bootstrap graduation · no live-session wait |
 | 13 | [PHASE_13_LIVE_VALIDATION_REPORT.md](./PHASE_13_LIVE_VALIDATION_REPORT.md) | MED shadow ledger · feed A/B · MDE pilot · live KPI |
 | 14 | [PHASE_14_GRADUATION_LIVE_PROBES_REPORT.md](./PHASE_14_GRADUATION_LIVE_PROBES_REPORT.md) | Env activation · MED probe · A/B streak · ops KPI line |
+| 15 | [PHASE_15_CLIENT_BETA_SIGNOFF_REPORT.md](./PHASE_15_CLIENT_BETA_SIGNOFF_REPORT.md) | Opp delta monitor · client beta sign-off checklist |
 
 ---
 

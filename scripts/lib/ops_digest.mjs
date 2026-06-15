@@ -57,6 +57,21 @@ export function loadP6LiveKpiDigest() {
   }
 }
 
+function loadClientBetaSignoffDigest() {
+  const p = join(PROJECT_ROOT, 'data/client_beta_signoff_last.json');
+  if (!existsSync(p)) return null;
+  try {
+    const s = JSON.parse(readFileSync(p, 'utf8'));
+    return {
+      signed_off: s.client_beta_signed_off,
+      required: `${s.required_pass}/${s.required_total}`,
+      blockers: s.blockers?.length ?? 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** Reconcile counts for recent actionable signal-days. */
 export function reconcileCounts(days = 14) {
   if (!existsSync(DB_PATH)) return { total: 0, sent: 0, pending: 0 };
@@ -106,6 +121,7 @@ export function buildDeliveryDigest(signalDate = latestOhlcvDate()) {
     verify_pass: verifyPass,
     lre: loadLreResearchDigest(),
     p6_kpi: loadP6LiveKpiDigest(),
+    client_beta: loadClientBetaSignoffDigest(),
   };
 }
 
@@ -127,6 +143,11 @@ export function formatOpsSuccessMessage(event, detail) {
     if (detail.p6_kpi.med_client_signal === '1') {
       lines.push('🧪 MED_CLIENT_SIGNAL probe active (shadow)');
     }
+  }
+  if (detail.client_beta) {
+    lines.push(
+      `🎓 Client beta: ${detail.client_beta.signed_off ? 'SIGNED OFF' : 'accumulating'} (${detail.client_beta.required} required)`,
+    );
   }
   return `✅ <b>EGX Ops OK</b>\n${lines.join('\n')}`;
 }

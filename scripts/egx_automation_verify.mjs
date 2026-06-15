@@ -204,7 +204,11 @@ ok('npm egx:phase14:graduation', npmScripts['egx:phase14:graduation']?.includes(
 ok('npm egx:env:activate-phase14', npmScripts['egx:env:activate-phase14']?.includes('egx_env_activate_phase14.mjs'));
 ok('script phase14_graduation.mjs', existsSync(join(PROJECT_ROOT, 'scripts/lib/phase14_graduation.mjs')));
 ok('script med_client_signal_probe.py', existsSync(join(PROJECT_ROOT, 'scripts/python/med_client_signal_probe.py')));
-ok('ops digest p6 kpi', readFileSync(join(PROJECT_ROOT, 'scripts/lib/ops_digest.mjs'), 'utf8').includes('loadP6LiveKpiDigest'));
+ok('npm egx:phase15:client-beta', npmScripts['egx:phase15:client-beta']?.includes('egx_phase15_client_beta.mjs'));
+ok('script client_beta_signoff.mjs', existsSync(join(PROJECT_ROOT, 'scripts/lib/client_beta_signoff.mjs')));
+ok('script med_opp_delta_monitor.py', existsSync(join(PROJECT_ROOT, 'scripts/python/med_opp_delta_monitor.py')));
+ok('eod med opp delta', tvAuto.includes('med_opp_delta_monitor.py'));
+ok('ops digest client beta', readFileSync(join(PROJECT_ROOT, 'scripts/lib/ops_digest.mjs'), 'utf8').includes('loadClientBetaSignoffDigest'));
 ok('eod med daily chain', tvAuto.includes('med_0_3_daily_chain.py'));
 ok('eod med client probe', tvAuto.includes('med_client_signal_probe.py'));
 ok('registry med', reg.includes('med_daily_chain'));

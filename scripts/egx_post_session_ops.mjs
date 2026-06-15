@@ -179,6 +179,12 @@ try {
   console.log(`⚠️  Phase 14 graduation: ${e.message?.slice(0, 80)}`);
 }
 
+try {
+  execSync(`"${NODE}" scripts/egx_phase15_client_beta.mjs --skip-phase14`, { cwd: PROJECT_ROOT, stdio: 'inherit', timeout: 180_000 });
+} catch (e) {
+  console.log(`⚠️  Phase 15 client beta: ${e.message?.slice(0, 80)}`);
+}
+
 const digest = { ...buildDeliveryDigest(signalDate), proof_loop: proof };
 const mlBoost = existsSync(join(PROJECT_ROOT, 'data/ml_boost_last.json'))
   ? JSON.parse(readFileSync(join(PROJECT_ROOT, 'data/ml_boost_last.json'), 'utf8'))
