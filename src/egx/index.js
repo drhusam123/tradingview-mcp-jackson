@@ -13,7 +13,7 @@ export { getDB, saveScan, saveTrade, savePostMortem,
          saveFinancialData, getFinancialData, getUndervaluedStocks,
          addNote, searchNotes,
          saveDailyReport, getLastReport, getReportByDate,
-         getOHLCVRange, getStaleSymbols,
+         getOHLCVRange, getStaleSymbols, getSymbolsLaggingOhlcv,
          saveIndicatorsCache, getLatestIndicators,
          getSignalsFromCache, getIndicatorsCacheStats }           from './database.js';
 export { analyzeByDayOfWeek, analyzeVolumeZones,

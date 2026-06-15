@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Go-live completion — P6 countdown, Telegram, cron, git push.
- * Usage: node scripts/egx_go_live.mjs [--skip-push] [--skip-cron] [--telegram-dry-run]
+ * Usage: node scripts/egx_go_live.mjs [--send] [--skip-push] [--skip-cron] [--telegram-dry-run] [--skip-telegram]
  */
 import { execSync } from 'child_process';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
@@ -19,7 +19,9 @@ loadEnv();
 const NODE = process.execPath;
 const SKIP_PUSH = process.argv.includes('--skip-push');
 const SKIP_CRON = process.argv.includes('--skip-cron');
-const TG_DRY = process.argv.includes('--telegram-dry-run') || !process.argv.includes('--skip-telegram');
+const TG_SKIP = process.argv.includes('--skip-telegram');
+const TG_SEND = process.argv.includes('--send');
+const TG_DRY = !TG_SKIP && (process.argv.includes('--telegram-dry-run') || !TG_SEND);
 
 const steps = [];
 function step(name, fn, { optional = false } = {}) {
@@ -104,15 +106,16 @@ step('Telegram env', () => {
 
 step('Delivered outcomes sync', () => syncDeliveredOutcomes());
 
-if (TG_DRY) {
-  step('Telegram pipeline dry-run', () => {
-    execSync(`"${NODE}" scripts/egx_telegram_cron.mjs --dry-run`, {
+if (!TG_SKIP) {
+  step(TG_SEND ? 'Telegram pipeline live send' : 'Telegram pipeline dry-run', () => {
+    const flags = TG_SEND ? '' : '--dry-run';
+    execSync(`"${NODE}" scripts/egx_telegram_cron.mjs ${flags}`.trim(), {
       cwd: PROJECT_ROOT,
       stdio: 'inherit',
       timeout: 600_000,
       env: { ...process.env },
     });
-    return { dry_run: true };
+    return { dry_run: !TG_SEND, live: TG_SEND };
   }, { optional: true });
 }
 

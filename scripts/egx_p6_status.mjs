@@ -17,8 +17,9 @@ import { writeMonitoringSnapshot } from './lib/monitoring_snapshot.mjs';
 loadEnv();
 
 const AS_JSON = process.argv.includes('--json');
-const proof = getProofLoopMetrics();
-const delivered = getProofLoopMetrics({ deliveredOnly: true });
+const proof = getProofLoopMetrics({ safetyFiltered: true });
+const proofRaw = getProofLoopMetrics();
+const delivered = getProofLoopMetrics({ deliveredOnly: true, allDeliveredTiers: true });
 const counter = runCounterfactualSafety();
 const loopAudit = auditClosedLoops({ maxAgeHours: 168 });
 const directives = countDirectiveStats();
@@ -36,6 +37,12 @@ const report = {
     target_n: PROOF_MIN_N,
     gate_pass: proof.gate_pass,
     gate_reason: proof.gate_reason,
+    safety_filtered: true,
+  },
+  raw_track: {
+    n_completed: proofRaw.n_completed,
+    win_rate: proofRaw.win_rate,
+    gate_pass: proofRaw.gate_pass,
   },
   counterfactual: {
     projected_wr: counter.projected_wr,

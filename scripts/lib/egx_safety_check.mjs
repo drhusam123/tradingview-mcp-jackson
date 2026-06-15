@@ -39,6 +39,7 @@ const DEFAULT_RULES = {
     repeat_ultra_loss_lookback_days: 120,
     max_ultra_losses_per_symbol: 1,
     require_indicator_cache: true,
+    block_explosive_low_vol: true,
   },
 };
 
@@ -312,15 +313,17 @@ function evaluateOne(symbol, signalDate, rules, filters, behavioralFilters = {},
   const explosiveMinVol = bf.explosive_min_vol_ratio ?? 2.5;
   const ultraThinVol = bf.explosive_ultra_thin_vol ?? 1.0;
   if (bclass === 'EXPLOSIVE' && vol != null && vol < explosiveMinVol) {
-    const thinWarn = vol >= ultraThinVol;
+    const hardBlock = bf.block_explosive_low_vol !== false;
     conditions.explosive_min_vol = cond(
       'explosive_min_vol',
-      false,
+      hardBlock,
       vol,
-      thinWarn ? `warn < ${explosiveMinVol}x` : `ultra-thin < ${ultraThinVol}x`,
-      thinWarn,
+      hardBlock ? `min ${explosiveMinVol}x` : `warn < ${explosiveMinVol}x`,
+      !hardBlock,
     );
-    if (thinWarn) {
+    if (hardBlock) {
+      failed.push('explosive_min_vol');
+    } else {
       warnings.push(`explosive vol ${vol}x below lesson band ${explosiveMinVol}x`);
     }
   }

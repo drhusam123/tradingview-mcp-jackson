@@ -42,6 +42,28 @@ Weekly alpha loop: `python3 scripts/python/research_director.py morning_run` (gr
 
 `run_daily.mjs` without `--legacy` delegates to this path. Client Telegram uses only `egx_telegram_daily.mjs` + `telegram_report.py` reading `final_signals.actionable=1`.
 
+### LRE research feed (shadow, additive)
+
+Runs inside `egx_tv_auto_update.mjs` when `EGX_LRE_ENABLED` is not `0`:
+
+```text
+LRE daily radar → dual-gate daily → 3.5 pilot → LRE-4.0 feed → 3.6B forward ledger
+  → discovery fabric light → opportunity_score_v2 (EGX_LRE_FEED_BOOST=1)
+  → intelligence_prioritizer → …
+```
+
+```bash
+npm run egx:lre:dual-gate-daily   # causal audit upsert
+npm run egx:lre:research-feed     # feed → fabric / opp / prioritizer
+npm run egx:lre:integration-test  # actionable unchanged + boost cap
+npm run egx:lre:acceptance        # invariant gate
+npm run egx:lre:status            # health + graduation tracker
+npm run egx:lre:verify            # acceptance + status (quick gate)
+npm run egx:lre:forward-shadow    # live OOS ledger (from 2026-06-12)
+```
+
+Invariants: `EGX_LRE_SHADOW=1`, `EGX_LRE_OPP_BOOST=0`, `client_path_allowed=False`. See `docs/LRE_INTEGRATION_CONTRACT.md`.
+
 ## Schema migrations
 
 ```bash

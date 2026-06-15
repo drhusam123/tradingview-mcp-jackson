@@ -21,7 +21,7 @@ import { join } from 'path';
 import { loadEnv, PROJECT_ROOT } from './lib/load_env.mjs';
 import { latestReadySignalDate } from './lib/delivery_audit.mjs';
 import { getProofLoopMetrics, writeProofLoopSnapshot, PROOF_MIN_N, PROOF_MIN_WR } from './lib/proof_loop.mjs';
-import { syncDeliveredOutcomes } from './lib/delivered_outcomes.mjs';
+import { syncDeliveredOutcomes, backfillOutcomeSafetyGate } from './lib/delivered_outcomes.mjs';
 import { mergeRuntimeRules } from './lib/runtime_rules_merge.mjs';
 import { ingestP6Directives } from './lib/p6_directives_ingest.mjs';
 import { runOpportunityQualityLoop } from './lib/opportunity_quality_loop.mjs';
@@ -57,7 +57,11 @@ function stage(name, fn) {
 console.log('\n═══ EGX Closed Loop (master) ═══');
 console.log(`  Signal date: ${signalDate}\n`);
 
-const delivered = stage('sync_delivered_outcomes', () => syncDeliveredOutcomes());
+const delivered = stage('sync_delivered_outcomes', () => {
+  const sync = syncDeliveredOutcomes();
+  const backfill = backfillOutcomeSafetyGate();
+  return { ...sync, safety_backfill: backfill };
+});
 
 const proofAll = stage('proof_snapshot_all', () => writeProofLoopSnapshot());
 const proofDelivered = stage('proof_snapshot_delivered', () => {

@@ -29,6 +29,7 @@ export function getDB() {
     db = new Database(DB_PATH);
     db.pragma('journal_mode = WAL');
     db.pragma('foreign_keys = ON');
+    db.pragma('busy_timeout = 15000');
     initSchema(db);
   }
   return db;
@@ -1043,6 +1044,25 @@ export function getStaleSymbols(daysOld = 1) {
   `).all(cutoffStr).map(r => r.symbol);
 }
 
+/**
+ * Symbols whose latest OHLCV bar is older than targetDate (per-symbol lag audit).
+ * @param {string} targetDate - YYYY-MM-DD (typically last EGX trading day)
+ * @returns {{ symbol: string, last_bar: string | null }[]}
+ */
+export function getSymbolsLaggingOhlcv(targetDate) {
+  const db = getDB();
+  return db.prepare(`
+    SELECT u.symbol,
+           MAX(date(h.bar_time, 'unixepoch')) AS last_bar
+    FROM stock_universe u
+    LEFT JOIN ohlcv_history h ON h.symbol = u.symbol
+    WHERE u.status IN ('active', 'fetched')
+    GROUP BY u.symbol
+    HAVING last_bar IS NULL OR last_bar < ?
+    ORDER BY last_bar ASC, u.symbol ASC
+  `).all(targetDate);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // ██  INDICATORS CACHE API ──────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1057,6 +1077,11 @@ export function saveIndicatorsCache(symbol, barDate, ind, { source = 'local' } =
   const db = getDB();
   const cols = db.prepare('PRAGMA table_info(indicators_cache)').all().map(r => r.name);
   const hasSource = cols.includes('source');
+  const placeholders = [
+    ...Array(38).fill('?'),
+    ...(hasSource ? ['?'] : []),
+    "datetime('now')",
+  ].join(', ');
   db.prepare(`
     INSERT OR REPLACE INTO indicators_cache
       (symbol, bar_date, ema10, ema20, ema50, ema200,
@@ -1071,7 +1096,7 @@ export function saveIndicatorsCache(symbol, barDate, ind, { source = 'local' } =
        rsi_slope_3d,
        ${hasSource ? 'source,' : ''}
        updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,${hasSource ? '?,' : ''}datetime('now'))
+    VALUES (${placeholders})
   `).run(
     symbol, barDate,
     ind.ema10    ?? null, ind.ema20  ?? null, ind.ema50   ?? null, ind.ema200 ?? null,
@@ -1079,13 +1104,13 @@ export function saveIndicatorsCache(symbol, barDate, ind, { source = 'local' } =
     ind.ema50    ? (ind.lastClose > ind.ema50  ? 1 : 0) : null,
     ind.ema200   ? (ind.lastClose > ind.ema200 ? 1 : 0) : null,
     ind.rsi      ?? null,
-    ind.macd?.macd        ?? null, ind.macd?.signal ?? null, ind.macd?.histogram ?? null,
-    ind.stochastic?.k     ?? null, ind.stochastic?.d ?? null,
-    ind.cci      ?? null, ind.williamsR ?? null,
+    ind.macd?.macd ?? null, ind.macd?.signal ?? null, ind.macd?.histogram ?? null,
+    ind.stoch?.k ?? ind.stochastic?.k ?? null, ind.stoch?.d ?? ind.stochastic?.d ?? null,
+    ind.cci      ?? null, ind.williams ?? ind.williamsR ?? null,
     ind.atr      ?? null,
-    ind.bollingerBands?.upper  ?? null, ind.bollingerBands?.middle ?? null,
-    ind.bollingerBands?.lower  ?? null, ind.bollingerBands?.width  ?? null,
-    ind.bollingerBands?.position ?? null,
+    ind.bb?.upper  ?? ind.bollingerBands?.upper  ?? null, ind.bb?.middle ?? ind.bollingerBands?.middle ?? null,
+    ind.bb?.lower  ?? ind.bollingerBands?.lower  ?? null, ind.bb?.width  ?? ind.bollingerBands?.width  ?? null,
+    ind.bb?.pb ?? ind.bollingerBands?.position ?? ind.bb?.position ?? null,
     ind.obv      ?? null, ind.obvDivergence ?? null,
     ind.volumeRatio20 ?? null,
     ind.isHammer       ? 1 : 0,
@@ -1589,7 +1614,7 @@ export default { getDB, saveScan, saveTrade, savePostMortem, updateSetupPerforma
                  saveRulePerformance, getRulePerformance, getAllRulesPerformance,
                  saveFinancialData, getFinancialData, getUndervaluedStocks,
                  addNote, searchNotes, saveDailyReport, getLastReport, getReportByDate,
-                 getOHLCVRange, getStaleSymbols,
+                 getOHLCVRange, getStaleSymbols, getSymbolsLaggingOhlcv,
                  saveIndicatorsCache, getLatestIndicators, getSignalsFromCache, getIndicatorsCacheStats,
                  // Phase 49-55
                  initPhase49to55Schema,

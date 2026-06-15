@@ -719,6 +719,16 @@ def import_gate_passed_signals(conn: sqlite3.Connection, date: str = None,
         if exists:
             continue
 
+        # Skip if symbol already has an open paper position (any date — prevents cap blowout)
+        open_exists = conn.execute(
+            """SELECT id FROM portfolio_positions
+               WHERE symbol=? AND status IN ('OPEN', 'PARTIAL_T1', 'PARTIAL_T2')
+               LIMIT 1""",
+            (sym,)
+        ).fetchone()
+        if open_exists:
+            continue
+
         entry_price = float(sig["entry_price"] or 0)
         if entry_price <= 0:
             # Try current price from ohlcv_history_execution

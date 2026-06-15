@@ -41,6 +41,17 @@ console.log('\n═══ EGX Gap Repair ═══\n');
 
 run('purge_test_final_signals', () => purgeTestFinalSignals());
 
+run('ohlcv_hygiene_purge', () => {
+  const max = process.argv.includes('--full') ? '30' : '15';
+  execSync(`"${NODE}" scripts/egx_ohlcv_catchup.mjs --max-symbols ${max} --archive-chronic`, {
+    cwd: PROJECT_ROOT,
+    stdio: 'inherit',
+    timeout: 3_600_000,
+    env: { ...process.env, TV_CDP_BROWSER: process.env.TV_CDP_BROWSER || 'chrome' },
+  });
+  return { max_symbols: max };
+}, { optional: true });
+
 run('pillow_check', () => {
   try {
     execSync(`${PYTHON} -c "import PIL; print(PIL.__version__)"`, {

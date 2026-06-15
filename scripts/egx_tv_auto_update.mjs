@@ -13,7 +13,7 @@ import { execSync } from 'child_process';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
-import { getDB } from '../src/egx/index.js';
+import { getDB, getSymbolsLaggingOhlcv } from '../src/egx/index.js';
 import { callMCPTool } from '../src/egx/tv_bridge.js';
 import { isTradingDay, cairoDateParts } from './lib/egx_calendar.mjs';
 import { alertNotification } from './lib/notification_alert.mjs';
@@ -220,6 +220,35 @@ function staleness(dataDate, refDate = new Date().toISOString().split('T')[0]) {
   return JSON.parse(raw);
 }
 
+function actionableSymbolsForDate(tradeDate) {
+  const db = getDB();
+  try {
+    return db.prepare(`
+      SELECT DISTINCT symbol FROM final_signals
+      WHERE trade_date = ? AND actionable = 1
+      ORDER BY symbol
+    `).all(tradeDate).map(r => r.symbol);
+  } catch {
+    return [];
+  }
+}
+
+function syncLaggingSymbols({ signalDate, tvReady, laggingSymbols, label }) {
+  if (!tvReady || !laggingSymbols?.length) return { synced: 0, failed: [] };
+  log(`${label}: ${laggingSymbols.length} symbol(s) — ${laggingSymbols.slice(0, 12).join(', ')}${laggingSymbols.length > 12 ? '…' : ''}`);
+  const failed = [];
+  let synced = 0;
+  for (const sym of laggingSymbols) {
+    const r = run(`node scripts/daily_update.mjs --symbol ${sym}`, `Per-symbol OHLCV catch-up: ${sym}`, {
+      critical: false,
+      timeoutMs: 1000 * 60 * 5,
+    });
+    if (r?.success) synced += 1;
+    else failed.push(sym);
+  }
+  return { synced, failed };
+}
+
 async function ensureTradingView() {
   let health = await callMCPTool('tv_health_check', {});
   if (health?.success) {
@@ -279,7 +308,7 @@ async function main() {
   const signalDate = stale.last_trading_day || latest || stale.ref_date;
   log(`Latest OHLCV: ${latest ?? 'none'} | last trading day: ${stale.last_trading_day} | stale sessions: ${stale.staleness_trading_days}`);
 
-  const needsDaily = FORCE || stale.staleness_trading_days > 0;
+  const needsDaily = stale.staleness_trading_days > 0;
   const tvReady = needsDaily || PINE || DRAWINGS || LIVE_ALERTS || TECH
     ? await ensureTradingView()
     : false;
@@ -293,7 +322,10 @@ async function main() {
   if (needsDaily) {
     if (tvReady) {
       const extra = maxSymbols ? ` --max-symbols ${maxSymbols}` : '';
-      run(`node scripts/daily_update.mjs --force${extra}`, 'TradingView daily OHLCV sync', {
+      // Incremental by default — only pass --force when user explicitly requests it.
+      // Forcing all 269 symbols caused ~107min fetches and ETIMEDOUT on cron (2026-06-14).
+      const dailyFlags = FORCE ? '--force' : '';
+      run(`node scripts/daily_update.mjs ${dailyFlags}${extra}`.replace(/\s+/g, ' ').trim(), 'TradingView daily OHLCV sync', {
         critical: true,
         timeoutMs: 1000 * 60 * 240,
       });
@@ -302,6 +334,24 @@ async function main() {
     }
   } else {
     log('Daily OHLCV is fresh by EGX trading calendar; no daily sync needed.');
+  }
+
+  // Per-symbol lag: aggregate MAX can be fresh while individual symbols (e.g. actionable) trail.
+  const laggingRows = getSymbolsLaggingOhlcv(signalDate);
+  const laggingSet = new Set(laggingRows.map(r => r.symbol));
+  if (laggingRows.length > 0) {
+    log(`Per-symbol OHLCV lag: ${laggingRows.length} symbols behind ${signalDate}`);
+    const actionableLag = actionableSymbolsForDate(signalDate).filter(s => laggingSet.has(s));
+    if (actionableLag.length > 0 && tvReady) {
+      syncLaggingSymbols({
+        signalDate,
+        tvReady,
+        laggingSymbols: actionableLag,
+        label: 'Actionable OHLCV catch-up',
+      });
+    } else if (actionableLag.length > 0) {
+      log(`Actionable symbols missing ${signalDate} OHLCV: ${actionableLag.join(', ')} (TV not connected)`);
+    }
   }
 
   if (DEEP && tvReady) {
@@ -441,6 +491,116 @@ async function main() {
       'MDE shadow — discovery brain + scoring + setups (no client path)',
       { critical: false, timeoutMs: 600_000 },
     );
+    run(
+      `${PYTHON3} scripts/python/mde_signal_provider.py run '${JSON.stringify({ trade_date: signalDate })}'`,
+      'MDE signal provider — COMP_001B + PRDC shadow signals (observe only)',
+      { critical: false, timeoutMs: 300_000 },
+    );
+    if (process.env.EGX_MDE_PAPER_REFRESH === '1') {
+      run(
+        `${PYTHON3} scripts/python/mde_forward_paper_trading.py`,
+        'MDE paper-trading gate refresh (2.10E full replay)',
+        { critical: false, timeoutMs: 600_000 },
+      );
+    }
+  }
+  if (process.env.EGX_LRE_ENABLED !== '0' && process.env.EGX_LRE_ARCHAEOLOGY_REFRESH === '1') {
+    run(
+      `${PYTHON3} scripts/python/egx_liquidity_rotation_engine.py archaeology`,
+      'LRE shadow — full-history explosion archaeology (no client path)',
+      { critical: false, timeoutMs: 900_000 },
+    );
+  }
+  if (process.env.EGX_LRE_ENABLED !== '0') {
+    run(
+      `${PYTHON3} scripts/python/egx_liquidity_rotation_engine.py daily '${JSON.stringify({ trade_date: signalDate })}'`,
+      'LRE shadow — daily pre-explosion radar + 5 lists (no client path)',
+      { critical: false, timeoutMs: 300_000 },
+    );
+    run(
+      `${PYTHON3} scripts/python/lre_signal_provider.py run '${JSON.stringify({ trade_date: signalDate })}'`,
+      'LRE signal provider — shadow scores (observe only)',
+      { critical: false, timeoutMs: 120_000 },
+    );
+    if (process.env.EGX_LRE_PAPER_REFRESH === '1') {
+      run(
+        `${PYTHON3} scripts/python/lre_forward_paper_trading.py '${JSON.stringify({ trade_date: signalDate })}'`,
+        'LRE paper-trading gate refresh (3.0 full replay)',
+        { critical: false, timeoutMs: 900_000 },
+      );
+    }
+    if (process.env.EGX_LRE_FILTER_REFRESH === '1') {
+      run(
+        `${PYTHON3} scripts/python/lre_3_1_filter_tightening.py '${JSON.stringify({ trade_date: signalDate })}'`,
+        'LRE filter tightening replay (3.1 A-family audit)',
+        { critical: false, timeoutMs: 900_000 },
+      );
+    }
+    if (process.env.EGX_LRE_STAGE_REBUILD_REFRESH === '1') {
+      run(
+        `${PYTHON3} scripts/python/lre_3_2_stage_rebuild.py '${JSON.stringify({ trade_date: signalDate })}'`,
+        'LRE stage rebuild diagnostic (3.2 threshold/timing audit)',
+        { critical: false, timeoutMs: 900_000 },
+      );
+    }
+    if (process.env.EGX_LRE_DUAL_GATE_REFRESH === '1') {
+      run(
+        `${PYTHON3} scripts/python/lre_3_3_dual_gate_audit.py '${JSON.stringify({ trade_date: signalDate })}'`,
+        'LRE × MDE dual-gate shadow audit (3.3 observe-only)',
+        { critical: false, timeoutMs: 900_000 },
+      );
+    }
+    if (process.env.EGX_LRE_CONFLUENCE_ROBUSTNESS_REFRESH === '1') {
+      run(
+        `${PYTHON3} scripts/python/lre_3_4_confluence_robustness.py '${JSON.stringify({ trade_date: signalDate })}'`,
+        'LRE confluence robustness & dominance detox (3.4)',
+        { critical: false, timeoutMs: 600_000 },
+      );
+    }
+    run(
+      `${PYTHON3} scripts/python/lre_dual_gate_daily.py '${JSON.stringify({ trade_date: signalDate })}'`,
+      'LRE dual-gate daily refresh (causal, feeds LRE-4.0)',
+      { critical: false, timeoutMs: 180_000 },
+    );
+    run(
+      `${PYTHON3} scripts/python/lre_3_5_dual_gate_shadow_pilot.py pilot '${JSON.stringify({ trade_date: signalDate })}'`,
+      'LRE capped dual-gate shadow pilot daily ledger (3.5)',
+      { critical: false, timeoutMs: 120_000 },
+    );
+    run(
+      `${PYTHON3} scripts/python/lre_4_0_research_feed.py '${JSON.stringify({ trade_date: signalDate })}'`,
+      'LRE-4.0 research feed → fabric / opp / prioritizer (additive only)',
+      { critical: false, timeoutMs: 180_000 },
+    );
+    run(
+      `${PYTHON3} scripts/python/lre_3_6b_forward_shadow_pilot.py '${JSON.stringify({ trade_date: signalDate })}'`,
+      'LRE-3.6B live forward shadow ledger (post walk-forward)',
+      { critical: false, timeoutMs: 120_000 },
+    );
+    run(
+      `${PYTHON3} scripts/python/lre_4_0_status.py '${JSON.stringify({ trade_date: signalDate })}'`,
+      'LRE-4.0 status + graduation tracker',
+      { critical: false, timeoutMs: 60_000 },
+    );
+    if (process.env.EGX_LRE_SHADOW_PILOT_REFRESH === '1') {
+      run(
+        `${PYTHON3} scripts/python/lre_3_5_dual_gate_shadow_pilot.py run '${JSON.stringify({ trade_date: signalDate })}'`,
+        'LRE shadow pilot caps replay design (3.5 full)',
+        { critical: false, timeoutMs: 300_000 },
+      );
+    }
+  }
+  if (process.env.EGX_MED_ENABLED !== '0') {
+    run(
+      `MED_SHADOW=1 MED_CLIENT_SIGNAL=0 MED_OPP_BOOST=0 MED_FEED_BOOST=0 MED_POSITION_SIZING_LIVE=0 ${PYTHON3} scripts/python/med_0_3_daily_chain.py '${JSON.stringify({ trade_date: signalDate })}'`,
+      'MED shadow — MED-0.4 daily chain + HC audit (no client path)',
+      { critical: false, timeoutMs: 900_000 },
+    );
+    run(
+      `MED_SHADOW=1 MED_CLIENT_SIGNAL=0 ${PYTHON3} scripts/python/med_0_3_status.py '${JSON.stringify({ trade_date: signalDate })}'`,
+      'MED-0.3 status + discovery feed health',
+      { critical: false, timeoutMs: 60_000 },
+    );
   }
   run(
     `${PYTHON3} scripts/python/counterfactual_atom_miner.py`,
@@ -453,9 +613,14 @@ async function main() {
     { critical: false, timeoutMs: 600_000 },
   );
   run(
-    `${PYTHON3} scripts/python/opportunity_score_v2.py run '${discoveryParamsJson}'`,
-    'Opportunity Score v2 (P6-tuned, post-score)',
+    `EGX_LRE_SHADOW=1 EGX_LRE_OPP_BOOST=0 EGX_LRE_FEED_BOOST=1 MED_SHADOW=1 MED_CLIENT_SIGNAL=0 MED_OPP_BOOST=0 MED_FEED_BOOST=0 MED_FEED_PENALIZE=1 ${PYTHON3} scripts/python/opportunity_score_v2.py run '${discoveryParamsJson}'`,
+    'Opportunity Score v2 (P6-tuned, post-score + LRE boost + MED penalize)',
     { critical: true },
+  );
+  run(
+    `${PYTHON3} scripts/python/intelligence_prioritizer.py prioritize '{}'`,
+    'Intelligence prioritizer (consumes LRE research feed)',
+    { critical: false, timeoutMs: 180_000 },
   );
   run(`${PYTHON3} scripts/python/signal_integration.py track_outcomes`, 'Track recommendation outcomes (Ph 32)');
   run(`${PYTHON3} scripts/python/ml_advanced.py shadow_update ${signalDate}`, 'Gate shadow book — record vetoed signals');
@@ -498,10 +663,14 @@ async function main() {
 
   run(`node scripts/tv_proof_pack.mjs --date ${signalDate} --limit 8`, 'Client proof-pack gate');
 
-  if (LIVE_ALERTS) {
-    run(`node scripts/fetch_alerts.mjs --date ${signalDate} --live`, 'Create live TradingView alerts');
+  if (tvReady) {
+    if (LIVE_ALERTS) {
+      run(`node scripts/fetch_alerts.mjs --date ${signalDate} --live`, 'Create live TradingView alerts');
+    } else {
+      run(`node scripts/fetch_alerts.mjs --date ${signalDate} --max-picks 5`, 'Preview alert targets');
+    }
   } else {
-    run(`node scripts/fetch_alerts.mjs --date ${signalDate} --max-picks 5`, 'Preview alert targets');
+    log('TradingView alerts skipped (CDP not connected)');
   }
 
   run('node scripts/egx_validate.mjs --quick', 'Validation gate');

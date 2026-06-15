@@ -19,8 +19,9 @@ loadEnv();
 
 const AS_JSON = process.argv.includes('--json');
 
-const proof = getProofLoopMetrics();
+const proof = getProofLoopMetrics({ safetyFiltered: true });
 writeProofLoopSnapshot();
+const proofRaw = getProofLoopMetrics();
 const counter = runCounterfactualSafety();
 let autopsy = runLossAutopsy();
 if (autopsy.n_residual_losses > 0 && (autopsy.flag_counts?.missing_indicators || 0) >= 2) {
@@ -125,10 +126,10 @@ const deliveryLaws = [
   },
   {
     id: 'delivery_law_explosive_min_vol',
-    title: 'EXPLOSIVE requires vol_ratio_20 >= 2.5',
-    source: 'loss autopsy + TRADING_LESSONS #15',
+    title: 'EXPLOSIVE blocked when vol_ratio_20 < 2.5',
+    source: 'loss autopsy + TRADING_LESSONS #10',
     confidence: 'HIGH',
-    evidence: counter.block_reason_counts?.explosive_min_vol ?? 0,
+    evidence: counter.block_reason_counts?.explosive_min_vol ?? autopsy?.flag_counts?.explosive_low_vol ?? 0,
   },
   {
     id: 'delivery_law_p6_gate',
@@ -143,6 +144,7 @@ const report = {
   at: new Date().toISOString(),
   cairo_date: cairoDateParts().date,
   proof_loop: proof,
+  proof_loop_raw: proofRaw,
   counterfactual: counter,
   loss_autopsy: autopsy,
   directives,

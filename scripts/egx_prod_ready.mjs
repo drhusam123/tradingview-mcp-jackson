@@ -23,10 +23,10 @@ function run(label, cmd, { optional = false } = {}) {
   console.log(`\n▶  ${label}`);
   try {
     execSync(cmd, { cwd: PROJECT_ROOT, stdio: 'inherit', timeout: 600_000 });
-    steps.push({ label, ok: true });
+    steps.push({ label, ok: true, optional });
     return true;
   } catch (e) {
-    steps.push({ label, ok: false, error: e.message?.slice(0, 120) });
+    steps.push({ label, ok: false, optional, error: e.message?.slice(0, 120) });
     if (!optional) return false;
     console.log(`⚠️  ${label} skipped`);
     return false;
@@ -46,6 +46,7 @@ if (!run('Delivery reconcile', `"${NODE}" scripts/egx_notify_reconcile.mjs`, { o
   console.log('⚠️  Pending deliveries — run: npm run egx:notify:recovery');
 }
 if (!run('Production acceptance', `"${NODE}" scripts/egx_production_acceptance.mjs`)) process.exit(1);
+run('LRE research acceptance', 'npm run egx:lre:acceptance', { optional: true });
 
 const verifyFlags = [
   SKIP_TESTS ? '--skip-tests' : '',
@@ -55,7 +56,7 @@ if (!run('Full stack verify', `"${NODE}" scripts/egx_full_verify.mjs ${verifyFla
 
 const digest = buildDeliveryDigest(latestOhlcvDate());
 const nxt = nextTradingDay(cairoDateParts().date);
-const fail = steps.filter(s => !s.ok).length;
+const fail = steps.filter(s => !s.ok && !s.optional).length;
 
 const report = {
   at: new Date().toISOString(),

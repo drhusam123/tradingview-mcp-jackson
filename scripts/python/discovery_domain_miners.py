@@ -679,6 +679,9 @@ def mine_cross_market(db) -> list[dict]:
             elif ros < 40:
                 out.append(_atom("cross_risk_off", "L2", "cross_market_regime", "cross_market_miner",
                                  cond={"risk_on_score_lt": 40}, penalize=0.72))
+            else:
+                out.append(_atom("cross_neutral", "L2", "cross_market_regime", "cross_market_miner",
+                                 cond={"risk_on_score_mid": ros}, boost=1.0))
             if row[1] and str(row[1]).upper() in ("HIGH", "SEVERE"):
                 out.append(_atom("cross_macro_headwind", "L2", "cross_market_regime", "cross_market_miner",
                                  cond={"macro_headwind": row[1]}, penalize=0.8))
@@ -1054,6 +1057,159 @@ def mine_egx_mde(db: sqlite3.Connection) -> list[dict]:
             cond={"effective_score_gte": 70, "trade_date": td},
             boost=1.05 if high_eff_n else 1.03, n=high_eff_n, hard_neg=0,
         ))
+
+        # Phase 2.10E — shadow signal provider atoms (watch only)
+        has_prov = db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='mde_shadow_signals_daily'"
+        ).fetchone()
+        if has_prov:
+            prov = db.execute(
+                """SELECT track, monitor_state, COUNT(*) n
+                   FROM mde_shadow_signals_daily WHERE signal_date=?
+                   GROUP BY track, monitor_state""",
+                (td,),
+            ).fetchall()
+            paper_n = sum(r["n"] for r in prov if r["monitor_state"] == "OPEN_PAPER_TRADE")
+            comp_n = sum(r["n"] for r in prov if r["track"] == "COMP_001B")
+            prdc_n = sum(r["n"] for r in prov if r["track"] == "PRDC_SPECIAL")
+            out.append(_atom(
+                "mde_comp001b_paper", "L2", "mde_shadow_signals_daily", "egx_mde_miner",
+                cond={"track": "COMP_001B", "trade_date": td},
+                boost=1.04 if comp_n else 1.02, n=comp_n, hard_neg=0,
+            ))
+            out.append(_atom(
+                "mde_prdc_special_shadow", "L2", "mde_shadow_signals_daily", "egx_mde_miner",
+                cond={"track": "PRDC_SPECIAL", "trade_date": td},
+                boost=1.05 if prdc_n else 1.02, n=prdc_n, hard_neg=0,
+            ))
+            out.append(_atom(
+                "mde_paper_trade_ready", "L2", "mde_shadow_signals_daily", "egx_mde_miner",
+                cond={"monitor_state": "OPEN_PAPER_TRADE", "trade_date": td},
+                boost=1.06 if paper_n else 1.02, n=paper_n, hard_neg=0,
+            ))
+    except sqlite3.OperationalError:
+        pass
+    return out
+
+
+def mine_egx_lre(db: sqlite3.Connection) -> list[dict]:
+    """LRE-2.0 daily scores → shadow discovery atoms (watch only)."""
+    out = []
+    try:
+        row = db.execute("SELECT MAX(trade_date) AS d FROM lre_daily_scores").fetchone()
+        td = row[0] if row else None
+        if not td:
+            return out
+
+        ignition = db.execute(
+            """SELECT COUNT(*) n FROM lre_daily_scores
+               WHERE trade_date=? AND list_tags LIKE '%ignition_candidates%'
+                 AND artifact_risk=0""",
+            (td,),
+        ).fetchone()["n"]
+        rotation = db.execute(
+            """SELECT COUNT(*) n FROM lre_daily_scores
+               WHERE trade_date=? AND rotation_trigger=1 AND artifact_risk=0""",
+            (td,),
+        ).fetchone()["n"]
+        silent = db.execute(
+            """SELECT COUNT(*) n FROM lre_daily_scores
+               WHERE trade_date=? AND list_tags LIKE '%silent_accumulation%'
+                 AND artifact_risk=0""",
+            (td,),
+        ).fetchone()["n"]
+        awakening = db.execute(
+            """SELECT COUNT(*) n FROM lre_daily_scores
+               WHERE trade_date=? AND list_tags LIKE '%volume_awakening%'
+                 AND artifact_risk=0""",
+            (td,),
+        ).fetchone()["n"]
+
+        out.append(_atom(
+            "lre_ignition_candidates", "L2", "lre_daily_scores", "egx_lre_miner",
+            cond={"trade_date": td, "list": "ignition_candidates"},
+            boost=1.05 if ignition else 1.02, n=ignition, hard_neg=0,
+        ))
+        out.append(_atom(
+            "lre_next_rotation", "L2", "lre_daily_scores", "egx_lre_miner",
+            cond={"trade_date": td, "rotation_trigger": 1},
+            boost=1.04 if rotation else 1.02, n=rotation, hard_neg=0,
+        ))
+        out.append(_atom(
+            "lre_silent_accumulation", "L2", "lre_daily_scores", "egx_lre_miner",
+            cond={"trade_date": td, "list": "silent_accumulation"},
+            boost=1.03 if silent else 1.02, n=silent, hard_neg=0,
+        ))
+        out.append(_atom(
+            "lre_volume_awakening", "L2", "lre_daily_scores", "egx_lre_miner",
+            cond={"trade_date": td, "list": "volume_awakening"},
+            boost=1.03 if awakening else 1.02, n=awakening, hard_neg=0,
+        ))
+
+        has_prov = db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='lre_shadow_signals_daily'"
+        ).fetchone()
+        if has_prov:
+            gate_n = db.execute(
+                """SELECT COUNT(*) n FROM lre_shadow_signals_daily
+                   WHERE signal_date=? AND stage IN (3,4)
+                     AND explosion_potential >= 50 AND artifact_risk=0""",
+                (td,),
+            ).fetchone()["n"]
+            out.append(_atom(
+                "lre_gate_candidates", "L2", "lre_shadow_signals_daily", "egx_lre_miner",
+                cond={"trade_date": td, "gate": "stage_3_4_eps50"},
+                boost=1.05 if gate_n else 1.02, n=gate_n, hard_neg=0,
+            ))
+        gate_path = DATA / "lre_client_grade_gate_status.json"
+        if gate_path.exists():
+            try:
+                gdoc = json.loads(gate_path.read_text())
+                g = gdoc.get("IGNITION", {})
+                passed = int(g.get("gates_passed") or 0)
+                status = g.get("status") or "RESEARCH_EDGE_ONLY"
+                out.append(_atom(
+                    "lre_paper_gate_status", "L2", "lre_client_grade_gate_status", "egx_lre_miner",
+                    cond={"status": status, "gates_passed": passed},
+                    boost=1.04 if passed >= 5 else 1.02, n=passed, hard_neg=0,
+                ))
+            except Exception:
+                pass
+
+        has_feed = db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='lre_research_feed_daily'"
+        ).fetchone()
+        if has_feed:
+            core_n = db.execute(
+                """SELECT COUNT(*) n FROM lre_research_feed_daily
+                   WHERE signal_date=? AND feed_tier='LRE_CLEAN_CORE' AND pilot_eligible=1""",
+                (td,),
+            ).fetchone()["n"]
+            conf_n = db.execute(
+                """SELECT COUNT(*) n FROM lre_research_feed_daily
+                   WHERE signal_date=? AND dual_gate_type='LRE_MDE_CONFLUENCE'""",
+                (td,),
+            ).fetchone()["n"]
+            capped_n = db.execute(
+                """SELECT COUNT(*) n FROM lre_research_feed_daily
+                   WHERE signal_date=? AND pilot_eligible=1""",
+                (td,),
+            ).fetchone()["n"]
+            out.append(_atom(
+                "lre_confluence_clean_core", "L2", "lre_research_feed_daily", "egx_lre_miner",
+                cond={"feed_tier": "LRE_CLEAN_CORE", "trade_date": td},
+                boost=1.08 if core_n else 1.02, n=core_n, hard_neg=0,
+            ))
+            out.append(_atom(
+                "lre_mde_confluence_capped", "L2", "lre_research_feed_daily", "egx_lre_miner",
+                cond={"pilot_eligible": True, "trade_date": td},
+                boost=1.06 if capped_n else 1.02, n=capped_n, hard_neg=0,
+            ))
+            out.append(_atom(
+                "lre_mde_confluence", "L2", "lre_research_feed_daily", "egx_lre_miner",
+                cond={"dual_gate_type": "LRE_MDE_CONFLUENCE", "trade_date": td},
+                boost=1.05 if conf_n else 1.02, n=conf_n, hard_neg=0,
+            ))
     except sqlite3.OperationalError:
         pass
     return out
@@ -1606,6 +1762,11 @@ def mine_ensemble_disagreement(db) -> list[dict]:
     return out
 
 
+def mine_egx_med(db: sqlite3.Connection) -> list[dict]:
+    from med_0_3_discovery_miner import mine_egx_med as _mine
+    return _mine(db)
+
+
 def run_all_miners() -> tuple[list[dict], dict]:
     """Execute all domain miners; return atoms + extras for manifest."""
     if not DB_PATH.exists():
@@ -1633,6 +1794,8 @@ def run_all_miners() -> tuple[list[dict], dict]:
     atoms.extend(mine_grid_winners(db))
     atoms.extend(mine_dmids_structural(db))
     atoms.extend(mine_egx_mde(db))
+    atoms.extend(mine_egx_lre(db))
+    atoms.extend(mine_egx_med(db))
     atoms.extend(mine_egx_x_pro(db))
     atoms.extend(mine_sandbox_hypotheses(db))
     atoms.extend(mine_pine_analytics(db))
@@ -1668,5 +1831,21 @@ def run_all_miners() -> tuple[list[dict], dict]:
     atoms.extend(mine_entry_gap(db))
     db.close()
 
-    extras = {"hard_negative_symbols": hard_syms}
+    med_hard_syms: list[str] = []
+    try:
+        from med_0_3_discovery_miner import strict_false_edge_symbols
+
+        db2 = sqlite3.connect(DB_PATH, timeout=60)
+        db2.row_factory = sqlite3.Row
+        td_row = db2.execute("SELECT MAX(trade_date) d FROM med_daily_scores").fetchone()
+        if td_row and td_row["d"]:
+            med_hard_syms = strict_false_edge_symbols(db2, td_row["d"])
+        db2.close()
+    except Exception:
+        med_hard_syms = []
+
+    extras = {
+        "hard_negative_symbols": list(dict.fromkeys(hard_syms + med_hard_syms)),
+        "med_false_edge_symbols": med_hard_syms,
+    }
     return atoms, extras

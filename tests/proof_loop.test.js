@@ -26,6 +26,13 @@ describe('proof_loop P6 metrics', () => {
     assert.ok('samples_needed' in m);
   });
 
+  it('getProofLoopMetrics supports safetyFiltered track', { skip: !existsSync(DB_PATH) }, () => {
+    const raw = getProofLoopMetrics();
+    const filtered = getProofLoopMetrics({ safetyFiltered: true });
+    assert.equal(filtered.safety_filtered, true);
+    assert.ok(filtered.n_completed <= raw.n_completed);
+  });
+
   it('formatProofLoopLine is human-readable', () => {
     const line = formatProofLoopLine({ n_completed: 26, win_rate: 61.5, gate_pass: false, samples_needed: 4 });
     assert.match(line, /26\/30/);

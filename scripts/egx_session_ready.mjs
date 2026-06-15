@@ -12,7 +12,7 @@ import { getUpstreamDates, latestOhlcvDate, countActionable, wasAlreadySent } fr
 import { alertNotification } from './lib/notification_alert.mjs';
 import { runDailyQualityGate } from './lib/data_quality_gate.mjs';
 import { getProofLoopMetrics, formatProofLoopLine, PROOF_MIN_N, PROOF_MIN_WR } from './lib/proof_loop.mjs';
-import { syncDeliveredOutcomes } from './lib/delivered_outcomes.mjs';
+import { syncDeliveredOutcomes, backfillOutcomeSafetyGate } from './lib/delivered_outcomes.mjs';
 
 loadEnv();
 
@@ -89,31 +89,34 @@ try {
   ok('Data trust (L2)', false, e.message?.slice(0, 80), { warn: futureSession });
 }
 
-const proof = getProofLoopMetrics();
-const proofDel = getProofLoopMetrics({ deliveredOnly: true });
+const proof = getProofLoopMetrics({ safetyFiltered: true });
+const proofRaw = getProofLoopMetrics();
+const proofDel = getProofLoopMetrics({ deliveredOnly: true, allDeliveredTiers: true });
 ok(
   'Proof loop P6',
   proof.gate_pass || proof.samples_needed > 0,
-  formatProofLoopLine(proof).replace(/^[^\s]+\s/, ''),
-  { warn: useNext || (!proof.gate_pass && proof.n_completed < PROOF_MIN_N) },
+  `${formatProofLoopLine(proof).replace(/^[^\s]+\s/, '')} | raw ${proofRaw.win_rate ?? '—'}%`,
+  { warn: useNext || (!proof.gate_pass && proof.samples_needed > 0) },
 );
 const p6Blocker = proof.gate_pass
   ? 'PASS'
   : proof.samples_needed > 0
-    ? `need ${proof.samples_needed} more ULTRA samples`
-    : `WR ${proof.win_rate ?? '—'}% < ${PROOF_MIN_WR}% (live winning sessions)`;
+    ? `need ${proof.samples_needed} more safety-filtered ULTRA samples`
+    : `WR ${proof.win_rate ?? '—'}% < ${PROOF_MIN_WR}% (safety-filtered track)`;
 ok(
   'P6 delivered track',
   true,
-  `${proofDel.n_completed} delivered ULTRA filled≥5 @ ${proofDel.win_rate ?? '—'}% | gate: ${p6Blocker}`,
-  { warn: proofDel.n_completed === 0 },
+  `${proofDel.n_completed} client-delivered filled≥5 @ ${proofDel.win_rate ?? '—'}% | gate: ${p6Blocker}`,
+  { warn: proofDel.n_completed < PROOF_MIN_N },
 );
 
 ok('Telegram configured', Boolean(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID));
 
 try {
   const sync = syncDeliveredOutcomes({ lookbackDays: 120 });
-  ok('client_delivered sync', sync.ok, `${sync.ultra_delivered ?? 0}/${sync.ultra_total_filled ?? 0} ULTRA marked`);
+  const backfill = backfillOutcomeSafetyGate();
+  ok('client_delivered sync', sync.ok,
+    `${sync.rows_updated ?? 0} marked, ${sync.seeded ?? 0} seeded | delivered filled≥5: ${proofDel.n_completed}`);
 } catch (e) {
   ok('client_delivered sync', false, e.message?.slice(0, 60));
 }

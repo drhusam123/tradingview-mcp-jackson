@@ -79,6 +79,11 @@ const scripts = [
   'scripts/egx_discovery_fabric.mjs',
   'scripts/egx_discovery_automate.mjs',
   'scripts/egx_gap_repair.mjs',
+  'scripts/egx_ohlcv_catchup.mjs',
+  'scripts/egx_ohlcv_hygiene.mjs',
+  'scripts/lib/ohlcv_hygiene.mjs',
+  'scripts/egx_notify_data_correction.mjs',
+  'tests/portfolio_import_dedup.test.py',
   'scripts/lib/final_signals_query.mjs',
   'scripts/python/discovery_fabric_merge.py',
   'scripts/python/discovery_backtest_gate.py',
@@ -87,7 +92,12 @@ const scripts = [
   'scripts/tv_microstructure_engine.mjs',
   'scripts/python/tv_discovery_features.py',
   'scripts/python/counterfactual_atom_miner.py',
-  'scripts/lib/discovery_engine_registry.mjs',
+  'scripts/python/lre_4_0_research_feed.py',
+  'scripts/python/lre_dual_gate_daily.py',
+  'scripts/python/lre_3_6b_forward_shadow_pilot.py',
+  'scripts/python/lre_4_0_integration_test.py',
+  'scripts/python/lre_4_0_acceptance.py',
+  'scripts/python/lre_4_0_status.py',
   'egx_rules.json',
 ];
 for (const s of scripts) {
@@ -155,6 +165,10 @@ const tvAuto = existsSync(join(PROJECT_ROOT, 'scripts/egx_tv_auto_update.mjs'))
   ? readFileSync(join(PROJECT_ROOT, 'scripts/egx_tv_auto_update.mjs'), 'utf8')
   : '';
 ok('eod light fabric', tvAuto.includes('egx_discovery_fabric.mjs --light'));
+ok('eod lre dual-gate daily', tvAuto.includes('lre_dual_gate_daily.py'));
+ok('eod lre research feed', tvAuto.includes('lre_4_0_research_feed.py'));
+ok('eod lre forward shadow', tvAuto.includes('lre_3_6b_forward_shadow_pilot.py'));
+ok('eod prioritizer after opp', tvAuto.indexOf('intelligence_prioritizer.py prioritize') > tvAuto.indexOf('opportunity_score_v2.py'));
 const reg = existsSync(join(PROJECT_ROOT, 'scripts/lib/discovery_engine_registry.mjs'))
   ? readFileSync(join(PROJECT_ROOT, 'scripts/lib/discovery_engine_registry.mjs'), 'utf8')
   : '';
@@ -163,7 +177,15 @@ ok('Recovery script', existsSync(join(PROJECT_ROOT, 'scripts/egx_notify_recovery
 ok('EGX_ALERT_TELEGRAM', process.env.EGX_ALERT_TELEGRAM !== '0', process.env.EGX_ALERT_TELEGRAM ?? 'default=1');
 ok('EGX_OPS_SUCCESS_ALERT', process.env.EGX_OPS_SUCCESS_ALERT !== '0', process.env.EGX_OPS_SUCCESS_ALERT ?? 'default=1');
 ok('npm egx:runbook', true, 'egx:runbook + egx:runbook:next');
-ok('npm egx:session:next', true, 'pre-session next-day checks');
+ok('npm egx:lre:research-feed', Boolean(npmScripts['egx:lre:research-feed']));
+ok('npm egx:lre:acceptance', Boolean(npmScripts['egx:lre:acceptance']));
+ok('npm egx:lre:status', Boolean(npmScripts['egx:lre:status']));
+ok('npm egx:med:run', Boolean(npmScripts['egx:med:run']));
+ok('npm egx:ohlcv:catchup', Boolean(npmScripts['egx:ohlcv:catchup']));
+ok('npm egx:ohlcv:hygiene', Boolean(npmScripts['egx:ohlcv:hygiene']));
+ok('npm egx:notify:correction', Boolean(npmScripts['egx:notify:correction']));
+ok('eod med daily chain', tvAuto.includes('med_0_3_daily_chain.py'));
+ok('registry med', reg.includes('med_daily_chain'));
 
 const fail = checks.filter(c => !c.pass).length;
 console.log(`\n=== Automation Verify: ${checks.length - fail}/${checks.length} PASS ===\n`);

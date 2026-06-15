@@ -16,6 +16,7 @@ const LAW_TO_FILTER = {
   delivery_law_indicator_cache: { require_indicator_cache: true },
   delivery_law_explosive_rsi: { explosive_max_rsi: 70 },
   delivery_law_volatile: { block_volatile_client: true },
+  delivery_law_explosive_min_vol: { block_explosive_low_vol: true, explosive_min_vol_ratio: 2.5 },
 };
 
 export function latestDeliveryLawsFile() {
@@ -63,6 +64,10 @@ export function mergeRuntimeRules({ learningReport = null, minEvidence = 2 } = {
     for (const rule of autopsy.proposed_rules) {
       if ((rule.evidence || 0) >= minEvidence) {
         overlay.applied_laws.push({ id: `autopsy_${rule.id}`, evidence: rule.evidence, source: 'autopsy' });
+        if (rule.id === 'explosive_min_vol') {
+          overlay.behavioral_filters.block_explosive_low_vol = true;
+          overlay.behavioral_filters.explosive_min_vol_ratio = 2.5;
+        }
       }
     }
   }
