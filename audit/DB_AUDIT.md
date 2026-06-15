@@ -1,6 +1,6 @@
 # Database Audit
 
-**Generated:** 2026-06-15T09:27:05.944496+00:00
+**Generated:** 2026-06-15T10:06:33.074795+00:00
 **Database:** `data/egx_trading.db`
 **Tables:** 287 | **Audited (important):** 68
 
@@ -55,7 +55,7 @@
 | `market_cycles` | 2,839 | — | — | — | — | none |
 | `market_physics` | 2,560 | 2026-05-14 | — | — | — | none |
 | `law_quality_history` | 2,474 | — | — | — | — | none |
-| `data_quality_bar_exclusions` | 2,416 | 2026-05-25 | — | — | — | none |
+| `data_quality_bar_exclusions` | 2,399 | 2026-05-25 | — | — | — | none |
 | `med_feed_ab_ledger` | 2,307 | 2026-06-14 | — | — | — | none |
 | `intraday_live_quotes` | 2,146 | — | — | — | — | none |
 | `opportunity_score_v2` | 1,509 | 2026-06-14 | — | — | — | none |

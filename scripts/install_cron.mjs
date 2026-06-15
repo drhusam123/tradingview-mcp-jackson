@@ -20,16 +20,16 @@ import { dirname, join } from 'path';
 function resolveCronPython() {
   if (process.env.PYTHON_BIN) return process.env.PYTHON_BIN;
   if (process.env.PYTHON3) return process.env.PYTHON3;
+  try {
+    return execSync('which python3', { encoding: 'utf8', timeout: 3000 }).trim();
+  } catch { /* fall through */ }
   const systemPy = '/usr/bin/python3';
   try {
     execSync(
-      `"${systemPy}" -c "import numpy, lightgbm, lifelines, duckdb"`,
-      { stdio: 'ignore', timeout: 8000 },
+      `"${systemPy}" -c "import numpy"`,
+      { stdio: 'ignore', timeout: 5000 },
     );
     return systemPy;
-  } catch { /* fall through */ }
-  try {
-    return execSync('which python3', { encoding: 'utf8', timeout: 3000 }).trim();
   } catch {
     return systemPy;
   }

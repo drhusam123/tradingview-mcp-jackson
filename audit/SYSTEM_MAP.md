@@ -827,3 +827,41 @@ npm test
 **Operator entry point:** `npm run egx:health` → `npm run egx:full-cycle -- --skip-cdp` → `npm run egx:audit:all`
 
 See [AUTOMATION_RUNBOOK.md](../docs/AUTOMATION_RUNBOOK.md).
+
+---
+---
+---
+
+## 25. Orphan & Registry Analysis
+
+**Generated:** 2026-06-15T10:06:31.660Z
+
+### 8. Duplicate / unlinked layers
+
+- Discovery engines with `runnable: false` (e.g. `closed_loop`) are invoked only from `post_session_ops` — not orphans.
+- Shadow engines (MDE, LRE OOS) write research tables only; no client promotion without graduation gates.
+
+### 9. Scripts present but not in package.json/npm
+
+- Total scripts: **543** | Referenced: **301** | Orphans: **12**
+- `scripts/analyze_egx_history.mjs` (utility/lib or manual-only)
+- `scripts/egx_tv_auto_resume.mjs` (utility/lib or manual-only)
+- `scripts/egx_weekly_perf.mjs` (utility/lib or manual-only)
+- `scripts/fetch_actionable_dom.mjs` (utility/lib or manual-only)
+- `scripts/fetch_egx_history.mjs` (utility/lib or manual-only)
+- `scripts/load_spectral_indicator.mjs` (utility/lib or manual-only)
+- `scripts/pine_pull.js` (utility/lib or manual-only)
+- `scripts/pine_push.js` (utility/lib or manual-only)
+- `scripts/pull_egypt_economics.mjs` (utility/lib or manual-only)
+- `scripts/pull_egypt_economics_v2.mjs` (utility/lib or manual-only)
+- `scripts/run_daily.mjs` (utility/lib or manual-only)
+- `scripts/tv_replay_bridge.mjs` (utility/lib or manual-only)
+
+### 10. Tables / registry gaps
+
+- DB tables: **287** | Referenced in code: **281**
+- Empty tables: **29** (schema placeholders / seasonal)
+- `notes_fts_config` (1 rows, no code reference)
+- `notes_fts_data` (2 rows, no code reference)
+
+See `audit/CODE_SCAN_SUMMARY.md` and `data/audit_deep_scan_last.json`.

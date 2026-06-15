@@ -253,6 +253,11 @@ ok('audit DB_AUDIT template', existsSync(join(PROJECT_ROOT, 'scripts/python/audi
 ok('docs automation runbook', existsSync(join(PROJECT_ROOT, 'docs/AUTOMATION_RUNBOOK.md')));
 ok('audit ISSUES_REGISTER', existsSync(join(PROJECT_ROOT, 'audit/ISSUES_REGISTER.md')));
 ok('audit FINAL_SYSTEM', existsSync(join(PROJECT_ROOT, 'audit/FINAL_SYSTEM_AUDIT_REPORT.md')));
+ok('npm egx:audit:deep', npmScripts['egx:audit:deep']?.includes('audit_deep_scan.mjs'));
+ok('npm egx:audit:e2e', npmScripts['egx:audit:e2e']?.includes('egx_institutional_audit_e2e.mjs'));
+ok('script audit_deep_scan.mjs', existsSync(join(PROJECT_ROOT, 'scripts/lib/audit_deep_scan.mjs')));
+ok('script egx_institutional_audit_e2e.mjs', existsSync(join(PROJECT_ROOT, 'scripts/egx_institutional_audit_e2e.mjs')));
+ok('audit CODE_SCAN_SUMMARY', existsSync(join(PROJECT_ROOT, 'audit/CODE_SCAN_SUMMARY.md')));
 
 const fail = checks.filter(c => !c.pass).length;
 console.log(`\n=== Automation Verify: ${checks.length - fail}/${checks.length} PASS ===\n`);

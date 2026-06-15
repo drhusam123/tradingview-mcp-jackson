@@ -1,6 +1,6 @@
 # Automation Audit
 
-**Generated:** 2026-06-15T09:27:28.446Z
+**Generated:** 2026-06-15T10:06:50.364Z
 
 ## Daily DAG
 
@@ -60,7 +60,7 @@ Window: last 48h | Cairo: 2026-06-15
   [post_session] [NOTIFY_ALERT] {"ts":"2026-06-14T12:51:01.323Z","kind":"failure","event":"POST_SESSION_VERIFY_FAIL","date":"2026-06-14"}
   [full_verify] === Full Verify: 6/7 PASS ===
   [session_ready] === Session Ready (2026-06-11): 14/18 ===
-[NOTIFY_ALERT] {"ts":"2026-06-15T09:27:28.430Z","kind":"failure","event":"CRON_LOG_FAILURES","hours":48,"count":4,"samples":[{"log":"telegram","line":"═══ Telegram Cron FAILED ═══"},{"log":"post_session","line":"[NOTIFY_ALERT] {\"ts\":\"2026-06-14T12:51:01.323Z\",\"kind\":\"failure\",\"event\":\"POST_SESSION_VERIFY_FAIL\",\"date\":\"2026-06-14\"}"},{"log":"full_verify","line":"=== Full Verify: 6/7 PASS ==="},{"log":"session_ready","line":"=== Session Ready (2026-06-11): 14/18 ==="}]}
+[NOTIFY_ALERT] {"ts":"2026-06-15T10:06:50.349Z","kind":"failure","event":"CRON_LOG_FAILURES","hours":48,"count":4,"samples":[{"log":"telegram","line":"═══ Telegram Cron FAILED ═══"},{"log":"post_session","line":"[NOTIFY_ALERT] {\"ts\":\"2026-06-14T12:51:01.323Z\",\"kind\":\"failure\",\"event\":\"POST_SESSION_VERIFY_FAIL\",\"date\":\"2026-06-14\"}"},{"log":"full_verify","line":"=== Full Verify: 6/7 PASS ==="},{"log":"session_ready","line":"=== Session Ready (2026-06-11): 14/18 ==="}]}
 
 
 ```

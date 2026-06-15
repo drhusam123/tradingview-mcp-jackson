@@ -105,6 +105,8 @@
     "egx:audit:gates": "node scripts/egx_system_audit_orchestrator.mjs --gates",
     "egx:audit:notification": "node scripts/egx_system_audit_orchestrator.mjs --notification",
     "egx:audit:automation": "node scripts/egx_system_audit_orchestrator.mjs --automation",
+    "egx:audit:deep": "node scripts/lib/audit_deep_scan.mjs",
+    "egx:audit:e2e": "node scripts/egx_institutional_audit_e2e.mjs",
     "egx:env:activate-phase26": "node scripts/egx_env_activate_phase26.mjs",
     "egx:env:activate-phase17": "node scripts/egx_env_activate_phase17.mjs",
     "egx:env:activate-phase18": "node scripts/egx_env_activate_phase18.mjs",

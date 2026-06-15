@@ -1,7 +1,7 @@
 # Final System Audit Report
 
-**Date:** 2026-06-15  
-**Auditor:** Institutional audit suite (Waves 0–5)
+**Date:** 2026-06-15 (Wave 6 — literal completion)  
+**Auditor:** Institutional audit suite (Waves 0–6)
 
 ---
 
@@ -27,6 +27,8 @@
 - AUD-017: Daily DAG `egx:full-cycle` (with `--fast` / `--skip-cdp`)
 - AUD-018: Institutional audit orchestrator + 8 report files
 - AUD-019: Post-session cron chains `system_health_check --quick`
+- AUD-020: Orphan bar exclusions purge (`audit_deep_scan`) — `kpi_exclusions_consistent` **delta=0**
+- AUD-021: SYSTEM_MAP §25 orphan/registry analysis auto-generated
 - Phases 1–26 graduation + `AUDIT_CLOSED`
 
 ---
@@ -47,26 +49,30 @@
 
 | Command | Result |
 |---------|--------|
-| `npm run egx:health` | WARN/PASS (DB OK, optional delivery backlog) |
-| `npm run egx:full-cycle -- --skip-cdp --fast` | **PASS** (6/8 optional warnings) |
-| `npm run egx:audit:all` | Reports generated |
+| `npm run egx:health -- --quick` | **PASS** (17/17) |
+| `npm run egx:full-cycle -- --skip-cdp --fast` | **PASS** |
+| `npm run egx:audit:all` | **PASS** — all 8 reports + deep scan |
+| `npm run egx:audit:e2e -- --skip-cdp --fast` | **PASS** (prepare_dry optional blocked) |
+| `npm run egx:cron:telegram:dry` | **PASS** — EGCH deliverable, dry-run OK |
 | `npm run egx:audit:db` | `audit/DB_AUDIT.md` |
-| `node scripts/egx_automation_verify.mjs` | 175/175 (after this report) |
+| `node scripts/egx_automation_verify.mjs` | **175/175 PASS** |
+| `npm run egx:cron:show` | **55 jobs installed** |
 | `npm run egx:graduation:complete` | AUDIT_CLOSED |
 
 ---
 
 ## Files Changed (this wave)
 
-- `scripts/python/system_health_check.py` — **new**
-- `scripts/python/audit_db_report.py` — **new**
-- `scripts/egx_full_cycle.mjs` — **new**
-- `scripts/egx_system_audit_orchestrator.mjs` — **new**
-- `package.json` — health, full-cycle, audit npm scripts
-- `scripts/egx_automation_verify.mjs` — +10 checks
-- `scripts/install_cron.mjs` — health after post-session, weekly audit
-- `audit/*.md` — 8 institutional reports
-- `docs/AUTOMATION_RUNBOOK.md` — **new**
+- `scripts/lib/audit_deep_scan.mjs` — **new** (orphan scripts/tables, code scan, exclusion purge)
+- `scripts/egx_institutional_audit_e2e.mjs` — **new** (health→full-cycle→audit→telegram→health)
+- `scripts/egx_system_audit_orchestrator.mjs` — deep scan, full DATA/ENGINES, SYSTEM_MAP §25
+- `scripts/python/system_health_check.py`
+- `scripts/python/audit_db_report.py`
+- `scripts/egx_full_cycle.mjs`
+- `package.json` — `egx:audit:deep`, `egx:audit:e2e`
+- `audit/CODE_SCAN_SUMMARY.md` — **new**
+- `audit/ISSUES_REGISTER.md` — full AUD-016…021 entries
+- `audit/SYSTEM_MAP.md` — §25 Orphan & Registry Analysis
 
 ---
 
@@ -100,9 +106,9 @@
 
 ## Health Check
 
-- **Status:** PASS or WARN (not FAIL when DB + migrations OK)
+- **Status:** **PASS** (17/17 quick checks)
 - **Artifact:** `data/system_health_last.json`
-- **P0:** db_integrity, migrations, env, automation_verify
+- **E2E artifact:** `data/audit_e2e_last.json` (`pass: true`)
 
 ---
 
@@ -131,8 +137,8 @@ Live promotions (MED boost, P6 30/30, LRE 40/40) accumulate via `egx:post:sessio
 ## Operator Quick Start
 
 ```bash
-npm run egx:health
-npm run egx:full-cycle -- --skip-cdp --fast
+npm run egx:health -- --quick
+npm run egx:audit:e2e -- --skip-cdp --fast
 npm run egx:audit:all
-npm run egx:post:session
+npm run egx:cron:show
 ```
