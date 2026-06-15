@@ -260,6 +260,12 @@ ok('script egx_institutional_audit_e2e.mjs', existsSync(join(PROJECT_ROOT, 'scri
 ok('audit CODE_SCAN_SUMMARY', existsSync(join(PROJECT_ROOT, 'audit/CODE_SCAN_SUMMARY.md')));
 ok('npm egx:cdp:smoke', npmScripts['egx:cdp:smoke']?.includes('egx_cdp_smoke.mjs'));
 ok('script egx_cdp_smoke.mjs', existsSync(join(PROJECT_ROOT, 'scripts/egx_cdp_smoke.mjs')));
+ok('npm egx:validate-data', npmScripts['egx:validate-data']?.includes('validate_market_data.py'));
+ok('npm egx:db:optimize', npmScripts['egx:db:optimize']?.includes('db_optimize.py'));
+ok('npm egx:upgrade:audit', npmScripts['egx:upgrade:audit']?.includes('generate_upgrade_audits.py'));
+ok('npm test:smoke', npmScripts['test:smoke']?.includes('run_smoke_tests.py'));
+ok('config performance.json', existsSync(join(PROJECT_ROOT, 'config/performance.json')));
+ok('docs DEVICE_LIMITS', existsSync(join(PROJECT_ROOT, 'docs/DEVICE_LIMITS.md')));
 
 const fail = checks.filter(c => !c.pass).length;
 console.log(`\n=== Automation Verify: ${checks.length - fail}/${checks.length} PASS ===\n`);

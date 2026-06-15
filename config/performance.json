@@ -1,0 +1,12 @@
+{
+  "profile": "macbook_i9_16gb",
+  "max_workers": 4,
+  "memory_mode": "balanced",
+  "chunk_size": 50000,
+  "enable_heavy_research": false,
+  "daily_timeout_minutes": 20,
+  "deep_research_timeout_minutes": 120,
+  "sqlite_cache_size_kb": 65536,
+  "parallel_symbol_limit": 4,
+  "notes": "Intel MacBook Pro i9 / 16GB — no GPU workloads; heavy research manual only"
+}

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -248,6 +249,34 @@ def run(params: dict | None = None) -> dict:
     add("engine_last_runs", any(_read_json(f) for f in (
         "lre_4_0_status_last.json", "med_0_3_status_last.json"
     )), "; ".join(engine_status), warn_only=True)
+
+    # ── Environment / device profile ───────────────────────────────────
+    perf_path = ROOT / "config" / "performance.json"
+    if perf_path.exists():
+        try:
+            perf = json.loads(perf_path.read_text(encoding="utf-8"))
+            add("performance_profile", perf.get("profile") == "macbook_i9_16gb",
+                f"profile={perf.get('profile')} workers={perf.get('max_workers')}", warn_only=True)
+            add("heavy_research_gated", not perf.get("enable_heavy_research", True),
+                f"enable_heavy_research={perf.get('enable_heavy_research')}", warn_only=True)
+        except json.JSONDecodeError:
+            add("performance_profile", False, "parse error", warn_only=True)
+    else:
+        add("performance_profile", False, "config/performance.json missing", warn_only=True)
+
+    try:
+        du = shutil.disk_usage(ROOT / "data")
+        free_gb = du.free / (1024 ** 3)
+        add("disk_space", free_gb >= 2, f"free_gb={free_gb:.1f}", warn_only=free_gb >= 1)
+    except OSError as e:
+        add("disk_space", False, str(e)[:80], warn_only=True)
+
+    md_val = _read_json("market_data_validation_last.json")
+    if md_val:
+        add("market_data_validation", md_val.get("status") != "FAIL",
+            f"status={md_val.get('status')} latest={md_val.get('latest_date')}", warn_only=md_val.get("status") == "WARN")
+    else:
+        add("market_data_validation", False, "run egx:validate-data", warn_only=True)
 
     # env + locks + verify
     env_ok, env_detail = _env_keys_present()

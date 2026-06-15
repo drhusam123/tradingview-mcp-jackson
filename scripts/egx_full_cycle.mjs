@@ -10,13 +10,16 @@
  *   npm run egx:full-cycle -- --no-launch   (CDP already running)
  */
 import { execSync } from 'child_process';
-import { appendFileSync, mkdirSync, writeFileSync } from 'fs';
+import { appendFileSync, mkdirSync, writeFileSync, existsSync, readFileSync, unlinkSync, statSync } from 'fs';
 import { join } from 'path';
 import { loadEnv, PROJECT_ROOT } from './lib/load_env.mjs';
 import { cairoDateParts } from './lib/egx_calendar.mjs';
 import { latestOhlcvDate } from './lib/delivery_audit.mjs';
+import { applyPerformanceEnv, loadPerformanceConfig } from './lib/performance_config.mjs';
+import { ensureLogDirs, logRun } from './lib/run_logger.mjs';
 
 loadEnv();
+const perf = applyPerformanceEnv();
 
 const NODE = process.execPath;
 const PYTHON = process.env.PYTHON_BIN || process.env.PYTHON3 || 'python3';
@@ -42,6 +45,7 @@ const CDP_UP = cdpHttpUp();
 const NO_LAUNCH = process.argv.includes('--no-launch') || CDP_UP;
 
 const logPath = join(PROJECT_ROOT, 'logs', `full_cycle_${cairoDateParts().date}.log`);
+ensureLogDirs();
 mkdirSync(join(PROJECT_ROOT, 'logs'), { recursive: true });
 
 function log(msg) {
@@ -76,9 +80,28 @@ function run(name, cmd, { optional = false, timeout = 600_000 } = {}) {
 }
 
 console.log('\n═══ EGX Full Cycle (daily production DAG) ═══');
-log(`start skip_cdp=${SKIP_CDP} send=${LIVE_SEND} fast=${FAST} cdp_up=${CDP_UP}`);
+log(`start profile=${perf.profile} max_workers=${perf.max_workers} skip_cdp=${SKIP_CDP} send=${LIVE_SEND} fast=${FAST} cdp_up=${CDP_UP}`);
+
+function clearStaleLocks() {
+  const locks = ['egx_tv_auto_update.lock', 'egx-daily.lock', 'egx-telegram.lock'];
+  const maxAge = 6 * 60 * 60 * 1000;
+  for (const name of locks) {
+    const p = join(PROJECT_ROOT, 'logs', name);
+    if (!existsSync(p)) continue;
+    try {
+      const age = Date.now() - statSync(p).mtimeMs;
+      if (age > maxAge) {
+        unlinkSync(p);
+        log(`cleared stale lock ${name} age_ms=${age}`);
+      }
+    } catch { /* */ }
+  }
+}
 
 try {
+  clearStaleLocks();
+  run('validate_market_data', `${PYTHON} scripts/python/validate_market_data.py`, { optional: FAST });
+
   if (!FAST) {
     run('preflight', `"${NODE}" scripts/egx_preflight.mjs --skip-tests`, { optional: true, timeout: 300_000 });
     run('ohlcv_catchup', `"${NODE}" scripts/egx_ohlcv_catchup.mjs`, { optional: true, timeout: 600_000 });
@@ -103,6 +126,7 @@ try {
 
   if (FAST) {
     run('session_ready', `"${NODE}" scripts/egx_session_ready.mjs --skip-verify-check`);
+    run('telegram_dry', `npm run egx:cron:telegram:dry`, { optional: true, timeout: 180_000 });
     const healthFlags = QUICK ? '--quick' : '';
     run('health_check', `${PYTHON} scripts/python/system_health_check.py ${healthFlags}`, { optional: true });
   } else {
@@ -130,6 +154,8 @@ const report = {
   cdp_up: CDP_UP,
   no_launch: NO_LAUNCH,
   live_send: LIVE_SEND,
+  performance_profile: perf.profile,
+  max_workers: perf.max_workers,
   steps,
   log_path: logPath,
 };
@@ -145,5 +171,13 @@ if (AS_JSON) {
   console.log(`  Log: ${logPath}`);
   console.log(`  Report: data/full_cycle_last.json\n`);
 }
+
+logRun({
+  command: 'egx:full-cycle',
+  layer: 'full_cycle',
+  status: fail ? 'error' : 'ok',
+  ms: steps.reduce((a, s) => a + s.ms, 0),
+  meta: { pass: fail === 0, steps: steps.length, profile: perf.profile },
+});
 
 process.exit(fail ? 1 : 0);
