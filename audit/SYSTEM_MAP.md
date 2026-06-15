@@ -812,9 +812,18 @@ npm test
 | Phase | Deliverable | Status |
 |-------|-------------|--------|
 | **1** | `audit/SYSTEM_MAP.md` (this file) | ✅ Complete |
-| 2 | Schema + data freshness audit | Pending |
-| 3 | Pipeline execution + fix | Pending |
-| 4 | Automation activation | Pending |
-| 5 | End-to-end test report | Pending |
+| **2** | `audit/ISSUES_REGISTER.md` | ✅ Complete |
+| **3** | `audit/DB_AUDIT.md` | ✅ Generated (`egx:audit:db`) |
+| **4** | `audit/DATA_PIPELINE_AUDIT.md` | ✅ Generated |
+| **5** | `audit/ENGINES_AUDIT.md` | ✅ Generated |
+| **6** | `audit/GATES_AND_ACTIONABLE_AUDIT.md` | ✅ Generated |
+| **7** | `audit/NOTIFICATION_AUDIT.md` | ✅ Generated |
+| **8** | `audit/AUTOMATION_AUDIT.md` | ✅ Generated |
+| **9** | `audit/FULL_REPAIR_PLAN.md` | ✅ Complete |
+| **10** | `audit/FINAL_SYSTEM_AUDIT_REPORT.md` | ✅ Complete |
+| **11** | `egx:health` + `egx:full-cycle` | ✅ Wired |
+| **12** | Phases 1–26 graduation | ✅ [AUDIT_CLOSED.md](./AUDIT_CLOSED.md) |
 
-**Next phase entry point:** Run `npm run egx:verify:fast` + `npm run egx:status` and compare against live cron logs in `logs/tv_auto_daily.log` and `logs/telegram.log` for the audit date window.
+**Operator entry point:** `npm run egx:health` → `npm run egx:full-cycle -- --skip-cdp` → `npm run egx:audit:all`
+
+See [AUTOMATION_RUNBOOK.md](../docs/AUTOMATION_RUNBOOK.md).

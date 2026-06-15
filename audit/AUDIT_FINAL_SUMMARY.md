@@ -33,6 +33,8 @@
 
 **Audit closed:** [AUDIT_CLOSED.md](./AUDIT_CLOSED.md)
 
+**Institutional suite:** [FINAL_SYSTEM_AUDIT_REPORT.md](./FINAL_SYSTEM_AUDIT_REPORT.md) · [AUTOMATION_RUNBOOK.md](../docs/AUTOMATION_RUNBOOK.md)
+
 ---
 
 ## Production state (end of audit)

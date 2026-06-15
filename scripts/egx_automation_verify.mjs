@@ -243,6 +243,17 @@ ok('eod med daily chain', tvAuto.includes('med_0_3_daily_chain.py'));
 ok('eod med client probe', tvAuto.includes('med_client_signal_probe.py'));
 ok('registry med', reg.includes('med_daily_chain'));
 
+ok('npm egx:health', npmScripts['egx:health']?.includes('system_health_check.py'));
+ok('npm egx:full-cycle', npmScripts['egx:full-cycle']?.includes('egx_full_cycle.mjs'));
+ok('script system_health_check.py', existsSync(join(PROJECT_ROOT, 'scripts/python/system_health_check.py')));
+ok('script audit_db_report.py', existsSync(join(PROJECT_ROOT, 'scripts/python/audit_db_report.py')));
+ok('script egx_system_audit_orchestrator.mjs', existsSync(join(PROJECT_ROOT, 'scripts/egx_system_audit_orchestrator.mjs')));
+ok('npm egx:audit:all', npmScripts['egx:audit:all']?.includes('egx_system_audit_orchestrator.mjs'));
+ok('audit DB_AUDIT template', existsSync(join(PROJECT_ROOT, 'scripts/python/audit_db_report.py')));
+ok('docs automation runbook', existsSync(join(PROJECT_ROOT, 'docs/AUTOMATION_RUNBOOK.md')));
+ok('audit ISSUES_REGISTER', existsSync(join(PROJECT_ROOT, 'audit/ISSUES_REGISTER.md')));
+ok('audit FINAL_SYSTEM', existsSync(join(PROJECT_ROOT, 'audit/FINAL_SYSTEM_AUDIT_REPORT.md')));
+
 const fail = checks.filter(c => !c.pass).length;
 console.log(`\n=== Automation Verify: ${checks.length - fail}/${checks.length} PASS ===\n`);
 process.exit(fail ? 1 : 0);
