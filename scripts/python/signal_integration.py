@@ -268,6 +268,16 @@ def ensure_tables(conn):
         ('shadow_stale_watch_position_mult', 'REAL'),
         ('shadow_stale_watch_reason', 'TEXT'),
         ('shadow_stale_would_watch_queue', 'INTEGER'),
+        ('shadow_mde_provider_state', 'TEXT'),
+        ('shadow_mde_track', 'TEXT'),
+        ('shadow_mde_tradeability', 'REAL'),
+        ('shadow_mde_gate_passed', 'INTEGER'),
+        ('shadow_mde_would_paper', 'INTEGER'),
+        ('shadow_lre_stage', 'TEXT'),
+        ('shadow_lre_eps', 'REAL'),
+        ('shadow_lre_list', 'TEXT'),
+        ('shadow_lre_gate_passed', 'INTEGER'),
+        ('shadow_lre_rotation_leader', 'TEXT'),
     ]:
         try:
             conn.execute(f'ALTER TABLE gate_audit_snapshots ADD COLUMN {col} {defn}')
@@ -2712,9 +2722,13 @@ def _persist_gate_audit_snapshot(conn, row):
              shadow_stale_momentum_triggered, shadow_stale_momentum_day,
              shadow_stale_momentum_entry, shadow_stale_momentum_stop,
              shadow_stale_momentum_rr, shadow_stale_watch_position_mult,
-             shadow_stale_watch_reason, shadow_stale_would_watch_queue)
+             shadow_stale_watch_reason, shadow_stale_would_watch_queue,
+             shadow_mde_provider_state, shadow_mde_track, shadow_mde_tradeability,
+             shadow_mde_gate_passed, shadow_mde_would_paper,
+             shadow_lre_stage, shadow_lre_eps, shadow_lre_list,
+             shadow_lre_gate_passed, shadow_lre_rotation_leader)
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,
-                    ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (
             row['signal_date'], row['symbol'], row.get('ues'), row.get('ml_score'),
             row.get('meta_prob'), row.get('survival_p_tp'), row.get('survival_p_sl'),
@@ -2759,6 +2773,11 @@ def _persist_gate_audit_snapshot(conn, row):
             row.get('shadow_stale_momentum_entry'), row.get('shadow_stale_momentum_stop'),
             row.get('shadow_stale_momentum_rr'), row.get('shadow_stale_watch_position_mult'),
             row.get('shadow_stale_watch_reason'), row.get('shadow_stale_would_watch_queue'),
+            row.get('shadow_mde_provider_state'), row.get('shadow_mde_track'),
+            row.get('shadow_mde_tradeability'), row.get('shadow_mde_gate_passed'),
+            row.get('shadow_mde_would_paper'),
+            row.get('shadow_lre_stage'), row.get('shadow_lre_eps'), row.get('shadow_lre_list'),
+            row.get('shadow_lre_gate_passed'), row.get('shadow_lre_rotation_leader'),
         ))
     except Exception as e:
         import logging
@@ -2832,6 +2851,21 @@ def cmd_score_all(params):
     cross_score  = get_cross_market_score(date, conn)
     regime       = get_current_regime(date, conn)
     alpha_score  = get_alpha_grid_score(None, conn)  # market-level, same for all symbols
+
+    _mde_provider_lookup = {}
+    try:
+        from mde_signal_provider import load_lookup, shadow_fields as _mde_shadow_fields
+        _mde_provider_lookup = load_lookup(conn, date)
+    except Exception:
+        _mde_shadow_fields = lambda _lk, _sym: {}
+
+    _lre_provider_lookup = {}
+    try:
+        from lre_signal_provider import load_lookup as _lre_load_lookup
+        from lre_signal_provider import shadow_fields as _lre_shadow_fields
+        _lre_provider_lookup = _lre_load_lookup(conn, date)
+    except Exception:
+        _lre_shadow_fields = lambda _lk, _sym: {}
 
     # Ph50 — Load Bayesian-adaptive gate thresholds (fast lookup, ≤1ms)
     adaptive_params = load_adaptive_gate_params(conn)
@@ -3352,6 +3386,8 @@ def cmd_score_all(params):
                 'old_all_blocking_gates': _hg_all,
                 'old_actionable': 0,
                 **_risk_shadow_v,
+                **_mde_shadow_fields(_mde_provider_lookup, symbol),
+                **_lre_shadow_fields(_lre_provider_lookup, symbol),
             })
             write_final_signal(
                 conn,
@@ -3643,6 +3679,8 @@ def cmd_score_all(params):
             **_neg_breadth_shadow_v,
             **_anti_law_shadow_v,
             **_stale_watch_shadow_v,
+            **_mde_shadow_fields(_mde_provider_lookup, symbol),
+            **_lre_shadow_fields(_lre_provider_lookup, symbol),
         })
 
         write_final_signal(

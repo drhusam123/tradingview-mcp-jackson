@@ -95,6 +95,7 @@ ok('closed_loop_cf_miner', closed.includes('counterfactual_atom_miner'));
 const tvAuto = readFileSync(join(PROJECT_ROOT, 'scripts/egx_tv_auto_update.mjs'), 'utf8');
 const tvMicro = readFileSync(join(PROJECT_ROOT, 'scripts/tv_microstructure_engine.mjs'), 'utf8');
 const minersPy = readFileSync(join(PROJECT_ROOT, 'scripts/python/discovery_domain_miners.py'), 'utf8');
+const oppPy = readFileSync(join(PROJECT_ROOT, 'scripts/python/opportunity_score_v2.py'), 'utf8');
 const registrySrc = readFileSync(join(PROJECT_ROOT, 'scripts/lib/discovery_engine_registry.mjs'), 'utf8');
 ok('daily_tv_micro', tvAuto.includes('tv_microstructure_engine'));
 ok('daily_tv_wide', tvAuto.includes('--wide') && tvMicro.includes('--wide'));
@@ -104,7 +105,21 @@ const fabIdx = tvAuto.indexOf('egx_discovery_fabric.mjs');
 ok('daily_cf_before_fabric', cfIdx >= 0 && fabIdx > cfIdx, `cf@${cfIdx} fab@${fabIdx}`);
 ok('daily_opp_v2', tvAuto.includes('opportunity_score_v2'));
 ok('daily_promotion', tvAuto.includes('client_signal_promotion'));
+ok('daily_lre_dual_gate', tvAuto.includes('lre_dual_gate_daily.py'));
+ok('daily_lre_feed', tvAuto.includes('lre_4_0_research_feed.py'));
+ok('daily_lre_forward_shadow', tvAuto.includes('lre_3_6b_forward_shadow_pilot.py'));
+ok('daily_lre_status', tvAuto.includes('lre_4_0_status.py'));
+ok('daily_prioritizer_after_opp', tvAuto.indexOf('intelligence_prioritizer.py prioritize') > tvAuto.indexOf('opportunity_score_v2.py'));
+const lreFeedIdx = tvAuto.indexOf('lre_4_0_research_feed.py');
+const fabricIdx = tvAuto.indexOf('egx_discovery_fabric.mjs');
+ok('daily_lre_before_fabric', lreFeedIdx >= 0 && fabricIdx > lreFeedIdx, `lre@${lreFeedIdx} fab@${fabricIdx}`);
+ok('miners_egx_lre', minersPy.includes('mine_egx_lre'));
+ok('opp_lre_feed_bridge', oppPy.includes('lre_feed_map') || oppPy.includes('load_lre_feed_map'));
 ok('registry_causal_xpro', registrySrc.includes('causal_discovery') && registrySrc.includes('egx_x_pro'));
+ok('registry_lre_research_feed', registrySrc.includes('lre_research_feed'));
+ok('registry_med_daily_chain', registrySrc.includes('med_daily_chain'));
+ok('daily_med_chain', tvAuto.includes('med_0_3_daily_chain.py'));
+ok('daily_med_status', tvAuto.includes('med_0_3_status.py'));
 ok('unified_quant_runner', fileExists('scripts/lib/run_quant_discovery.mjs'));
 ok('miners_institutional_retest', minersPy.includes('mine_institutional_retest'));
 ok('miners_volume_accumulation', minersPy.includes('mine_volume_accumulation'));
@@ -112,7 +127,6 @@ ok('miners_quality_v3', minersPy.includes('mine_quality_universe_v3'));
 ok('miners_peer_rs', minersPy.includes('mine_peer_rs_leader'));
 ok('miners_session_micro', minersPy.includes('mine_session_microstructure'));
 ok('miners_defensive_sector', minersPy.includes('mine_defensive_sector_rotation'));
-const oppPy = readFileSync(join(PROJECT_ROOT, 'scripts/python/opportunity_score_v2.py'), 'utf8');
 ok('opp_post_breakout_penalty', oppPy.includes('POST_BREAKOUT_VOL_COLLAPSE'));
 ok('miners_level_c', minersPy.includes('mine_precursor_sequence')
   && minersPy.includes('mine_ensemble_disagreement'));
@@ -132,6 +146,11 @@ const artifacts = [
   'data/discovery_ml_manifest.json',
   'data/discovery_fabric_last.json',
   'data/discovery_data_catalog.json',
+  'data/lre_4_0_status_last.json',
+  'data/lre_research_feed_last.json',
+  'data/discovery_lre_manifest.json',
+  'data/discovery_med_manifest.json',
+  'data/med_2_status_last.json',
 ];
 for (const a of artifacts) {
   const age = ageHours(a);
@@ -153,11 +172,27 @@ if (existsSync(DB_PATH) && signalDate) {
   const ac = db.prepare(
     `SELECT COUNT(*) n FROM opportunity_score_v2 WHERE trade_date=? AND stage='ACTIONABLE_CANDIDATE'`
   ).get(signalDate)?.n ?? 0;
+  const lreFeedN = db.prepare(
+    'SELECT COUNT(*) n FROM lre_research_feed_daily WHERE signal_date=?'
+  ).get(signalDate)?.n ?? 0;
+  const lreLeak = db.prepare(
+    'SELECT COUNT(*) n FROM lre_research_feed_daily WHERE signal_date=? AND client_path_allowed=1'
+  ).get(signalDate)?.n ?? 0;
+  const medFeedN = db.prepare(
+    'SELECT COUNT(*) n FROM med_research_feed WHERE trade_date=?'
+  ).get(signalDate)?.n ?? 0;
+  const medLeak = db.prepare(
+    'SELECT COUNT(*) n FROM med_research_feed WHERE trade_date=? AND client_path_allowed=1'
+  ).get(signalDate)?.n ?? 0;
   db.close();
   ok('db_tv_features', tvN > 0, `${tvN} @ ${signalDate}`);
   ok('db_opp_v2', oppN > 50, `${oppN} @ ${signalDate}`);
   ok('db_actionable', promo >= 0, `${promo} actionable @ ${signalDate}`);
   ok('db_actionable_candidates', ac >= 0, `${ac} ACTIONABLE_CANDIDATE`);
+  ok('db_lre_feed', lreFeedN > 0, `${lreFeedN} @ ${signalDate}`);
+  ok('db_lre_no_client_leak', lreLeak === 0, `leaks=${lreLeak}`);
+  ok('db_med_feed', medFeedN > 0, `${medFeedN} @ ${signalDate}`);
+  ok('db_med_no_client_leak', medLeak === 0, `leaks=${medLeak}`);
 } else {
   ok('db_tv_features', false, 'no db/date');
 }

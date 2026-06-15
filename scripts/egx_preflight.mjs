@@ -45,6 +45,7 @@ if (!SKIP_TESTS) {
 step('Quick validation', `"${NODE}" scripts/egx_validate.mjs --quick`, { optional: true });
 step('Automation verify', `"${NODE}" scripts/egx_automation_verify.mjs`, { optional: true });
 step('Production acceptance', `"${NODE}" scripts/egx_production_acceptance.mjs`);
+step('LRE research feed acceptance', 'npm run egx:lre:acceptance', { optional: true });
 
 process.stdout.write(`\n═══ Pre-flight: ${fails === 0 ? 'PASS' : `${fails} FAIL`} ═══\n`);
 process.exit(fails > 0 ? 1 : 0);

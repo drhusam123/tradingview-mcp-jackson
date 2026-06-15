@@ -7,6 +7,9 @@ describe('discovery_engine_registry', () => {
     assert.ok(DISCOVERY_ENGINES.opportunity_v2);
     assert.ok(DISCOVERY_ENGINES.quant_rules);
     assert.ok(DISCOVERY_ENGINES.dmids);
+    assert.ok(DISCOVERY_ENGINES.lre_research_feed);
+    assert.ok(DISCOVERY_ENGINES.lre_dual_gate_daily);
+    assert.ok(DISCOVERY_ENGINES.lre_forward_shadow);
   });
 
   it('planDiscoveryRun triggers promotion_audit on PROMOTION_GAP', () => {

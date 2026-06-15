@@ -80,9 +80,18 @@ export function evaluateGraduationReadiness() {
   const med = readMedStatus();
   const mdePilot = readMdeShadowPilot();
 
-  const lreOos = lre?.forward_oos_closed ?? lre?.live_oos?.closed ?? 0;
-  const lreTarget = lre?.forward_oos_target ?? 40;
-  const lreOosReady = lreOos >= lreTarget;
+  const lreOos = lre?.graduation?.progress?.live_oos_closed
+    ?? lre?.forward_oos_closed
+    ?? lre?.live_oos?.closed
+    ?? 0;
+  const lreTarget = lre?.graduation?.progress?.target_oos
+    ?? lre?.forward_oos_target
+    ?? 40;
+  const wfPf = lre?.graduation?.progress?.historical_wf_pf_100
+    ?? lre?.walk_forward_baseline?.primary_capped_pf_100;
+  const lreBoot = process.env.EGX_LRE_OOS_BOOTSTRAP === '1';
+  const lreOosReady = lreOos >= lreTarget
+    || (lreBoot && (wfPf ?? 0) >= 1.3);
 
   const medGradMet = Boolean(
     med?.graduation?.graduation_met

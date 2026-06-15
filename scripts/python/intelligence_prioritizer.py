@@ -588,6 +588,44 @@ def load_opportunity_discovery_map(db):
         return {}
 
 
+def load_lre_research_map(db):
+    """LRE-4.0 research feed — confluence / clean core watch boosts."""
+    try:
+        row = db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='lre_research_feed_daily'"
+        ).fetchone()
+        if not row:
+            return {}
+        d = db.execute("SELECT MAX(signal_date) d FROM lre_research_feed_daily").fetchone()["d"]
+        if not d:
+            return {}
+        rows = db.execute(
+            """
+            SELECT symbol, feed_tier, opp_boost_points, pilot_eligible, pilot_bucket,
+                   dual_gate_score, lre_eps
+            FROM lre_research_feed_daily
+            WHERE signal_date=? AND opp_boost_points > 0
+            ORDER BY opp_boost_points DESC, dual_gate_score DESC
+            LIMIT 40
+            """,
+            (d,),
+        ).fetchall()
+        out = {}
+        for r in rows:
+            boost = float(r["opp_boost_points"] or 0)
+            if r["feed_tier"] == "LRE_CLEAN_CORE":
+                boost += 1.0
+            out[r["symbol"]] = {
+                "feed_tier": r["feed_tier"],
+                "pilot_bucket": r["pilot_bucket"],
+                "boost": boost,
+                "eps": float(r["lre_eps"] or 0),
+            }
+        return out
+    except Exception:
+        return {}
+
+
 def cmd_prioritize(params):
     today = datetime.date.today().isoformat()
     computed_at = datetime.datetime.utcnow().isoformat()
@@ -597,6 +635,7 @@ def cmd_prioritize(params):
     # Load all data sources
     symbols = load_symbols(db)
     opp_map = load_opportunity_discovery_map(db)
+    lre_map = load_lre_research_map(db)
     explosion_map = load_explosion_readiness(db)
     liquidity_map = load_liquidity_profiles(db)
     pattern_laws = load_pattern_laws(db)
@@ -607,6 +646,8 @@ def cmd_prioritize(params):
 
     # Merge all symbol sets
     all_symbols = set(symbols)
+    all_symbols.update(opp_map.keys())
+    all_symbols.update(lre_map.keys())
     all_symbols.update(explosion_map.keys())
     all_symbols.update(liquidity_map.keys())
     all_symbols.update(stock_dna_map.keys())
@@ -638,7 +679,8 @@ def cmd_prioritize(params):
             caus_comp * 0.15
         )
         opp_boost = (opp_map.get(sym) or {}).get("boost", 0.0)
-        intelligence_score = max(0.0, min(100.0, raw_score + opp_boost))
+        lre_boost = (lre_map.get(sym) or {}).get("boost", 0.0)
+        intelligence_score = max(0.0, min(100.0, raw_score + opp_boost + lre_boost * 0.5))
 
         comps = {
             "explosion": exp_comp,

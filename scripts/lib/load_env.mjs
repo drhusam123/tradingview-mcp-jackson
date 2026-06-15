@@ -21,9 +21,10 @@ export function loadEnv() {
   const candidates = [
     process.env.PYTHON_BIN,
     process.env.PYTHON3,
+    '/usr/bin/python3',
     join(ROOT, 'venv/bin/python3'),
     join(ROOT, '.venv/bin/python3'),
-    '/usr/bin/python3',
+    join(process.env.HOME || '', '.pyenv/shims/python'),
     'python3',
   ].filter(Boolean);
   const seen = new Set();
@@ -32,7 +33,10 @@ export function loadEnv() {
     if (seen.has(bin)) continue;
     seen.add(bin);
     try {
-      execSync(`"${bin}" -c "import numpy"`, { stdio: 'pipe', timeout: 5000 });
+      execSync(
+        `"${bin}" -c "import numpy, lightgbm, lifelines, duckdb"`,
+        { stdio: 'pipe', timeout: 8000 },
+      );
       resolved = bin;
       break;
     } catch { /* try next */ }

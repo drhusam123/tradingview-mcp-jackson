@@ -584,3 +584,53 @@ npm run egx:go:live        → + git push (gh auth login as LewisWJackson)
 P6 delivered = ULTRA فقط + client_delivered=1 — يوم NARE/HIGH لا يُحسب لبوابة delivered
 4 جلسات متبقية: انظر data/p6_session_plan.json
 Git push: docs/GIT_PUSH.md
+
+---
+
+<!-- MED-0.3-AUTO-START -->
+
+### القاعدة #24 — MED-0.4 Mathematical Edge Field (shadow research)
+
+**آخر تحديث تلقائي**: 2026-06-14 22:17 UTC | **trade_date**: `2026-06-14`
+
+#### ما يفعله MED في النظام (يونيو 2026)
+```
+med_0_3_daily_chain → med_0_4 dual-score + HC gate (cap 8)
+  → discovery_fabric (penalize atoms validated)
+  → discovery_ml_manifest (med_* penalize + strict hard_negative_symbols)
+  → opportunity_score_v2 (MED_FEED_PENALIZE=1, لا boost)
+  → actionable / Telegram ← بدون تغيير (MED_CLIENT_SIGNAL=0)
+```
+
+#### فلاتر إلزامية من MED (طبّق مع القواعد #1–#10)
+
+| إشارة MED | الشرط | الإجراء |
+|-----------|--------|---------|
+| `MED_FAILURE_WARNING` | failure_similarity ≥ 0.35 | خصم opp −8..14 أو hard_negative إذا crowding عالي |
+| `MED_DO_NOT_CHASE` | crowding_score ≥ 0.70 | خصم opp −10..14 — لا مطاردة |
+| stored_energy ≥ 0.2 | **ميت على مقياس LRE** | استخدم med_score/percentile لا stored_energy خام |
+| HIGH_CONVICTION | sample_quality + calibrate:full | حالياً `7` — يحتاج weekly calibrate |
+
+#### توزيع اليوم (210 سهم)
+- FAILURE_WARNING: **42** (20.0%)
+- DO_NOT_CHASE: **104** (49.5%)
+- false_edge_feed: **146** | strict manifest HN: **38**
+
+#### OOS replay (MED_LRE vs LRE)
+- median return delta: **+0.68pp** (n=11763)
+- MED يضيف قيمة بحثية في التصفية قبل أي boost للعميل
+
+#### أقوى conditional edge (20d / 10%)
+- `LRE_CLEAN_CORE|MDE_PASS|HIDDEN_ENERGY` | n=31 | hit=25.8% | E=0.17
+
+#### graduation — قبل `MED_FEED_BOOST=1`
+- live closed: **0/40** | graduation_met: **False**
+- penalize فقط (`MED_FEED_PENALIZE=1`) حتى اكتمال 40 صفقة live OOS
+
+```python
+# invariants — لا تكسر
+MED_SHADOW=1 | MED_CLIENT_SIGNAL=0 | MED_OPP_BOOST=0 | MED_FEED_BOOST=0
+MED_FEED_PENALIZE=1  # downrank بحثي في opp_v2
+```
+
+<!-- MED-0.3-AUTO-END -->

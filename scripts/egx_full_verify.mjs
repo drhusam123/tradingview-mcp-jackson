@@ -65,6 +65,7 @@ if (SKIP_CDP) {
 
 run('Automation (cron + notify)', `"${NODE}" scripts/egx_automation_verify.mjs`);
 run('ML+Gate pipeline', `"${NODE}" scripts/egx_ml_gate_pipeline_verify.mjs --ci`);
+run('LRE research verify', 'npm run egx:lre:verify', { optional: true });
 if (!process.argv.includes('--skip-session')) {
   run('Session ready', `"${NODE}" scripts/egx_session_ready.mjs --skip-verify-check`, { optional: true });
 }

@@ -115,6 +115,14 @@ export function evaluateClientBetaSignoff() {
       pass: verify?.pass !== false,
       detail: verify?.pass === true ? 'PASS' : verify?.pass === false ? 'FAIL' : 'not run',
     },
+    {
+      id: 'prod_ready',
+      required: false,
+      pass: readJson('prod_ready_last.json')?.pass === true,
+      detail: readJson('prod_ready_last.json')?.pass === true
+        ? 'prod:ready PASS'
+        : 'run npm run egx:phase16:production-graduation or egx:prod:ready:full',
+    },
   ];
 
   const required = checks.filter(c => c.required);

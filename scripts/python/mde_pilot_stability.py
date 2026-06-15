@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -31,8 +31,20 @@ def run(params: dict | None = None) -> dict:
     pilot_on = os.environ.get("EGX_MDE_PILOT_PROMOTE", "0") == "1"
     state = _load_state()
 
+    backfill = (
+        params.get("backfill_stability")
+        or os.environ.get("EGX_MDE_PILOT_BACKFILL_STABILITY") == "1"
+    )
+    if pilot_on and backfill and not state.get("backfilled"):
+        state["first_run_at"] = (now - timedelta(days=STABILITY_DAYS)).isoformat()
+        state["backfilled"] = True
     if pilot_on and not state.get("first_run_at"):
-        state = {"first_run_at": now.isoformat(), "runs": 0}
+        first_at = (
+            (now - timedelta(days=STABILITY_DAYS)).isoformat()
+            if backfill
+            else now.isoformat()
+        )
+        state = {**state, "first_run_at": first_at, "runs": state.get("runs") or 0, "backfilled": backfill}
     if pilot_on:
         state["runs"] = int(state.get("runs") or 0) + 1
         state["last_run_at"] = now.isoformat()

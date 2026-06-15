@@ -48,7 +48,11 @@ export function auditClosedLoops({ maxAgeHours = 168 } = {}) {
     { file: 'data/proof_loop_last.json', label: 'proof_loop' },
     { file: 'data/pre_session_last.json', label: 'pre_session' },
     { file: 'data/post_session_last.json', label: 'post_session' },
-    { file: 'data/ml_boost_last.json', label: 'ml_boost' },
+    { file: 'data/lre_4_0_status_last.json', label: 'lre_research_status' },
+    { file: 'data/lre_research_feed_last.json', label: 'lre_research_feed' },
+    { file: 'data/lre_dual_gate_daily_last.json', label: 'lre_dual_gate_daily' },
+    { file: 'data/lre_4_0_acceptance_last.json', label: 'lre_acceptance' },
+    { file: 'data/discovery_lre_manifest.json', label: 'discovery_lre_manifest' },
     { file: 'data/signal_funnel_last.json', label: 'signal_funnel' },
   ];
 

@@ -69,4 +69,4 @@ Outputs: `data/phase15_client_beta_last.json`, `data/client_beta_signoff_last.js
 3. MDE behavior memory day 14
 4. Production graduation: `npm run egx:prod:ready:full` gate in sign-off
 
-**Phase 15 complete.**
+**Phase 15 complete.** → **Phase 16:** see [PHASE_16_PRODUCTION_GRADUATION_REPORT.md](./PHASE_16_PRODUCTION_GRADUATION_REPORT.md)

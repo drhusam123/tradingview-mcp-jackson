@@ -185,6 +185,42 @@ try {
   console.log(`⚠️  Phase 15 client beta: ${e.message?.slice(0, 80)}`);
 }
 
+try {
+  execSync(`"${NODE}" scripts/egx_phase16_production_graduation.mjs --skip-phase15`, { cwd: PROJECT_ROOT, stdio: 'inherit', timeout: 600_000 });
+} catch (e) {
+  console.log(`⚠️  Phase 16 production graduation: ${e.message?.slice(0, 80)}`);
+}
+
+try {
+  execSync(`"${NODE}" scripts/egx_phase17_promotion_activation.mjs --skip-phase16`, { cwd: PROJECT_ROOT, stdio: 'inherit', timeout: 120_000 });
+} catch (e) {
+  console.log(`⚠️  Phase 17 promotion activation: ${e.message?.slice(0, 80)}`);
+}
+
+try {
+  execSync(`"${NODE}" scripts/egx_phase18_live_ops.mjs --skip-phase17`, { cwd: PROJECT_ROOT, stdio: 'inherit', timeout: 600_000 });
+} catch (e) {
+  console.log(`⚠️  Phase 18 live ops: ${e.message?.slice(0, 80)}`);
+}
+
+try {
+  execSync(`"${NODE}" scripts/egx_phase19_session_ops.mjs --skip-phase18`, { cwd: PROJECT_ROOT, stdio: 'inherit', timeout: 600_000 });
+} catch (e) {
+  console.log(`⚠️  Phase 19 session ops: ${e.message?.slice(0, 80)}`);
+}
+
+try {
+  execSync(`"${NODE}" scripts/egx_phase20_outcome_closure.mjs --skip-phase19`, { cwd: PROJECT_ROOT, stdio: 'inherit', timeout: 600_000 });
+} catch (e) {
+  console.log(`⚠️  Phase 20 outcome closure: ${e.message?.slice(0, 80)}`);
+}
+
+try {
+  execSync(`"${NODE}" scripts/egx_graduation_final.mjs --skip-phase20`, { cwd: PROJECT_ROOT, stdio: 'inherit', timeout: 600_000 });
+} catch (e) {
+  console.log(`⚠️  Graduation final (21–26): ${e.message?.slice(0, 80)}`);
+}
+
 const digest = { ...buildDeliveryDigest(signalDate), proof_loop: proof };
 const mlBoost = existsSync(join(PROJECT_ROOT, 'data/ml_boost_last.json'))
   ? JSON.parse(readFileSync(join(PROJECT_ROOT, 'data/ml_boost_last.json'), 'utf8'))

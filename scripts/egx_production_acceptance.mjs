@@ -83,6 +83,20 @@ try {
   const mig = db.prepare("SELECT COUNT(*) AS n FROM schema_migrations WHERE version='002'").get()?.n ?? 0;
   record(mig >= 1, 'Schema migration 002 applied', `rows=${mig}`);
 
+  const lreFeedLatest = db.prepare('SELECT MAX(signal_date) AS d FROM lre_research_feed_daily').get()?.d ?? null;
+  const lreFeedN = lreFeedLatest
+    ? db.prepare('SELECT COUNT(*) AS n FROM lre_research_feed_daily WHERE signal_date=?').get(lreFeedLatest)?.n ?? 0
+    : 0;
+  const lreClientLeak = lreFeedLatest
+    ? db.prepare('SELECT COUNT(*) AS n FROM lre_research_feed_daily WHERE signal_date=? AND client_path_allowed=1').get(lreFeedLatest)?.n ?? 0
+    : 0;
+  const lreMaxBoost = lreFeedLatest
+    ? db.prepare('SELECT MAX(opp_boost_points) AS m FROM lre_research_feed_daily WHERE signal_date=?').get(lreFeedLatest)?.m ?? 0
+    : 0;
+  record(Boolean(lreFeedLatest) && lreFeedN > 0, 'LRE research feed populated', lreFeedLatest ? `latest=${lreFeedLatest} rows=${lreFeedN}` : 'empty');
+  record(lreClientLeak === 0, 'LRE feed client_path_allowed=0', `leaks=${lreClientLeak}`);
+  record(Number(lreMaxBoost) <= 3, 'LRE feed opp boost cap', `max_boost=${lreMaxBoost}`);
+
   db.close();
 
   const debugPayload = '🧠 EGX COGNITION ENGINE\nSTOCK DNA (0 stocks)\n+51.3pp → null @ undefined';

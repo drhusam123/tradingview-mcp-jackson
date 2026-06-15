@@ -24,6 +24,14 @@
 | 13 | [PHASE_13_LIVE_VALIDATION_REPORT.md](./PHASE_13_LIVE_VALIDATION_REPORT.md) | MED shadow ledger · feed A/B · MDE pilot · live KPI |
 | 14 | [PHASE_14_GRADUATION_LIVE_PROBES_REPORT.md](./PHASE_14_GRADUATION_LIVE_PROBES_REPORT.md) | Env activation · MED probe · A/B streak · ops KPI line |
 | 15 | [PHASE_15_CLIENT_BETA_SIGNOFF_REPORT.md](./PHASE_15_CLIENT_BETA_SIGNOFF_REPORT.md) | Opp delta monitor · client beta sign-off checklist |
+| 16 | [PHASE_16_PRODUCTION_GRADUATION_REPORT.md](./PHASE_16_PRODUCTION_GRADUATION_REPORT.md) | Live beta monitor · prod:ready gate · production graduation |
+| 17 | [PHASE_17_PROMOTION_ACTIVATION_REPORT.md](./PHASE_17_PROMOTION_ACTIVATION_REPORT.md) | Promotion auto-apply · delivery correlation · ops digest |
+| 18 | [PHASE_18_LIVE_OPS_REPORT.md](./PHASE_18_LIVE_OPS_REPORT.md) | Live session validation · P6 delivered KPI · LRE OOS · weekly prod:ready |
+| 19 | [PHASE_19_SESSION_OPS_REPORT.md](./PHASE_19_SESSION_OPS_REPORT.md) | Post-grad session · t5 fill · LRE OOS accumulator |
+| 20 | [PHASE_20_OUTCOME_CLOSURE_REPORT.md](./PHASE_20_OUTCOME_CLOSURE_REPORT.md) | Live anchor · watch t5 closure · P6 delivered KPI |
+| 21–26 | [PHASE_21_26_GRADUATION_FINAL.md](./PHASE_21_26_GRADUATION_FINAL.md) | Live anchor · P6/LRE/MED/MDE graduation · audit close |
+
+**Audit closed:** [AUDIT_CLOSED.md](./AUDIT_CLOSED.md)
 
 ---
 

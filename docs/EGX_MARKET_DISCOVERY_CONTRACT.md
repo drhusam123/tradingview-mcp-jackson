@@ -7,6 +7,14 @@ MDE Core        = discovery brain (hidden repricing before explosion)
 MDE Integration = safe plug-in to existing machine (deferred until shadow proof)
 ```
 
+## Phase 2.10E guarantees (current)
+
+- `mde_forward_paper_trading.py` — COMP_001B historical replay + forward paper gate
+- `mde_signal_provider.py` — daily shadow signal provider (`mde_shadow_signals_daily`)
+- Provider tier: **RESEARCH_SHADOW** — `client_grade_eligible=0`
+- `score_all` logs `shadow_mde_*` fields only — **no actionable change**
+- Client-grade gate: **RESEARCH_EDGE_ONLY** (net PF 1.49 < 2.0) — no client path
+
 ## Phase 2.7 guarantees (current)
 
 - `mde_walkforward_shadow.py` — causal walk-forward: memory built only from data before T
@@ -41,6 +49,35 @@ MDE Integration = safe plug-in to existing machine (deferred until shadow proof)
 | `EGX_MDE_ENABLED` | `1` (set `0` to skip) | Run engine in EOD pipeline |
 | `EGX_MDE_SHADOW` | `1` | Log/store only |
 | `EGX_MDE_OPP_BOOST` | `0` | No opp_v2 influence |
+| `EGX_MDE_PAPER_REFRESH` | `0` | Set `1` to run full 2.10E paper replay in EOD pipeline |
+
+## MDE signal provider (Phase 2.10E)
+
+| Field | Value |
+|-------|-------|
+| Provider ID | `MDE_2_10E` |
+| Table | `mde_shadow_signals_daily` |
+| Tracks | `COMP_001B`, `PRDC_SPECIAL` |
+| Tier | `RESEARCH_SHADOW` |
+| npm | `egx:mde:signal-provider` |
+
+States: `NEW_SIGNAL` | `WAIT_CONFIRMATION` | `OPEN_PAPER_TRADE` | `REJECTED_AFTER_TRIGGER` | `INVALIDATED`
+
+## LRE integration (Phase 2.0 — companion engine)
+
+See `docs/EGX_LIQUIDITY_ROTATION_CONTRACT.md` for full LRE contract.
+
+| Field | Value |
+|-------|-------|
+| Provider ID | `LRE_2_0` |
+| Table | `lre_shadow_signals_daily` |
+| Tier | `RESEARCH_SHADOW` |
+| npm daily | `egx:lre:daily` |
+| npm provider | `egx:lre:signal-provider` |
+
+- `score_all` logs `shadow_lre_*` fields only — **no actionable change**
+- Five daily lists: awakening / silent / ignition / do-not-chase / next-rotation
+- Complements MDE: rotation graph vs hidden repricing
 
 ## OOS tiers (MDE atoms — Phase 2+)
 

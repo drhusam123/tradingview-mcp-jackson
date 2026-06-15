@@ -109,11 +109,61 @@ def compare_tracks(feed_map: Dict[str, dict]) -> List[dict]:
     return rows
 
 
+def backfill_historical_dates(conn: sqlite3.Connection, limit: int = 10) -> int:
+    """Replay A/B comparison for recent MED score dates (non-blocking streak bootstrap)."""
+    rows = conn.execute(
+        """
+        SELECT DISTINCT trade_date FROM med_daily_scores
+        WHERE trade_date IS NOT NULL
+        ORDER BY trade_date DESC LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    dates = [r["trade_date"] for r in reversed(rows)]
+    for td in dates:
+        feed_map = load_med_feed_map(conn, td)
+        if not feed_map:
+            continue
+        comparisons = compare_tracks(feed_map)
+        for c in comparisons:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO med_feed_ab_ledger
+                (trade_date, symbol, med_bucket, penalize_pts, boost_pts, delta_pts, winner_track)
+                VALUES (?,?,?,?,?,?,?)
+                """,
+                (
+                    td, c["symbol"], c["med_bucket"],
+                    c["penalize_pts"], c["boost_pts"], c["delta_pts"], c["winner_track"],
+                ),
+            )
+        boost_wins = sum(1 for c in comparisons if c["winner_track"] == "boost")
+        pen_wins = sum(1 for c in comparisons if c["winner_track"] == "penalize")
+        neutral = sum(1 for c in comparisons if c["winner_track"] == "neutral")
+        session_winner = "boost" if boost_wins > pen_wins else ("penalize" if pen_wins > boost_wins else "tie")
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO med_feed_ab_daily
+            (trade_date, boost_wins, penalize_wins, neutral, session_winner)
+            VALUES (?,?,?,?,?)
+            """,
+            (td, boost_wins, pen_wins, neutral, session_winner),
+        )
+    conn.commit()
+    return len(dates)
+
+
 def run(params: dict | None = None) -> dict:
     params = params or {}
     conn = sqlite3.connect(str(DB_PATH), timeout=120)
     conn.row_factory = sqlite3.Row
     ensure_ab_table(conn)
+
+    if params.get("backfill_historical") or os.environ.get("EGX_MED_AB_BACKFILL") == "1":
+        backfill_historical_dates(
+            conn,
+            int(params.get("backfill_days") or os.environ.get("EGX_MED_AB_BACKFILL_DAYS", "10")),
+        )
 
     trade_date = params.get("trade_date")
     if not trade_date:

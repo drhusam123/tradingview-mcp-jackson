@@ -21,11 +21,17 @@ MIN_WR_DELTA_PP = 2.0
 MIN_PF_PROXY = 1.1
 
 MDE_ATOM_PREFIX = "mde_"
+MED_ATOM_PREFIX = "med_"
 
 
 def is_mde_atom(atom_id: str) -> bool:
     """MDE atoms use separate discovery_mde_manifest — never main penalize/priority."""
     return bool(atom_id) and atom_id.startswith(MDE_ATOM_PREFIX)
+
+
+def is_med_atom(atom_id: str) -> bool:
+    """MED boost atoms stay proposed until graduation; penalize atoms use miner trust."""
+    return bool(atom_id) and atom_id.startswith(MED_ATOM_PREFIX)
 
 
 # Import quant pipeline for OOS evaluation
@@ -103,6 +109,8 @@ def build_manifest(db, extras: dict | None = None) -> dict:
     for r in rows:
         aid, regime, wr, n, lift, boost, penal, hn, mlcol, status = r
         if is_mde_atom(aid):
+            continue
+        if is_med_atom(aid) and not hn:
             continue
         if status != "validated":
             if hn and status == "rejected":
@@ -229,6 +237,8 @@ def run(params: dict | None = None):
         aid = row["atom_id"]
         if is_mde_atom(aid):
             continue
+        if is_med_atom(aid):
+            continue
         if "_" in aid and aid.count("_") >= 2 and not atom_map.get(aid):
             # composite / non-evaluable — keep proposed with miner prior
             continue
@@ -284,6 +294,40 @@ def run(params: dict | None = None):
         """,
         TRUSTED_MINERS,
     )
+    # MED-0.3 penalize atoms — OOS replay validated; boost atoms remain proposed until graduation
+    db.execute(
+        """
+        UPDATE discovery_atom_registry SET status='validated', validated_at=datetime('now')
+        WHERE status='proposed' AND source_miner='egx_med_miner' AND hard_negative=1
+        """
+    )
+    med_false_path = DATA / "med_false_edge_feed_last.json"
+    if med_false_path.exists():
+        try:
+            med_doc = json.loads(med_false_path.read_text(encoding="utf-8"))
+            med_strict = [
+                s["symbol"]
+                for s in (med_doc.get("symbols") or [])
+                if (
+                    (s.get("med_bucket") == "MED_FAILURE_WARNING" and float(s.get("failure_similarity") or 0) >= 0.35)
+                    or (
+                        s.get("med_bucket") == "MED_DO_NOT_CHASE"
+                        and float(s.get("crowding_score") or 0) >= 0.70
+                    )
+                    or (
+                        s.get("med_bucket") == "MED_FAILURE_WARNING"
+                        and float(s.get("failure_similarity") or 0) >= 0.25
+                        and float(s.get("crowding_score") or 0) >= 0.75
+                    )
+                )
+            ]
+            if med_strict:
+                extras = extras or {}
+                merged = list(dict.fromkeys((extras.get("hard_negative_symbols") or []) + med_strict[:50]))
+                extras["hard_negative_symbols"] = merged
+                extras["med_false_edge_symbols"] = med_strict[:50]
+        except Exception:
+            pass
     # TRADING_LESSONS canonical atoms — validated by empirical v3 backtest (override OOS reject)
     for aid in CORE_BOOST:
         db.execute(

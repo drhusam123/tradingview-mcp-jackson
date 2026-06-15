@@ -20,10 +20,18 @@ import { dirname, join } from 'path';
 function resolveCronPython() {
   if (process.env.PYTHON_BIN) return process.env.PYTHON_BIN;
   if (process.env.PYTHON3) return process.env.PYTHON3;
+  const systemPy = '/usr/bin/python3';
+  try {
+    execSync(
+      `"${systemPy}" -c "import numpy, lightgbm, lifelines, duckdb"`,
+      { stdio: 'ignore', timeout: 8000 },
+    );
+    return systemPy;
+  } catch { /* fall through */ }
   try {
     return execSync('which python3', { encoding: 'utf8', timeout: 3000 }).trim();
   } catch {
-    return '/usr/bin/python3';
+    return systemPy;
   }
 }
 
@@ -189,7 +197,7 @@ const CRON_EXPLAIN_Q = `5 15 * * 0-4 cd "${ROOT}" && ${locked('egx-daily', `${NO
 // كل أحد 6:30 AM القاهرة (04:30 UTC صيف) — قبل فتح أسواق الأسهم الأوروبية
 const MACRO_G_SCRIPT = join(ROOT, 'scripts', 'python', 'fetch_global_macro.py');
 const MACRO_G_LOG    = join(ROOT, 'logs', 'macro_global.log');
-const PYTHON_BIN_VAR = 'python3';
+const PYTHON_BIN_VAR = CRON_PYTHON;
 const CRON_MACRO_G   = `30 4 * * 0 ${PYTHON_BIN_VAR} "${MACRO_G_SCRIPT}" fetch_all '{}' >> "${MACRO_G_LOG}" 2>&1 ${MARKER_MACRO_G}`;
 
 // ── Phase 20-28 Cron Jobs ────────────────────────────────────────────────────
@@ -387,7 +395,7 @@ const VERIFY_SCRIPT      = join(ROOT, 'scripts', 'egx_full_verify.mjs');
 const VERIFY_LOG         = join(ROOT, 'logs', 'full_verify.log');
 const POST_SESSION_SCRIPT= join(ROOT, 'scripts', 'egx_post_session_ops.mjs');
 const POST_SESSION_LOG   = join(ROOT, 'logs', 'post_session.log');
-const PYTHON_BIN         = 'python3';
+const PYTHON_BIN         = CRON_PYTHON;
 
 // صحة النظام: 6:30 AM القاهرة (4:30 UTC) قبل السوق
 const CRON_HEALTH_D      = `30 4 * * 0-4 cd "${ROOT}" && ${PYTHON_BIN} "${HEALTH_SCRIPT}" check >> "${HEALTH_LOG}" 2>&1 ${MARKER_HEALTH_D}`;
@@ -565,8 +573,8 @@ console.log(`   ♾️  Perpetual:   45 18 * * 0          (الأحد 8:45 PM)  
 console.log(`   🧬 Fabric-D:    35 11 * * 0-4         (11:35 AM)            → egx_discovery_fabric.mjs`);
 console.log(`   🧬 Fabric-W:    42 18 * * 0           (الأحد 8:42 PM)       → egx_discovery_fabric.mjs`);
 console.log(`   📡 TV Micro:    0 11 * * 0-4         (11 AM)               → tv_microstructure_engine.mjs`);
-console.log(`   🔧 Gap repair:  20 5 * * 0-4         (7:20 AM light)       → egx_gap_repair.mjs --skip-automate`);
-console.log(`   🔧 Gap full:    10 6 * * 0           (الأحد 8:10 AM)       → egx_gap_repair.mjs (full)`);
+console.log(`   🔧 Gap repair:  20 5 * * 0-4         (7:20 AM light)       → egx_gap_repair.mjs --skip-automate (+ OHLCV catch-up)`);
+console.log(`   🔧 Gap full:    10 6 * * 0           (الأحد 8:10 AM)       → egx_gap_repair.mjs (full + OHLCV catch-up)`);
 console.log(`   ⏱️  Intraday:    55 19 * * 0          (الأحد 9:55 PM)       → fetch_egx_intraday.mjs --core-only`);
 console.log(`   ⏱️  Intraday LQ: 5 20 * * 0           (الأحد 10:05 PM)      → fetch_egx_intraday.mjs --tier-liquid`);
 console.log(`   ⏱️  Intraday M:  30 22 1-7 * 0       (أول أحد شهرياً)      → fetch_egx_intraday.mjs --resume (full)`);

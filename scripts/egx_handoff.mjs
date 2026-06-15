@@ -54,6 +54,10 @@ const p6CtxLine = p6Ctx?.p6_gate
 const oppTrendLine = oppFollow?.alerts?.length
   ? `  Opp followup: ${oppFollow.alerts.length} alert(s) — ${oppFollow.alerts[0]?.code}`
   : '';
+const lre = digest.lre;
+const lreLine = lre
+  ? `  LRE research: ${lre.feed_rows} feed | conf ${lre.confluence} | boost +${lre.max_boost} | OOS ${lre.forward_oos_closed}/${lre.forward_oos_target} (${lre.graduation_verdict})`
+  : '';
 
 let gitLine = 'git: unknown';
 try {
@@ -81,6 +85,7 @@ ${autopsyLine}
 ${closedLine}
 ${p6CtxLine}
 ${oppTrendLine}
+${lreLine}
   Git:          ${gitLine}
 
 ── ONE COMMANDS ──
@@ -94,6 +99,7 @@ ${oppTrendLine}
   npm run egx:p6:status           # P6 samples + counterfactual
   npm run egx:cache:backfill      # historical indicators_cache gaps
   npm run egx:opportunity:followup # opp quality trend alerts
+  npm run egx:lre:status            # LRE research feed + graduation tracker
   npm run egx:loop:audit          # closed-loop health check
   npm run egx:p6:sync             # evolution+cognition consume P6 context
   npm run egx:go:live:local       # P6 plan + telegram dry-run + cron install

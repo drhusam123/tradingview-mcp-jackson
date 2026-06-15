@@ -10,12 +10,14 @@ import { fileURLToPath } from 'url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PY = process.env.PYTHON3 || process.env.PYTHON_BIN || 'python3';
+const SYSTEM_PY = '/usr/bin/python3';
+const PYENV_PY = join(process.env.HOME || '', '.pyenv/shims/python');
 const CDP_PORT = Number(process.env.TV_CDP_PORT || 9222);
 
 const REQUIRED_PY = [
   'numpy', 'pandas', 'lightgbm', 'sklearn', 'scipy', 'optuna',
   'shap', 'mlflow', 'yfinance', 'statsmodels', 'tsfresh', 'joblib', 'xgboost',
-  'lifelines',
+  'lifelines', 'duckdb', 'pyarrow',
 ];
 const OPTIONAL_PY = ['tensorflow', 'catboost', 'pyod', 'networkx', 'tigramite'];
 
@@ -70,28 +72,50 @@ if (existsSync(join(ROOT, 'node_modules'))) {
 
 // Python packages
 console.log('\n▶  Python packages');
-const pyCheck = spawnSync(PY, ['-c', `
-import json, sys
+
+function checkPyPackages(pyBin, label) {
+  console.log(`\n  ── ${label}: ${pyBin} ──`);
+  const pyCheck = spawnSync(pyBin, ['-c', `
+import json, sys, ssl
 req = ${JSON.stringify(REQUIRED_PY)}
 opt = ${JSON.stringify(OPTIONAL_PY)}
 missing, optional_missing = [], []
+versions = {}
 for p in req:
-    try: __import__(p)
-    except ImportError: missing.append(p)
+    mod = 'sklearn' if p == 'sklearn' else p
+    try:
+        m = __import__(mod)
+        versions[p] = getattr(m, '__version__', 'ok')
+    except ImportError:
+        missing.append(p)
 for p in opt:
     try: __import__(p)
     except ImportError: optional_missing.append(p)
-print(json.dumps({"missing": missing, "optional_missing": optional_missing}))
-`], { encoding: 'utf8', cwd: ROOT });
+print(json.dumps({
+    "missing": missing,
+    "optional_missing": optional_missing,
+    "python": sys.version.split()[0],
+    "ssl": ssl.OPENSSL_VERSION,
+    "lifelines": versions.get("lifelines"),
+    "lightgbm": versions.get("lightgbm"),
+}))
+`], { encoding: 'utf8', cwd: ROOT, timeout: 120_000 });
 
-if (pyCheck.status === 0) {
-  const { missing, optional_missing } = JSON.parse(pyCheck.stdout.trim());
-  for (const p of REQUIRED_PY.filter(x => !missing.includes(x))) ok(p);
-  for (const p of missing) fail(`${p} — pip3 install ${p}`);
-  for (const p of optional_missing) warn(`${p} اختياري — غير مثبت`);
-} else {
-  fail(`فحص Python فشل: ${pyCheck.stderr?.slice(0, 200)}`);
+  if (pyCheck.status !== 0) {
+    fail(`${label} — فحص Python فشل: ${pyCheck.stderr?.slice(0, 200)}`);
+    return;
+  }
+  const data = JSON.parse(pyCheck.stdout.trim());
+  console.log(`     Python ${data.python} | ${data.ssl}`);
+  if (data.lifelines) console.log(`     lifelines=${data.lifelines} lightgbm=${data.lightgbm}`);
+  for (const p of REQUIRED_PY.filter(x => !data.missing.includes(x))) ok(`${label}: ${p}`);
+  for (const p of data.missing) fail(`${label}: ${p} — pip install ${p}`);
+  for (const p of data.optional_missing) warn(`${label}: ${p} اختياري — غير مثبت`);
 }
+
+checkPyPackages(SYSTEM_PY, 'cron /usr/bin/python3');
+if (existsSync(PYENV_PY)) checkPyPackages(PYENV_PY, 'dev pyenv');
+else warn('pyenv غير موجود — تخطي فحص المسار الثاني');
 
 // ML models
 console.log('\n▶  ML models');
