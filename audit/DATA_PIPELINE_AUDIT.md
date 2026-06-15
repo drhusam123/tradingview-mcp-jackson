@@ -1,6 +1,6 @@
 # Data Pipeline Audit
 
-**Generated:** 2026-06-15T08:35:44.684Z
+**Generated:** 2026-06-15T09:27:20.091Z
 **Signal date:** 2026-06-14
 
 ## Summary
@@ -16,7 +16,7 @@
 | l1_cache_coverage | ✅ | 228/180 on 2026-06-14 |
 | l1_getOHLCV_execution | ✅ | COMI bars=5 vol>0=true |
 | l0_history_stats | ✅ | 269 symbols | 80389 bars |
-| l0_parquet_snapshot | ✅ | ohlcv parquet rows=79503 age_h=10.8 |
+| l0_parquet_snapshot | ✅ | ohlcv parquet rows=79503 age_h=11.7 |
 | l1_parquet_indicators | ✅ | indicators parquet rows=3080 (run egx:parquet:export) |
 | l0_parquet_universe | ✅ | universe parquet rows=301 |
 | l0_parquet_intraday | ✅ | ohlcv_60min parquet rows=74223 (run egx:parquet:export) |
@@ -37,7 +37,7 @@
 | kpi_exclusions_consistent | ❌ | raw-exec=2346 exclusions=2363 delta=17 |
 | kpi_tv_discovery | ✅ | tv_discovery @ 2026-06-14: 66 symbols (Phase 3 target ≥40) |
 | kpi_ensemble_coverage | ✅ | ensemble/explosion @ 2026-06-14: 198 symbols (target ≥150) |
-| kpi_pipeline_lineage | ✅ | last tv_auto summary 8.8h ago (target ≤72h) |
+| kpi_pipeline_lineage | ✅ | last tv_auto summary 9.6h ago (target ≤72h) |
 
 ## Fixes Applied
 

@@ -209,9 +209,18 @@ def run(params: dict | None = None) -> dict:
             pending = 0
             try:
                 pending = conn.execute("""
-                    SELECT COUNT(*) n FROM notification_delivery_audit
-                    WHERE deliverable=1 AND send_success=0 AND dry_run=0
-                      AND signal_date >= date('now', '-3 days')
+                    SELECT COUNT(DISTINCT d.signal_date) n
+                    FROM notification_delivery_audit d
+                    WHERE d.deliverable = 1
+                      AND d.dry_run = 0
+                      AND d.signal_date >= date('now', '-3 days')
+                      AND NOT EXISTS (
+                        SELECT 1
+                        FROM notification_delivery_audit s
+                        WHERE s.signal_date = d.signal_date
+                          AND s.send_success = 1
+                          AND s.dry_run = 0
+                      )
                 """).fetchone()["n"]
             except sqlite3.Error:
                 pass

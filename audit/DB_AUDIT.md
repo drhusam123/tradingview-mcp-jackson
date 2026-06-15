@@ -1,6 +1,6 @@
 # Database Audit
 
-**Generated:** 2026-06-15T08:35:31.485851+00:00
+**Generated:** 2026-06-15T09:27:05.944496+00:00
 **Database:** `data/egx_trading.db`
 **Tables:** 287 | **Audited (important):** 68
 
