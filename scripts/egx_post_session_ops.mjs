@@ -144,9 +144,27 @@ try {
 }
 
 try {
+  execSync(`"${NODE}" scripts/egx_p6_historical_backfill.mjs`, { cwd: PROJECT_ROOT, stdio: 'inherit', timeout: 360_000 });
+} catch (e) {
+  console.log(`⚠️  P6 historical backfill: ${e.message?.slice(0, 80)}`);
+}
+
+try {
   execSync(`"${NODE}" scripts/egx_phase10_graduation.mjs --skip-phase9`, { cwd: PROJECT_ROOT, stdio: 'inherit', timeout: 120_000 });
 } catch (e) {
   console.log(`⚠️  Phase 10 graduation: ${e.message?.slice(0, 80)}`);
+}
+
+try {
+  execSync(`"${NODE}" scripts/egx_phase11_promotion.mjs --skip-phase10`, { cwd: PROJECT_ROOT, stdio: 'inherit', timeout: 120_000 });
+} catch (e) {
+  console.log(`⚠️  Phase 11 promotion: ${e.message?.slice(0, 80)}`);
+}
+
+try {
+  execSync(`"${NODE}" scripts/egx_phase12_bootstrap.mjs --skip-phase11`, { cwd: PROJECT_ROOT, stdio: 'inherit', timeout: 120_000 });
+} catch (e) {
+  console.log(`⚠️  Phase 12 bootstrap: ${e.message?.slice(0, 80)}`);
 }
 
 const digest = { ...buildDeliveryDigest(signalDate), proof_loop: proof };

@@ -179,6 +179,14 @@ ok('EGX_OPS_SUCCESS_ALERT', process.env.EGX_OPS_SUCCESS_ALERT !== '0', process.e
 ok('npm egx:phase9:graduation', npmScripts['egx:phase9:graduation']?.includes('egx_phase9_graduation.mjs'));
 ok('script egx_phase9_graduation.mjs', existsSync(join(PROJECT_ROOT, 'scripts/egx_phase9_graduation.mjs')));
 ok('npm egx:phase10:graduation', npmScripts['egx:phase10:graduation']?.includes('egx_phase10_graduation.mjs'));
+ok('npm egx:phase11:promotion', npmScripts['egx:phase11:promotion']?.includes('egx_phase11_promotion.mjs'));
+ok('script research_client_env.mjs', existsSync(join(PROJECT_ROOT, 'scripts/lib/research_client_env.mjs')));
+ok('script mde_promotion_bridge.py', existsSync(join(PROJECT_ROOT, 'scripts/python/mde_promotion_bridge.py')));
+ok('npm egx:phase12:bootstrap', npmScripts['egx:phase12:bootstrap']?.includes('egx_phase12_bootstrap.mjs'));
+ok('npm egx:p6:historical-backfill', npmScripts['egx:p6:historical-backfill']?.includes('egx_p6_historical_backfill.mjs'));
+ok('script p6_historical_proof.mjs', existsSync(join(PROJECT_ROOT, 'scripts/lib/p6_historical_proof.mjs')));
+ok('bootstrap graduation mode', readFileSync(join(PROJECT_ROOT, 'scripts/lib/p6_historical_proof.mjs'), 'utf8').includes('historical_bootstrap'));
+ok('eod dynamic research env', tvAuto.includes('research_client_env.mjs') && !tvAuto.includes('MED_CLIENT_SIGNAL=0 MED_OPP_BOOST=0 MED_FEED_BOOST=0 MED_POSITION_SIZING_LIVE=0'));
 ok('script p6_graduation_gate.mjs', existsSync(join(PROJECT_ROOT, 'scripts/lib/p6_graduation_gate.mjs')));
 ok('delivered seed helper', readFileSync(join(PROJECT_ROOT, 'scripts/lib/delivered_outcomes.mjs'), 'utf8').includes('seedDeliveredOutcomes'));
 ok('npm egx:lre:research-feed', Boolean(npmScripts['egx:lre:research-feed']));

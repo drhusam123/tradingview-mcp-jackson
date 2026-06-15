@@ -9,6 +9,8 @@ import { loadDiscoveryFeedback, readPendingResearchDirectives } from './load_dis
 const P6_CTX_PATH = join(PROJECT_ROOT, 'data/p6_research_context.json');
 const OPP_FOLLOWUP_PATH = join(PROJECT_ROOT, 'data/opportunity_followup_last.json');
 const DISCOVERY_QUALITY_PATH = join(PROJECT_ROOT, 'data/discovery_quality_last.json');
+const MDE_SHADOW_HINTS_PATH = join(PROJECT_ROOT, 'data/mde_shadow_promotion_hints.json');
+const RESEARCH_ENV_PATH = join(PROJECT_ROOT, 'data/research_client_env.json');
 
 export function readP6ResearchContext() {
   if (!existsSync(P6_CTX_PATH)) return null;
@@ -65,6 +67,15 @@ export function buildDiscoveryParams({ signalDate = null, includeDirectives = tr
     try { discoveryMlManifest = JSON.parse(readFileSync(manifestPath, 'utf8')); } catch { /* */ }
   }
 
+  let mdeShadowHints = null;
+  if (existsSync(MDE_SHADOW_HINTS_PATH)) {
+    try { mdeShadowHints = JSON.parse(readFileSync(MDE_SHADOW_HINTS_PATH, 'utf8')); } catch { /* */ }
+  }
+  let researchClientEnv = null;
+  if (existsSync(RESEARCH_ENV_PATH)) {
+    try { researchClientEnv = JSON.parse(readFileSync(RESEARCH_ENV_PATH, 'utf8')); } catch { /* */ }
+  }
+
   const params = {
     feedback_queue: queue,
     p6_priorities: p6?.research_priorities || [],
@@ -76,6 +87,8 @@ export function buildDiscoveryParams({ signalDate = null, includeDirectives = tr
     strict_quality: strictQuality,
     discovery_quality_score: dqScore ?? null,
     discovery_ml_manifest: discoveryMlManifest,
+    mde_shadow_hints: mdeShadowHints,
+    research_client_env: researchClientEnv?.env ?? null,
   };
 
   return {

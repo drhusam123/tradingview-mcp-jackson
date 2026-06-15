@@ -19,6 +19,8 @@
 | 8 | [PHASE_8_CLIENT_BETA_GRADUATION_REPORT.md](./PHASE_8_CLIENT_BETA_GRADUATION_REPORT.md) | explosive_min_vol hard block · delivered track · prod 10/10 |
 | 9 | [PHASE_9_RESEARCH_ENGINES_REPORT.md](./PHASE_9_RESEARCH_ENGINES_REPORT.md) | Phase 9 bundle · MED/LRE/MDE PASS · 9 delivered synced |
 | 10 | [PHASE_10_CLIENT_BETA_READINESS_REPORT.md](./PHASE_10_CLIENT_BETA_READINESS_REPORT.md) | Graduation gates · phase10 bundle · post-session wired |
+| 11 | [PHASE_11_RESEARCH_CLIENT_PROMOTION_REPORT.md](./PHASE_11_RESEARCH_CLIENT_PROMOTION_REPORT.md) | Dynamic research env · MDE shadow bridge · phase11 promotion |
+| 12 | [PHASE_12_HISTORICAL_BOOTSTRAP_REPORT.md](./PHASE_12_HISTORICAL_BOOTSTRAP_REPORT.md) | OHLCV bootstrap graduation · no live-session wait |
 
 ---
 
@@ -86,12 +88,13 @@ node scripts/egx_automation_verify.mjs # 109/109 gate
 | Delivery | sent + ROTO correction |
 | **pre-session** | **9/9 PASS** (after L0 audit repair) |
 | data_layer_audit | **PASS** — cross_market lag=0, exclusions delta=0 |
-| Automation verify | **109/109** |
-| OHLCV lag (illiquid) | **26** symbols — actionable lag **0** |
+| Automation verify | **117/117** |
+| Phase 11 promotion | `npm run egx:phase11:promotion` |
+| Research env snapshot | `data/research_client_env.json` |
 
 ### Post-audit L0 repair (2026-06-15)
 
 1. **`kpi_cross_market_fresh`** — `fetch_cross_market --daily` + `repair_cross_market_quality` → lag 2→0 days
 2. **`kpi_exclusions_consistent`** — resolved **41 orphan** exclusions (bars purged during ROTO/OHLCV hygiene)
 3. **`egx_ohlcv_catchup`** — exit 0 when only illiquid symbols fail (cron-friendly)
-| Automation | **109/109** |
+

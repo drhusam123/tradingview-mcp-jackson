@@ -7,6 +7,13 @@ import { join } from 'path';
 import { DB_PATH } from './delivery_audit.mjs';
 import { PROJECT_ROOT } from './load_env.mjs';
 import { getProofLoopMetrics, PROOF_MIN_N, PROOF_MIN_WR } from './proof_loop.mjs';
+import {
+  getBootstrapProofMetrics,
+  graduationUsesBootstrap,
+  BOOTSTRAP_MIN_N,
+  BOOTSTRAP_MIN_WR,
+  GRADUATION_MODE,
+} from './p6_historical_proof.mjs';
 import { nextTradingDay, cairoDateParts } from './egx_calendar.mjs';
 
 export function listPendingDeliveredOutcomes({ minFilled = 5 } = {}) {
@@ -46,15 +53,32 @@ function readMedStatus() {
   }
 }
 
+function readMdeShadowPilot() {
+  const p = join(PROJECT_ROOT, 'data/mde_shadow_promotion_hints.json');
+  if (!existsSync(p)) return null;
+  try {
+    return JSON.parse(readFileSync(p, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
 /** Evaluate all graduation gates and recommended env toggles. */
 export function evaluateGraduationReadiness() {
-  const ultra = getProofLoopMetrics({ safetyFiltered: true });
-  const deliveredSafe = getProofLoopMetrics({ deliveredOnly: true, safetyFiltered: true });
-  const deliveredRaw = getProofLoopMetrics({ deliveredOnly: true, allDeliveredTiers: true });
+  const bootstrap = getBootstrapProofMetrics();
+  const useBootstrap = graduationUsesBootstrap();
+  const ultra = bootstrap.ultra_safe;
+  const deliveredSafe = bootstrap.delivered_safe;
+  const deliveredRaw = bootstrap.delivered_raw;
   const pending = listPendingDeliveredOutcomes();
+
+  const ultraPass = useBootstrap ? bootstrap.bootstrap_pass : ultra.gate_pass;
+  const deliveredPass = useBootstrap ? bootstrap.bootstrap_pass : deliveredSafe.gate_pass;
+  const medClientReady = useBootstrap ? bootstrap.bootstrap_pass : deliveredSafe.gate_pass;
 
   const lre = readLreStatus();
   const med = readMedStatus();
+  const mdePilot = readMdeShadowPilot();
 
   const lreOos = lre?.forward_oos_closed ?? lre?.live_oos?.closed ?? 0;
   const lreTarget = lre?.forward_oos_target ?? 40;
@@ -68,29 +92,48 @@ export function evaluateGraduationReadiness() {
 
   const gates = {
     p6_ultra_safe: {
-      pass: ultra.gate_pass,
+      pass: ultraPass,
+      mode: GRADUATION_MODE,
       n: ultra.n_completed,
       wr: ultra.win_rate,
-      samples_needed: ultra.samples_needed,
-      target_n: PROOF_MIN_N,
-      target_wr: PROOF_MIN_WR,
+      samples_needed: useBootstrap ? bootstrap.samples_needed_bootstrap : ultra.samples_needed,
+      target_n: useBootstrap ? BOOTSTRAP_MIN_N : PROOF_MIN_N,
+      target_wr: useBootstrap ? BOOTSTRAP_MIN_WR : PROOF_MIN_WR,
+      live_kpi_n: ultra.n_completed,
+      live_kpi_target_n: PROOF_MIN_N,
+      live_samples_needed: bootstrap.samples_needed_live_full,
     },
     p6_delivered_safe: {
-      pass: deliveredSafe.gate_pass,
+      pass: deliveredPass,
+      mode: GRADUATION_MODE,
       n: deliveredSafe.n_completed,
       wr: deliveredSafe.win_rate,
-      samples_needed: deliveredSafe.samples_needed,
-      target_n: PROOF_MIN_N,
-      target_wr: PROOF_MIN_WR,
+      samples_needed: useBootstrap ? 0 : deliveredSafe.samples_needed,
+      target_n: useBootstrap ? BOOTSTRAP_MIN_N : PROOF_MIN_N,
+      target_wr: useBootstrap ? BOOTSTRAP_MIN_WR : PROOF_MIN_WR,
+      bootstrap_proxy: useBootstrap,
+    },
+    p6_bootstrap: {
+      pass: bootstrap.bootstrap_pass,
+      mode: GRADUATION_MODE,
+      n: ultra.n_completed,
+      wr: ultra.win_rate,
+      target_n: BOOTSTRAP_MIN_N,
+      target_wr: BOOTSTRAP_MIN_WR,
+      source: 'historical_ohlcv_safety_filtered_ultra',
     },
     med_client_signal: {
-      pass: false,
+      pass: medClientReady,
       env: 'MED_CLIENT_SIGNAL',
       current: process.env.MED_CLIENT_SIGNAL ?? '0',
-      recommended: deliveredSafe.gate_pass ? '1' : '0',
-      reason: deliveredSafe.gate_pass
-        ? 'P6 delivered gate PASS — operator may enable MED_CLIENT_SIGNAL=1'
-        : `Need ${deliveredSafe.samples_needed} more safe-delivered samples`,
+      recommended: medClientReady ? '1' : '0',
+      reason: medClientReady
+        ? (useBootstrap
+          ? `Bootstrap PASS — ${ultra.n_completed}/${BOOTSTRAP_MIN_N} ULTRA safe @ ${ultra.win_rate}% (historical OHLCV)`
+          : 'P6 delivered gate PASS — operator may enable MED_CLIENT_SIGNAL=1')
+        : (useBootstrap
+          ? `Bootstrap needs ${bootstrap.samples_needed_bootstrap} more ULTRA safe samples`
+          : `Need ${deliveredSafe.samples_needed} more safe-delivered samples`),
     },
     med_feed_boost: {
       pass: medGradMet,
@@ -117,20 +160,38 @@ export function evaluateGraduationReadiness() {
       recommended: '0',
       reason: 'MDE remains shadow — client-grade validation only',
     },
+    mde_shadow_pilot: {
+      pass: Boolean(mdePilot?.pilot_eligible),
+      pilot_count: mdePilot?.pilot_count ?? 0,
+      env: 'EGX_MDE_PILOT_PROMOTE',
+      current: process.env.EGX_MDE_PILOT_PROMOTE ?? '0',
+      recommended: mdePilot?.pilot_eligible ? '1' : '0',
+      reason: mdePilot?.pilot_eligible
+        ? `${mdePilot.pilot_count} shadow hints ready — operator may set EGX_MDE_PILOT_PROMOTE=1`
+        : 'Run phase11 / mde_promotion_bridge for shadow hints',
+    },
   };
 
   const blockers = [];
-  if (!gates.p6_ultra_safe.pass && gates.p6_ultra_safe.samples_needed === 0) {
-    blockers.push(`P6 ULTRA WR ${ultra.win_rate}% < ${PROOF_MIN_WR}%`);
-  } else if (gates.p6_ultra_safe.samples_needed > 0) {
-    blockers.push(`P6 ULTRA needs ${gates.p6_ultra_safe.samples_needed} more safe samples`);
+  if (!useBootstrap) {
+    if (!gates.p6_ultra_safe.pass && gates.p6_ultra_safe.samples_needed === 0) {
+      blockers.push(`P6 ULTRA WR ${ultra.win_rate}% < ${PROOF_MIN_WR}%`);
+    } else if (gates.p6_ultra_safe.samples_needed > 0) {
+      blockers.push(`P6 ULTRA needs ${gates.p6_ultra_safe.samples_needed} more safe samples`);
+    }
+    if (gates.p6_delivered_safe.samples_needed > 0) {
+      blockers.push(`P6 delivered needs ${gates.p6_delivered_safe.samples_needed} more safe samples`);
+    }
+  } else if (!bootstrap.bootstrap_pass) {
+    blockers.push(`Bootstrap: need ${bootstrap.samples_needed_bootstrap} more safety-filtered ULTRA @ ≥${BOOTSTRAP_MIN_WR}%`);
   }
-  if (gates.p6_delivered_safe.samples_needed > 0) {
-    blockers.push(`P6 delivered needs ${gates.p6_delivered_safe.samples_needed} more safe samples`);
-  }
-  if (pending.length) {
+  if (pending.length && !useBootstrap) {
     blockers.push(`${pending.length} delivered signals awaiting t5 fill`);
   }
+
+  const liveKpiNote = useBootstrap && bootstrap.bootstrap_pass
+    ? `Live forward KPI: ${ultra.n_completed}/${PROOF_MIN_N} (non-blocking)`
+    : null;
 
   const nextSession = nextTradingDay(cairoDateParts().date).next_trading_day;
   const nextActions = [
@@ -141,8 +202,16 @@ export function evaluateGraduationReadiness() {
 
   return {
     at: new Date().toISOString(),
-    client_beta_ready: gates.p6_delivered_safe.pass,
-    research_to_client_ready: gates.p6_ultra_safe.pass && gates.p6_delivered_safe.pass,
+    graduation_mode: GRADUATION_MODE,
+    client_beta_ready: deliveredPass,
+    research_to_client_ready: ultraPass && deliveredPass,
+    bootstrap: {
+      pass: bootstrap.bootstrap_pass,
+      n: ultra.n_completed,
+      wr: ultra.win_rate,
+      target_n: BOOTSTRAP_MIN_N,
+      live_kpi_note: liveKpiNote,
+    },
     gates,
     blockers,
     pending_delivered: pending.map(r => ({

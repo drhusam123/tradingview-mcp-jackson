@@ -52,12 +52,14 @@ if (AS_JSON) {
 } else {
   const g = readiness.gates;
   console.log('  Gates:');
-  console.log(`    P6 ULTRA safe:      ${g.p6_ultra_safe.pass ? '✅' : '⏳'} ${g.p6_ultra_safe.n}/${PROOF_MIN_N} @ ${g.p6_ultra_safe.wr ?? '—'}%`);
-  console.log(`    P6 delivered safe:  ${g.p6_delivered_safe.pass ? '✅' : '⏳'} ${g.p6_delivered_safe.n}/${PROOF_MIN_N} @ ${g.p6_delivered_safe.wr ?? '—'}%`);
+  console.log(`    P6 ULTRA safe:      ${g.p6_ultra_safe.pass ? '✅' : '⏳'} ${g.p6_ultra_safe.n}/${g.p6_ultra_safe.target_n} @ ${g.p6_ultra_safe.wr ?? '—'}% (${g.p6_ultra_safe.mode})`);
+  console.log(`    P6 bootstrap:       ${g.p6_bootstrap?.pass ? '✅' : '⏳'} ${g.p6_bootstrap?.n ?? '—'}/${g.p6_bootstrap?.target_n ?? '—'} historical`);
+  console.log(`    P6 delivered safe:  ${g.p6_delivered_safe.pass ? '✅' : '⏳'} ${g.p6_delivered_safe.n}/${g.p6_delivered_safe.target_n} @ ${g.p6_delivered_safe.wr ?? '—'}%`);
   console.log(`    MED_CLIENT_SIGNAL:  keep ${g.med_client_signal.current} → ${g.med_client_signal.recommended} (${g.med_client_signal.reason})`);
   console.log(`    MED_FEED_BOOST:     keep ${g.med_feed_boost.current} → ${g.med_feed_boost.recommended}`);
   console.log(`    LRE_FEED_BOOST:     keep ${g.lre_feed_boost.current} → ${g.lre_feed_boost.recommended} (${g.lre_feed_boost.reason})`);
   console.log(`    MDE client path:    shadow (${g.mde_client_actionable.reason})`);
+  console.log(`    MDE shadow pilot:   ${g.mde_shadow_pilot.recommended === '1' ? '✅ hints ready' : '⏳'} (${g.mde_shadow_pilot.pilot_count} symbols)`);
 
   if (readiness.pending_delivered?.length) {
     console.log('\n  Pending delivered (awaiting t5):');

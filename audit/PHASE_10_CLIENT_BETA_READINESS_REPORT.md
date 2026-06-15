@@ -71,10 +71,9 @@ npm run egx:post:session
 npm run egx:phase10:graduation
 
 # When phase10 shows client_beta_ready: YES
-# Operator enables (manual, one at a time):
-#   MED_CLIENT_SIGNAL=1  (after delivered gate PASS)
-#   MED_FEED_BOOST=1     (after MED graduation)
-#   EGX_LRE_FEED_BOOST=1 (after LRE OOS 40/40)
+# Enable auto-promote (Phase 11):
+#   EGX_PHASE11_AUTO_PROMOTE=1
+# Or manual one-at-a-time with EGX_RESEARCH_ENV_FORCE=1 if needed
 ```
 
 ---

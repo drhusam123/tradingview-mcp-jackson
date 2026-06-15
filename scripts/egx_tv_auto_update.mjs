@@ -22,6 +22,7 @@ import { writeProofLoopSnapshot } from './lib/proof_loop.mjs';
 import { checkIndicatorCacheCoverage } from './lib/indicator_cache_gate.mjs';
 import { buildDiscoveryParams } from './lib/discovery_context.mjs';
 import { recordLineageStep } from './lib/pipeline_lineage.mjs';
+import { resolveResearchClientEnv, writeResearchClientEnvSnapshot } from './lib/research_client_env.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -472,6 +473,12 @@ async function main() {
   run('node scripts/tv_macro_reconcile.mjs', 'TradingView macro and cross-market reconcile gate');
   run(`${PYTHON3} scripts/python/ml_advanced.py daily ${signalDate}`, 'ML-Advanced daily (meta/MoE/analogs/conformal/survival/leadlag/drift)');
   run(`${PYTHON3} scripts/python/egx_ml_trainer.py phase50`, 'Adaptive gate thresholds (phase50)', { critical: false });
+  execSync(
+    `${process.env.PYTHON_BIN || PYTHON3} scripts/python/mde_promotion_bridge.py '${JSON.stringify({ trade_date: signalDate })}'`,
+    { cwd: ROOT, stdio: 'pipe', timeout: 60_000 },
+  );
+  const researchEnv = writeResearchClientEnvSnapshot(resolveResearchClientEnv());
+  const rePrefix = researchEnv.prefix;
   const discoveryCtx = buildDiscoveryParams({ signalDate });
   const scoreParams = JSON.stringify({ date: signalDate });
   const discoveryParamsJson = JSON.stringify(discoveryCtx.params);
@@ -592,12 +599,12 @@ async function main() {
   }
   if (process.env.EGX_MED_ENABLED !== '0') {
     run(
-      `MED_SHADOW=1 MED_CLIENT_SIGNAL=0 MED_OPP_BOOST=0 MED_FEED_BOOST=0 MED_POSITION_SIZING_LIVE=0 ${PYTHON3} scripts/python/med_0_3_daily_chain.py '${JSON.stringify({ trade_date: signalDate })}'`,
-      'MED shadow — MED-0.4 daily chain + HC audit (no client path)',
+      `${rePrefix} ${PYTHON3} scripts/python/med_0_3_daily_chain.py '${JSON.stringify({ trade_date: signalDate })}'`,
+      'MED shadow — MED-0.4 daily chain + HC audit (gate-resolved env)',
       { critical: false, timeoutMs: 900_000 },
     );
     run(
-      `MED_SHADOW=1 MED_CLIENT_SIGNAL=0 ${PYTHON3} scripts/python/med_0_3_status.py '${JSON.stringify({ trade_date: signalDate })}'`,
+      `${rePrefix} ${PYTHON3} scripts/python/med_0_3_status.py '${JSON.stringify({ trade_date: signalDate })}'`,
       'MED-0.3 status + discovery feed health',
       { critical: false, timeoutMs: 60_000 },
     );
@@ -613,7 +620,7 @@ async function main() {
     { critical: false, timeoutMs: 600_000 },
   );
   run(
-    `EGX_LRE_SHADOW=1 EGX_LRE_OPP_BOOST=0 EGX_LRE_FEED_BOOST=1 MED_SHADOW=1 MED_CLIENT_SIGNAL=0 MED_OPP_BOOST=0 MED_FEED_BOOST=0 MED_FEED_PENALIZE=1 ${PYTHON3} scripts/python/opportunity_score_v2.py run '${discoveryParamsJson}'`,
+    `${rePrefix} ${PYTHON3} scripts/python/opportunity_score_v2.py run '${discoveryParamsJson}'`,
     'Opportunity Score v2 (P6-tuned, post-score + LRE boost + MED penalize)',
     { critical: true },
   );
