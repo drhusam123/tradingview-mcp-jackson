@@ -94,6 +94,12 @@ try {
   console.log(`⚠️  Outcome tracker: ${e.message?.slice(0, 80)}`);
 }
 
+runStep(
+  'lre_status',
+  `"${PYTHON}" scripts/python/lre_4_0_status.py '${JSON.stringify({ trade_date: signalDate })}'`,
+  { optional: true, timeout: 60_000 },
+);
+
 let proof = null;
 try {
   proof = writeProofLoopSnapshot();
@@ -135,6 +141,12 @@ try {
   execSync(`"${NODE}" scripts/egx_p6_delivered_orchestrator.mjs`, { cwd: PROJECT_ROOT, stdio: 'inherit', timeout: 60_000 });
 } catch (e) {
   console.log(`⚠️  P6 delivered orchestrator: ${e.message?.slice(0, 80)}`);
+}
+
+try {
+  execSync(`"${NODE}" scripts/egx_phase10_graduation.mjs --skip-phase9`, { cwd: PROJECT_ROOT, stdio: 'inherit', timeout: 120_000 });
+} catch (e) {
+  console.log(`⚠️  Phase 10 graduation: ${e.message?.slice(0, 80)}`);
 }
 
 const digest = { ...buildDeliveryDigest(signalDate), proof_loop: proof };

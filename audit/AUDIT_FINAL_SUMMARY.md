@@ -18,6 +18,7 @@
 | 7 | [PHASE_7_P6_GRADUATION_REPORT.md](./PHASE_7_P6_GRADUATION_REPORT.md) | P6 safety-filtered gate · 18/18 session · 7/7 verify |
 | 8 | [PHASE_8_CLIENT_BETA_GRADUATION_REPORT.md](./PHASE_8_CLIENT_BETA_GRADUATION_REPORT.md) | explosive_min_vol hard block · delivered track · prod 10/10 |
 | 9 | [PHASE_9_RESEARCH_ENGINES_REPORT.md](./PHASE_9_RESEARCH_ENGINES_REPORT.md) | Phase 9 bundle · MED/LRE/MDE PASS · 9 delivered synced |
+| 10 | [PHASE_10_CLIENT_BETA_READINESS_REPORT.md](./PHASE_10_CLIENT_BETA_READINESS_REPORT.md) | Graduation gates · phase10 bundle · post-session wired |
 
 ---
 

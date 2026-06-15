@@ -178,6 +178,8 @@ ok('EGX_ALERT_TELEGRAM', process.env.EGX_ALERT_TELEGRAM !== '0', process.env.EGX
 ok('EGX_OPS_SUCCESS_ALERT', process.env.EGX_OPS_SUCCESS_ALERT !== '0', process.env.EGX_OPS_SUCCESS_ALERT ?? 'default=1');
 ok('npm egx:phase9:graduation', npmScripts['egx:phase9:graduation']?.includes('egx_phase9_graduation.mjs'));
 ok('script egx_phase9_graduation.mjs', existsSync(join(PROJECT_ROOT, 'scripts/egx_phase9_graduation.mjs')));
+ok('npm egx:phase10:graduation', npmScripts['egx:phase10:graduation']?.includes('egx_phase10_graduation.mjs'));
+ok('script p6_graduation_gate.mjs', existsSync(join(PROJECT_ROOT, 'scripts/lib/p6_graduation_gate.mjs')));
 ok('delivered seed helper', readFileSync(join(PROJECT_ROOT, 'scripts/lib/delivered_outcomes.mjs'), 'utf8').includes('seedDeliveredOutcomes'));
 ok('npm egx:lre:research-feed', Boolean(npmScripts['egx:lre:research-feed']));
 ok('npm egx:lre:acceptance', Boolean(npmScripts['egx:lre:acceptance']));
