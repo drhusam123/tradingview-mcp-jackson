@@ -17,8 +17,9 @@ const AS_JSON = process.argv.includes('--json');
 const NODE = process.execPath;
 
 const sync = syncDeliveredOutcomes({ lookbackDays: 180 });
-const proofAll = getProofLoopMetrics({ deliveredOnly: false });
-const proofDel = getProofLoopMetrics({ deliveredOnly: true });
+const proofAll = getProofLoopMetrics({ safetyFiltered: true });
+const proofDel = getProofLoopMetrics({ deliveredOnly: true, allDeliveredTiers: true });
+const proofDelSafe = getProofLoopMetrics({ deliveredOnly: true, safetyFiltered: true });
 
 // Wins needed to reach 60% WR if we only add winning sessions
 const wins = proofAll.n_wins ?? 0;
@@ -72,6 +73,8 @@ const plan = {
   delivered: {
     n_completed: proofDel.n_completed,
     win_rate: proofDel.win_rate,
+    safe_n: proofDelSafe.n_completed,
+    safe_wr: proofDelSafe.win_rate,
     sync,
   },
   recovery,
@@ -99,9 +102,9 @@ if (AS_JSON) {
   console.log(JSON.stringify(plan, null, 2));
 } else {
   console.log('\n═══ P6 Delivered Orchestrator ═══\n');
-  console.log(`  Gate: ${proofAll.n_completed}/${PROOF_MIN_N} ULTRA @ ${proofAll.win_rate ?? '—'}% (${proofAll.gate_reason})`);
+  console.log(`  Gate: ${proofAll.n_completed}/${PROOF_MIN_N} ULTRA safe @ ${proofAll.win_rate ?? '—'}% (${proofAll.gate_reason})`);
   if (wins_needed) console.log(`  Wins needed (all-win streak): ${wins_needed}`);
-  console.log(`  Delivered track: ${proofDel.n_completed} synced (${sync.rows_updated} rows updated)`);
+  console.log(`  Delivered track: ${proofDelSafe.n_completed} safe / ${proofDel.n_completed} raw (${sync.rows_updated} marked, ${sync.seeded ?? 0} seeded)`);
   console.log(`  Recovery pending: ${recovery.pending}`);
   console.log(`  Next sessions: ${sessionDates.slice(0, 4).join(', ')}`);
   console.log('\n  Saved: data/p6_delivered_orchestrator_last.json\n');

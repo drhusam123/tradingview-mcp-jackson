@@ -176,7 +176,9 @@ ok('registry causal+xpro', reg.includes('causal_discovery') && reg.includes('egx
 ok('Recovery script', existsSync(join(PROJECT_ROOT, 'scripts/egx_notify_recovery.mjs')));
 ok('EGX_ALERT_TELEGRAM', process.env.EGX_ALERT_TELEGRAM !== '0', process.env.EGX_ALERT_TELEGRAM ?? 'default=1');
 ok('EGX_OPS_SUCCESS_ALERT', process.env.EGX_OPS_SUCCESS_ALERT !== '0', process.env.EGX_OPS_SUCCESS_ALERT ?? 'default=1');
-ok('npm egx:runbook', true, 'egx:runbook + egx:runbook:next');
+ok('npm egx:phase9:graduation', npmScripts['egx:phase9:graduation']?.includes('egx_phase9_graduation.mjs'));
+ok('script egx_phase9_graduation.mjs', existsSync(join(PROJECT_ROOT, 'scripts/egx_phase9_graduation.mjs')));
+ok('delivered seed helper', readFileSync(join(PROJECT_ROOT, 'scripts/lib/delivered_outcomes.mjs'), 'utf8').includes('seedDeliveredOutcomes'));
 ok('npm egx:lre:research-feed', Boolean(npmScripts['egx:lre:research-feed']));
 ok('npm egx:lre:acceptance', Boolean(npmScripts['egx:lre:acceptance']));
 ok('npm egx:lre:status', Boolean(npmScripts['egx:lre:status']));

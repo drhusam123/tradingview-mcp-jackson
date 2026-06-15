@@ -92,6 +92,7 @@ try {
 const proof = getProofLoopMetrics({ safetyFiltered: true });
 const proofRaw = getProofLoopMetrics();
 const proofDel = getProofLoopMetrics({ deliveredOnly: true, allDeliveredTiers: true });
+const proofDelSafe = getProofLoopMetrics({ deliveredOnly: true, safetyFiltered: true });
 ok(
   'Proof loop P6',
   proof.gate_pass || proof.samples_needed > 0,
@@ -106,8 +107,8 @@ const p6Blocker = proof.gate_pass
 ok(
   'P6 delivered track',
   true,
-  `${proofDel.n_completed} client-delivered filled≥5 @ ${proofDel.win_rate ?? '—'}% | gate: ${p6Blocker}`,
-  { warn: proofDel.n_completed < PROOF_MIN_N },
+  `${proofDelSafe.n_completed} safe-delivered filled≥5 @ ${proofDelSafe.win_rate ?? '—'}% (raw ${proofDel.n_completed} @ ${proofDel.win_rate ?? '—'}%) | gate: ${p6Blocker}`,
+  { warn: proofDelSafe.n_completed < PROOF_MIN_N },
 );
 
 ok('Telegram configured', Boolean(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID));

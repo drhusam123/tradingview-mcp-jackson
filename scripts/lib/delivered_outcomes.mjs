@@ -43,7 +43,7 @@ export function seedDeliveredOutcomes({ lookbackDays = 120 } = {}) {
   const pairs = d.prepare(`
     SELECT DISTINCT signal_date, symbol
     FROM notification_delivery_audit
-    WHERE send_success = 1 AND dry_run = 0 AND deliverable = 1
+    WHERE send_success = 1 AND dry_run = 0
       AND symbol IS NOT NULL AND signal_date >= ?
   `).all(cutoffIso);
 
@@ -87,7 +87,6 @@ export function syncDeliveredOutcomes({ lookbackDays = 120 } = {}) {
     FROM notification_delivery_audit
     WHERE send_success = 1
       AND dry_run = 0
-      AND deliverable = 1
       AND symbol IS NOT NULL
       AND signal_date >= ?
     GROUP BY signal_date, symbol

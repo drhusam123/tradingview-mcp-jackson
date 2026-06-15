@@ -93,6 +93,58 @@ function getSafetyFilteredProofMetrics({ tier = 'ULTRA_CONVICTION', horizon = 't
   });
 }
 
+function getDeliveredSafetyFilteredMetrics({ horizon = 't5' } = {}) {
+  if (!existsSync(DB_PATH)) {
+    return buildProofResult({
+      tier: 'DELIVERED_COHORT', horizon, deliveredOnly: true, safetyFiltered: true,
+      n: 0, wins: 0, avgRet: null,
+    });
+  }
+
+  const hitCol = horizon === 't1' ? 'hit_t1' : 'hit_t5';
+  const retCol = horizon === 't1' ? 'return_t1' : 'return_t5';
+  const minFilled = horizon === 't1' ? 1 : 5;
+
+  const db = new Database(DB_PATH, { readonly: true });
+  let rows;
+  try {
+    rows = db.prepare(`
+      SELECT symbol, signal_date, ${hitCol} AS hit, ${retCol} AS ret
+      FROM recommendation_outcomes
+      WHERE COALESCE(client_delivered, 0) = 1
+        AND outcome_filled >= ?
+        AND ${hitCol} IS NOT NULL
+      ORDER BY signal_date DESC
+    `).all(minFilled);
+  } finally {
+    db.close();
+  }
+
+  const kept = [];
+  for (const row of rows) {
+    const ev = evaluateSignalAtDate(row.symbol, row.signal_date, {
+      historical: true,
+      counterfactual: true,
+    });
+    if (ev.decision !== 'BLOCKED') kept.push(row);
+  }
+
+  const n = kept.length;
+  const wins = kept.filter(r => r.hit === 1).length;
+  const rets = kept.map(r => r.ret).filter(v => v != null);
+  const avgRet = rets.length ? rets.reduce((s, x) => s + x, 0) / rets.length : null;
+
+  return buildProofResult({
+    tier: 'DELIVERED_COHORT',
+    horizon,
+    deliveredOnly: true,
+    safetyFiltered: true,
+    n,
+    wins,
+    avgRet,
+  });
+}
+
 export function getProofLoopMetrics({
   tier = 'ULTRA_CONVICTION',
   horizon = 't5',
@@ -100,6 +152,9 @@ export function getProofLoopMetrics({
   safetyFiltered = false,
   allDeliveredTiers = false,
 } = {}) {
+  if (deliveredOnly && safetyFiltered) {
+    return getDeliveredSafetyFilteredMetrics({ horizon });
+  }
   if (safetyFiltered) {
     return getSafetyFilteredProofMetrics({ tier, horizon });
   }
