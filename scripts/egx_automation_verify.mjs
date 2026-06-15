@@ -258,6 +258,8 @@ ok('npm egx:audit:e2e', npmScripts['egx:audit:e2e']?.includes('egx_institutional
 ok('script audit_deep_scan.mjs', existsSync(join(PROJECT_ROOT, 'scripts/lib/audit_deep_scan.mjs')));
 ok('script egx_institutional_audit_e2e.mjs', existsSync(join(PROJECT_ROOT, 'scripts/egx_institutional_audit_e2e.mjs')));
 ok('audit CODE_SCAN_SUMMARY', existsSync(join(PROJECT_ROOT, 'audit/CODE_SCAN_SUMMARY.md')));
+ok('npm egx:cdp:smoke', npmScripts['egx:cdp:smoke']?.includes('egx_cdp_smoke.mjs'));
+ok('script egx_cdp_smoke.mjs', existsSync(join(PROJECT_ROOT, 'scripts/egx_cdp_smoke.mjs')));
 
 const fail = checks.filter(c => !c.pass).length;
 console.log(`\n=== Automation Verify: ${checks.length - fail}/${checks.length} PASS ===\n`);

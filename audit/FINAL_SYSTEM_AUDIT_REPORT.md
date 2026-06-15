@@ -50,6 +50,8 @@
 | Command | Result |
 |---------|--------|
 | `npm run egx:health -- --quick` | **PASS** (17/17) |
+| `npm run egx:cdp:smoke` | **PASS** — HDBK @ 1D, validate OK |
+| `npm run egx:full-cycle -- --fast` (CDP) | **PASS** — cdp_smoke + session + health |
 | `npm run egx:full-cycle -- --skip-cdp --fast` | **PASS** |
 | `npm run egx:audit:all` | **PASS** — all 8 reports + deep scan |
 | `npm run egx:audit:e2e -- --skip-cdp --fast` | **PASS** (prepare_dry optional blocked) |

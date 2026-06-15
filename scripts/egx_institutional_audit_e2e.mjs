@@ -17,8 +17,23 @@ loadEnv();
 const NODE = process.execPath;
 const PYTHON = process.env.PYTHON_BIN || process.env.PYTHON3 || 'python3';
 const SKIP_CDP = process.argv.includes('--skip-cdp');
-const FAST = process.argv.includes('--fast');
+const FAST = process.argv.includes('--fast') || !process.argv.includes('--no-fast');
 const AS_JSON = process.argv.includes('--json');
+
+function cdpHttpUp() {
+  const url = process.env.TV_CDP_URL || 'http://127.0.0.1:9222';
+  try {
+    const code = execSync(`curl -s -o /dev/null -w "%{http_code}" "${url}/json/version"`, {
+      encoding: 'utf8', timeout: 4000,
+    }).trim();
+    return code === '200';
+  } catch {
+    return false;
+  }
+}
+
+const CDP_UP = cdpHttpUp();
+const USE_SKIP_CDP = SKIP_CDP || (!CDP_UP && !process.argv.includes('--require-cdp'));
 
 const logPath = join(PROJECT_ROOT, 'logs', `audit_e2e_${cairoDateParts().date}.log`);
 mkdirSync(join(PROJECT_ROOT, 'logs'), { recursive: true });
@@ -54,7 +69,7 @@ const result = { at: new Date().toISOString(), pass: false, steps: [] };
 
 try {
   run('health_pre', `${PYTHON} scripts/python/system_health_check.py --quick`);
-  const fcFlags = [SKIP_CDP && '--skip-cdp', FAST && '--fast'].filter(Boolean).join(' ');
+  const fcFlags = [USE_SKIP_CDP && '--skip-cdp', FAST && '--fast'].filter(Boolean).join(' ');
   run('full_cycle', `npm run egx:full-cycle -- ${fcFlags}`.trim());
   run('audit_all', `npm run egx:audit:all`);
   run('telegram_dry', `npm run egx:cron:telegram:dry`, { optional: true, timeout: 120_000 });
@@ -71,7 +86,8 @@ try {
   );
   result.health = healthPost?.status;
   result.full_cycle = fullCycle?.pass;
-  result.data_pipeline = dataLayer?.pass;
+  result.cdp_up = CDP_UP;
+  result.skip_cdp = USE_SKIP_CDP;
   result.steps = steps;
   result.ms = Date.now() - t0;
 

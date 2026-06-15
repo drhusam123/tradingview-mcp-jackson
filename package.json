@@ -97,6 +97,7 @@
     "egx:health:json": "python3 scripts/python/system_health_check.py --json",
     "egx:health:quick": "python3 scripts/python/system_health_check.py --quick",
     "egx:full-cycle": "node scripts/egx_full_cycle.mjs",
+    "egx:cdp:smoke": "node scripts/egx_cdp_smoke.mjs",
     "egx:audit:snapshot": "node scripts/egx_system_audit_orchestrator.mjs",
     "egx:audit:all": "node scripts/egx_system_audit_orchestrator.mjs --all",
     "egx:audit:db": "python3 scripts/python/audit_db_report.py",

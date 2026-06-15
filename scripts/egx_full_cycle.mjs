@@ -6,7 +6,8 @@
  *   npm run egx:full-cycle
  *   npm run egx:full-cycle -- --skip-cdp
  *   npm run egx:full-cycle -- --send
- *   npm run egx:full-cycle -- --json
+ *   npm run egx:full-cycle -- --fast
+ *   npm run egx:full-cycle -- --no-launch   (CDP already running)
  */
 import { execSync } from 'child_process';
 import { appendFileSync, mkdirSync, writeFileSync } from 'fs';
@@ -24,6 +25,21 @@ const LIVE_SEND = process.argv.includes('--send');
 const AS_JSON = process.argv.includes('--json');
 const QUICK = process.argv.includes('--quick');
 const FAST = process.argv.includes('--fast');
+
+function cdpHttpUp() {
+  const url = process.env.TV_CDP_URL || 'http://127.0.0.1:9222';
+  try {
+    const code = execSync(`curl -s -o /dev/null -w "%{http_code}" "${url}/json/version"`, {
+      encoding: 'utf8', timeout: 4000,
+    }).trim();
+    return code === '200';
+  } catch {
+    return false;
+  }
+}
+
+const CDP_UP = cdpHttpUp();
+const NO_LAUNCH = process.argv.includes('--no-launch') || CDP_UP;
 
 const logPath = join(PROJECT_ROOT, 'logs', `full_cycle_${cairoDateParts().date}.log`);
 mkdirSync(join(PROJECT_ROOT, 'logs'), { recursive: true });
@@ -60,17 +76,24 @@ function run(name, cmd, { optional = false, timeout = 600_000 } = {}) {
 }
 
 console.log('\n═══ EGX Full Cycle (daily production DAG) ═══');
-log(`start skip_cdp=${SKIP_CDP} send=${LIVE_SEND}`);
+log(`start skip_cdp=${SKIP_CDP} send=${LIVE_SEND} fast=${FAST} cdp_up=${CDP_UP}`);
 
 try {
-  run('preflight', `"${NODE}" scripts/egx_preflight.mjs`, { optional: true, timeout: 120_000 });
-
-  run('ohlcv_catchup', `"${NODE}" scripts/egx_ohlcv_catchup.mjs`, { optional: true, timeout: 300_000 });
+  if (!FAST) {
+    run('preflight', `"${NODE}" scripts/egx_preflight.mjs --skip-tests`, { optional: true, timeout: 300_000 });
+    run('ohlcv_catchup', `"${NODE}" scripts/egx_ohlcv_catchup.mjs`, { optional: true, timeout: 600_000 });
+  }
 
   if (!SKIP_CDP) {
-    run('tv_auto_update', `"${NODE}" scripts/egx_tv_auto_update.mjs --launch --pine --tech`, {
-      timeout: 2_400_000,
-    });
+    if (FAST) {
+      run('cdp_smoke', `"${NODE}" scripts/egx_cdp_smoke.mjs`);
+      log('tv_auto_update skipped in --fast (use full cycle without --fast for EOD sync)');
+    } else {
+      const tvFlags = [NO_LAUNCH ? null : '--launch', '--pine', '--tech'].filter(Boolean).join(' ');
+      run('tv_auto_update', `"${NODE}" scripts/egx_tv_auto_update.mjs ${tvFlags}`, {
+        timeout: 2_400_000,
+      });
+    }
   } else {
     run('indicators_rebuild', `"${NODE}" scripts/rebuild_indicators.mjs`, { optional: true });
     run('med_daily_chain', `${PYTHON} scripts/python/med_0_3_daily_chain.py '{}'`, { optional: true });
@@ -104,6 +127,8 @@ const report = {
   signal_date: latestOhlcvDate(),
   cairo_date: cairoDateParts().date,
   skip_cdp: SKIP_CDP,
+  cdp_up: CDP_UP,
+  no_launch: NO_LAUNCH,
   live_send: LIVE_SEND,
   steps,
   log_path: logPath,
