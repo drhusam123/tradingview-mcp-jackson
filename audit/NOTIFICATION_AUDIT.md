@@ -1,17 +1,18 @@
 # Notification Audit
 
-**Generated:** 2026-06-15T10:06:43.781Z
-**Report date:** 2026-06-14
+**Generated:** 2026-06-15T20:06:37.810Z
+**Report date:** 2026-06-15
 
 ## Status
 
-- **Root cause:** delivered
-- **Actionable:** 1 | **Deliverable:** 1
+- **Root cause:** notification_not_run_or_failed
+- **Actionable:** 2 | **Deliverable:** 2
 - **Telegram configured:** ✅
 
 ## Diagnosis
 
-- Delivery audit: 3 successful send(s) (data_correction, telegram_send, telegram_send).
+- Actionable signals exist but no successful delivery audit for this date.
+- Check cron: npm run egx:cron:show | verify egx:tg:daily ran
 
 ## Commands
 

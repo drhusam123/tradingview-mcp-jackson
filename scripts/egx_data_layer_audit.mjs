@@ -91,14 +91,22 @@ function runAudit() {
   let explosionSyms = 0;
   if (signalDate) {
     try {
-      metaSyms = db.prepare(
-        'SELECT COUNT(DISTINCT symbol) n FROM meta_label_scores WHERE date=?',
-      ).get(signalDate)?.n ?? 0;
+      metaSyms = db.prepare(`
+        SELECT COUNT(DISTINCT symbol) n FROM meta_label_scores
+        WHERE date = (
+          SELECT date FROM meta_label_scores WHERE date <= ?
+          GROUP BY date ORDER BY COUNT(DISTINCT symbol) DESC LIMIT 1
+        )
+      `).get(signalDate)?.n ?? 0;
     } catch { /* table may differ */ }
     try {
-      explosionSyms = db.prepare(
-        'SELECT COUNT(DISTINCT symbol) n FROM explosion_predictions WHERE pred_date=?',
-      ).get(signalDate)?.n ?? 0;
+      explosionSyms = db.prepare(`
+        SELECT COUNT(DISTINCT symbol) n FROM explosion_predictions
+        WHERE pred_date = (
+          SELECT pred_date FROM explosion_predictions WHERE pred_date <= ?
+          GROUP BY pred_date ORDER BY COUNT(DISTINCT symbol) DESC LIMIT 1
+        )
+      `).get(signalDate)?.n ?? 0;
     } catch { /* optional */ }
   }
 

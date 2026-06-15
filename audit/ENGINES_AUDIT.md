@@ -1,18 +1,18 @@
 # Engines Audit
 
-**Generated:** 2026-06-15T10:06:42.090Z
+**Generated:** 2026-06-15T20:06:36.049Z
 
 ## Core production engines
 
 | Engine | Command | Layer | Output artifact | Last Run | Status |
 |--------|---------|-------|-----------------|----------|--------|
-| LRE 4.0 | `egx:lre:status` | client-shadow | `lre_4_0_status_last.json` | 2026-06-15T10:05:34.715740+00:00 | PASS |
-| MED 0.3 | `egx:med:run` | client | `med_0_3_status_last.json` | 2026-06-15T10:05:34.201685+00:00 | PASS |
-| MDE shadow | `egx:mde:shadow` | shadow | `mde_pilot_shadow_last.json` | 2026-06-15T08:33:26.699092+00:00 | PASS |
+| LRE 4.0 | `egx:lre:status` | client-shadow | `lre_4_0_status_last.json` | 2026-06-15T12:57:55.840706+00:00 | PASS |
+| MED 0.3 | `egx:med:run` | client | `med_0_3_status_last.json` | 2026-06-15T12:52:24.791219+00:00 | PASS |
+| MDE shadow | `egx:mde:shadow` | shadow | `mde_pilot_shadow_last.json` | 2026-06-15T12:57:05.518023+00:00 | PASS |
 | Fabric | `egx:fabric:status` | research | `fabric_status_last.json` | — | NOT_RUN |
-| P6 delivered | `egx:phase22:p6-delivered` | KPI | `phase22_p6_delivered_last.json` | 2026-06-15T08:33:33.474Z | PASS |
-| LRE OOS acc | `lre_oos_accumulator.py` | shadow | `lre_oos_accumulator_last.json` | 2026-06-15T10:05:40.150748+00:00 | PASS |
-| Graduation | `egx:graduation:complete` | ops | `graduation_final_last.json` | 2026-06-15T08:34:20.673Z | PASS |
+| P6 delivered | `egx:phase22:p6-delivered` | KPI | `phase22_p6_delivered_last.json` | 2026-06-15T12:57:09.324Z | PASS |
+| LRE OOS acc | `lre_oos_accumulator.py` | shadow | `lre_oos_accumulator_last.json` | 2026-06-15T12:57:01.281153+00:00 | PASS |
+| Graduation | `egx:graduation:complete` | ops | `graduation_final_last.json` | 2026-06-15T12:57:31.919Z | PASS |
 | Score all | `egx:score:all` | scoring | `score_all_last.json` | — | NOT_RUN |
 | Gates | `gate_doctor_audit.py` | gates | `gate_doctor_last.json` | — | NOT_RUN |
 

@@ -1,6 +1,6 @@
 # Automation Audit
 
-**Generated:** 2026-06-15T10:06:50.364Z
+**Generated:** 2026-06-15T20:06:44.494Z
 
 ## Daily DAG
 
@@ -55,12 +55,13 @@ PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
 
 ═══ EGX Cron Log Check ═══
 Window: last 48h | Cairo: 2026-06-15
-❌ 4 issue(s):
+❌ 5 issue(s):
   [telegram] ═══ Telegram Cron FAILED ═══
-  [post_session] [NOTIFY_ALERT] {"ts":"2026-06-14T12:51:01.323Z","kind":"failure","event":"POST_SESSION_VERIFY_FAIL","date":"2026-06-14"}
+  [telegram] ═══ Telegram Cron FAILED ═══
+  [post_session] [NOTIFY_ALERT] {"ts":"2026-06-15T12:58:08.517Z","kind":"failure","event":"POST_SESSION_VERIFY_FAIL","date":"2026-06-15"}
   [full_verify] === Full Verify: 6/7 PASS ===
   [session_ready] === Session Ready (2026-06-11): 14/18 ===
-[NOTIFY_ALERT] {"ts":"2026-06-15T10:06:50.349Z","kind":"failure","event":"CRON_LOG_FAILURES","hours":48,"count":4,"samples":[{"log":"telegram","line":"═══ Telegram Cron FAILED ═══"},{"log":"post_session","line":"[NOTIFY_ALERT] {\"ts\":\"2026-06-14T12:51:01.323Z\",\"kind\":\"failure\",\"event\":\"POST_SESSION_VERIFY_FAIL\",\"date\":\"2026-06-14\"}"},{"log":"full_verify","line":"=== Full Verify: 6/7 PASS ==="},{"log":"session_ready","line":"=== Session Ready (2026-06-11): 14/18 ==="}]}
+[NOTIFY_ALERT] {"ts":"2026-06-15T20:06:44.479Z","kind":"failure","event":"CRON_LOG_FAILURES","hours":48,"count":5,"samples":[{"log":"telegram","line":"═══ Telegram Cron FAILED ═══"},{"log":"telegram","line":"═══ Telegram Cron FAILED ═══"},{"log":"post_session","line":"[NOTIFY_ALERT] {\"ts\":\"2026-06-15T12:58:08.517Z\",\"kind\":\"failure\",\"event\":\"POST_SESSION_VERIFY_FAIL\",\"date\":\"2026-06-15\"}"},{"log":"full_verify","line":"=== Full Verify: 6/7 PASS ==="},{"log":"session_ready","line":"=== Session Ready (2026-06-11): 14/18 ==="}]}
 
 
 ```
@@ -69,7 +70,7 @@ Window: last 48h | Cairo: 2026-06-15
 
 | Job | Status |
 |-----|--------|
-| health | PASS |
+| health | WARN |
 | full_cycle | PASS |
 
 ## Lock policy

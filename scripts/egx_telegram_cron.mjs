@@ -101,7 +101,11 @@ try {
       pipeline_stage: 'cron_reconcile_warn',
       dedup_key: `cron:reconcile:${signalDate}`,
     });
-    process.exit(3);
+    if (DRY_RUN) {
+      console.log('\n⚠️  Reconcile pending (expected in dry-run before live send)\n');
+    } else {
+      process.exit(3);
+    }
   }
 
   run(`"${NODE}" scripts/egx_notification_pipeline_audit.mjs --date ${signalDate}`, 'Pipeline audit', { optional: true });

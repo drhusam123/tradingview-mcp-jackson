@@ -167,8 +167,9 @@ def run(params: dict | None = None) -> dict:
                 pred_latest = conn.execute("SELECT MAX(pred_date) d FROM explosion_predictions").fetchone()["d"]
             except sqlite3.Error:
                 pass
-            add("ml_pred_freshness", _staleness_days(pred_latest, ref_date) is not None and (_staleness_days(pred_latest, ref_date) or 99) <= 4,
-                f"latest={pred_latest}", warn_only=True)
+            pred_lag = _staleness_days(pred_latest, ref_date)
+            add("ml_pred_freshness", pred_lag is not None and pred_lag <= 4,
+                f"latest={pred_latest} lag_days={pred_lag}", warn_only=True)
 
             fs_latest = None
             try:

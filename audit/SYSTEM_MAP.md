@@ -831,10 +831,13 @@ See [AUTOMATION_RUNBOOK.md](../docs/AUTOMATION_RUNBOOK.md).
 ---
 ---
 ---
+---
+---
+---
 
 ## 25. Orphan & Registry Analysis
 
-**Generated:** 2026-06-15T10:06:31.660Z
+**Generated:** 2026-06-15T20:06:23.756Z
 
 ### 8. Duplicate / unlinked layers
 
@@ -843,7 +846,7 @@ See [AUTOMATION_RUNBOOK.md](../docs/AUTOMATION_RUNBOOK.md).
 
 ### 9. Scripts present but not in package.json/npm
 
-- Total scripts: **543** | Referenced: **301** | Orphans: **12**
+- Total scripts: **544** | Referenced: **302** | Orphans: **12**
 - `scripts/analyze_egx_history.mjs` (utility/lib or manual-only)
 - `scripts/egx_tv_auto_resume.mjs` (utility/lib or manual-only)
 - `scripts/egx_weekly_perf.mjs` (utility/lib or manual-only)

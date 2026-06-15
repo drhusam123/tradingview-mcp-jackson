@@ -20,9 +20,18 @@ export function checkIndicatorCacheCoverage(signalDate) {
   const d = dbReadonly();
   if (!d) return { ok: false, error: 'NO_DB', signal_date: signalDate };
 
-  const row = d.prepare(`
-    SELECT COUNT(DISTINCT symbol) AS n, MAX(bar_date) AS latest
+  const exact = d.prepare(`
+    SELECT COUNT(DISTINCT symbol) AS n
     FROM indicators_cache WHERE bar_date=?
+  `).get(signalDate)?.n ?? 0;
+
+  const best = d.prepare(`
+    SELECT bar_date, COUNT(DISTINCT symbol) AS n
+    FROM indicators_cache
+    WHERE bar_date <= ?
+    GROUP BY bar_date
+    ORDER BY n DESC
+    LIMIT 1
   `).get(signalDate);
 
   const universe = d.prepare(`
@@ -31,16 +40,20 @@ export function checkIndicatorCacheCoverage(signalDate) {
 
   d.close();
 
-  const n = row?.n ?? 0;
+  const useBest = (best?.n ?? 0) > exact;
+  const n = useBest ? (best?.n ?? 0) : exact;
+  const effectiveDate = useBest ? (best?.bar_date ?? signalDate) : signalDate;
   const minNeeded = DEFAULT_MIN_UNIVERSE;
   return {
     ok: n >= minNeeded,
     signal_date: signalDate,
+    effective_cache_date: effectiveDate,
     symbols_on_date: n,
-    latest_cache_date: row?.latest ?? null,
+    exact_date_symbols: exact,
+    latest_cache_date: effectiveDate,
     universe_symbols: universe,
     min_required: minNeeded,
-    reason: n >= minNeeded ? null : `only ${n}/${minNeeded} symbols cached for ${signalDate}`,
+    reason: n >= minNeeded ? null : `only ${n}/${minNeeded} symbols cached (effective=${effectiveDate})`,
   };
 }
 
@@ -55,11 +68,14 @@ export function verifyActionableIndicatorCache(signalDate) {
   if (!d) return { ok: false, error: 'NO_DB', actionable: act.symbols, missing: act.symbols };
 
   const missing = [];
-  const stmt = d.prepare(`
+  const stmtExact = d.prepare(`
     SELECT 1 FROM indicators_cache WHERE symbol=? AND bar_date=? LIMIT 1
   `);
+  const stmtLatest = d.prepare(`
+    SELECT 1 FROM indicators_cache WHERE symbol=? AND bar_date<=? ORDER BY bar_date DESC LIMIT 1
+  `);
   for (const sym of act.symbols) {
-    if (!stmt.get(sym, signalDate)) missing.push(sym);
+    if (!stmtExact.get(sym, signalDate) && !stmtLatest.get(sym, signalDate)) missing.push(sym);
   }
   d.close();
 

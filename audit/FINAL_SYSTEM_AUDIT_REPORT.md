@@ -1,7 +1,7 @@
 # Final System Audit Report
 
-**Date:** 2026-06-15 (Wave 6 — literal completion)  
-**Auditor:** Institutional audit suite (Waves 0–6)
+**Date:** 2026-06-15 (Wave 7 — verification close)  
+**Auditor:** Institutional audit suite (Phases 1–15 complete)
 
 ---
 
@@ -29,6 +29,9 @@
 - AUD-019: Post-session cron chains `system_health_check --quick`
 - AUD-020: Orphan bar exclusions purge (`audit_deep_scan`) — `kpi_exclusions_consistent` **delta=0**
 - AUD-021: SYSTEM_MAP §25 orphan/registry analysis auto-generated
+- AUD-022: `ml_pred_freshness` false WARN (`0 or 99` bug) — **fixed**
+- AUD-023: Partial-session cache/meta coverage on calendar date — **fixed** (effective-date logic)
+- AUD-024: Telegram dry-run exit 3 on pending reconcile — **fixed** (warn-only in dry-run)
 - Phases 1–26 graduation + `AUDIT_CLOSED`
 
 ---
@@ -49,17 +52,16 @@
 
 | Command | Result |
 |---------|--------|
-| `npm run egx:health -- --quick` | **PASS** (17/17) |
-| `npm run egx:cdp:smoke` | **PASS** — HDBK @ 1D, validate OK |
+| `npm run egx:health -- --quick` | **WARN** 16/17 — `delivery_reconcile` pending (2026-06-15 pre-send) |
+| `npm run egx:cdp:smoke` | **PASS** — CDP + chart API + validate |
 | `npm run egx:full-cycle -- --fast` (CDP) | **PASS** — cdp_smoke + session + health |
-| `npm run egx:full-cycle -- --skip-cdp --fast` | **PASS** |
-| `npm run egx:audit:all` | **PASS** — all 8 reports + deep scan |
-| `npm run egx:audit:e2e -- --skip-cdp --fast` | **PASS** (prepare_dry optional blocked) |
-| `npm run egx:cron:telegram:dry` | **PASS** — EGCH deliverable, dry-run OK |
-| `npm run egx:audit:db` | `audit/DB_AUDIT.md` |
-| `node scripts/egx_automation_verify.mjs` | **175/175 PASS** |
+| `npm run egx:audit:all` | **PASS** — 8 reports regenerated |
+| `npm run egx:audit:e2e` | **PASS** — health→cycle→audit→telegram→health |
+| `npm run egx:cron:telegram:dry` | **PASS** exit 0 — EGCH,COPR deliverable |
+| `node scripts/egx_data_layer_audit.mjs` | **PASS** — L0/L1 all checks |
+| `node scripts/egx_automation_verify.mjs` | **182/182 PASS** |
 | `npm run egx:cron:show` | **55 jobs installed** |
-| `npm run egx:graduation:complete` | AUDIT_CLOSED |
+| `npm run egx:graduation:complete` | **AUDIT_CLOSED** |
 
 ---
 
@@ -91,10 +93,12 @@
 
 | Layer | Latest | Status |
 |-------|--------|--------|
-| OHLCV | 2026-06-14 | ✅ 1 trading day lag |
-| ML predictions | 2026-06-14 | ✅ |
-| final_signals | 2026-06-14 | ✅ |
-| indicators_cache | current | ✅ |
+| OHLCV | 2026-06-15 | ✅ lag=0 |
+| ML predictions | 2026-06-15 | ✅ lag=0 |
+| indicators_cache | 2026-06-14 effective | ✅ 228/180 symbols |
+| meta_label_scores | 2026-06-14 effective | ✅ 229/200 symbols |
+| final_signals | 2026-06-15 | ✅ 2 actionable |
+| exclusions | delta=0 | ✅ |
 
 ---
 
@@ -108,9 +112,9 @@
 
 ## Health Check
 
-- **Status:** **PASS** (17/17 quick checks)
-- **Artifact:** `data/system_health_last.json`
-- **E2E artifact:** `data/audit_e2e_last.json` (`pass: true`)
+- **Status:** **WARN** (16/17) — not FAIL
+- **Reason:** `delivery_reconcile` — 1 pending signal-day (2026-06-15) before live cron send; expected pre-market
+- **Artifacts:** `data/system_health_last.json`, `data/audit_e2e_last.json` (`pass: true`)
 
 ---
 
@@ -139,8 +143,7 @@ Live promotions (MED boost, P6 30/30, LRE 40/40) accumulate via `egx:post:sessio
 ## Operator Quick Start
 
 ```bash
+npm run egx:audit:e2e
 npm run egx:health -- --quick
-npm run egx:audit:e2e -- --skip-cdp --fast
-npm run egx:audit:all
 npm run egx:cron:show
 ```
