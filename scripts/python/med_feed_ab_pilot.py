@@ -70,6 +70,14 @@ def ensure_ab_table(conn: sqlite3.Connection) -> None:
         created_at TEXT DEFAULT (datetime('now')),
         PRIMARY KEY (trade_date, symbol)
     );
+    CREATE TABLE IF NOT EXISTS med_feed_ab_daily (
+        trade_date TEXT PRIMARY KEY,
+        boost_wins INTEGER DEFAULT 0,
+        penalize_wins INTEGER DEFAULT 0,
+        neutral INTEGER DEFAULT 0,
+        session_winner TEXT,
+        created_at TEXT DEFAULT (datetime('now'))
+    );
     """)
 
 
@@ -133,6 +141,27 @@ def run(params: dict | None = None) -> dict:
     pen_wins = sum(1 for c in comparisons if c["winner_track"] == "penalize")
     neutral = sum(1 for c in comparisons if c["winner_track"] == "neutral")
 
+    session_winner = "boost" if boost_wins > pen_wins else ("penalize" if pen_wins > boost_wins else "tie")
+    if trade_date:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO med_feed_ab_daily
+            (trade_date, boost_wins, penalize_wins, neutral, session_winner)
+            VALUES (?,?,?,?,?)
+            """,
+            (trade_date, boost_wins, pen_wins, neutral, session_winner),
+        )
+        conn.commit()
+
+    streak = 0
+    for row in conn.execute(
+        "SELECT session_winner FROM med_feed_ab_daily ORDER BY trade_date DESC LIMIT 30"
+    ).fetchall():
+        if row["session_winner"] == "boost":
+            streak += 1
+        else:
+            break
+
     production_track = "boost" if feed_boost_enabled() else ("penalize" if feed_penalize_enabled() else "off")
 
     payload = {
@@ -146,6 +175,10 @@ def run(params: dict | None = None) -> dict:
         "boost_wins": boost_wins,
         "penalize_wins": pen_wins,
         "neutral": neutral,
+        "session_winner": session_winner,
+        "boost_win_streak": streak,
+        "boost_streak_target": int(os.environ.get("EGX_MED_AB_STREAK_TARGET", "5")),
+        "feed_boost_recommended": streak >= int(os.environ.get("EGX_MED_AB_STREAK_TARGET", "5")),
         "top_deltas": comparisons[:10],
         "recommendation": (
             "Enable MED_FEED_BOOST=1 when MED graduation met and boost_wins > penalize_wins for 5+ sessions"

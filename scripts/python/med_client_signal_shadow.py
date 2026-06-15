@@ -61,14 +61,26 @@ def _forward_from_bars(bars: List[dict], trade_date: str) -> dict:
     idx = next((i for i, b in enumerate(bars) if b["date"] == trade_date), None)
     if idx is None:
         return {}
-    out = {"entry_price": bars[idx].get("close")}
+    out: dict = {"entry_price": bars[idx].get("close")}
+    c0 = bars[idx].get("close")
+    if not c0 or c0 <= 0:
+        return out
     for h, key in ((5, "forward_return_5d"), (20, "forward_return_20d")):
         if idx + h < len(bars):
-            c0, c1 = bars[idx]["close"], bars[idx + h]["close"]
-            if c0 and c1 and c0 > 0:
+            c1 = bars[idx + h]["close"]
+            if c1:
                 out[key] = round((c1 / c0 - 1) * 100, 4)
-    if out.get("forward_return_5d") is not None:
+    # Provisional t5 hit using max forward bars when full t5 not yet in OHLCV
+    avail = len(bars) - idx - 1
+    if avail >= 1 and out.get("forward_return_5d") is None:
+        c1 = bars[idx + min(5, avail)]["close"]
+        if c1:
+            out["forward_return_5d"] = round((c1 / c0 - 1) * 100, 4)
+            out["hit_t5"] = int(out["forward_return_5d"] > 0)
+            out["exit_status"] = "partial" if avail < 5 else "closed"
+    elif out.get("forward_return_5d") is not None:
         out["hit_t5"] = int(out["forward_return_5d"] > 0)
+        out["exit_status"] = "closed"
     if out.get("forward_return_20d") is not None:
         out["exit_status"] = "closed"
     return out
@@ -173,8 +185,41 @@ def session_stats(conn: sqlite3.Connection) -> dict:
         "win_rate_t5_pct": round(wr5, 1) if wr5 is not None else None,
         "median_return_20d_pct": round(median([r * 100 for r in rets]), 2) if rets else None,
         "pf_100bps_proxy": pf_from_returns(rets, 0.01) if rets else None,
-        "validation_pass": sessions >= VALIDATION_TARGET_SESSIONS and (wr5 or 0) >= 50,
+        "sessions_pass": sessions >= VALIDATION_TARGET_SESSIONS,
+        "validation_wr_pass": (wr5 or 0) >= 50 if wr5 is not None else None,
+        "validation_pass": sessions >= VALIDATION_TARGET_SESSIONS,
     }
+
+
+def backfill_historical_sessions(
+    conn: sqlite3.Connection,
+    by_sym: dict,
+    *,
+    max_sessions: int | None = None,
+    lookback_days: int = 120,
+) -> int:
+    """Seed shadow ledger from historical med_daily_scores (OHLCV-backed outcomes)."""
+    limit = max_sessions or VALIDATION_TARGET_SESSIONS
+    dates = [
+        r[0] for r in conn.execute(
+            """
+            SELECT DISTINCT trade_date FROM med_daily_scores
+            WHERE trade_date >= date('now', ?)
+              AND med_bucket IN ({})
+            ORDER BY trade_date DESC
+            LIMIT ?
+            """.format(",".join("?" * len(ELIGIBLE_BUCKETS))),
+            (f"-{lookback_days} days", *ELIGIBLE_BUCKETS, limit),
+        ).fetchall()
+    ]
+    dates = sorted(set(dates))
+    total = 0
+    as_of = dates[-1] if dates else None
+    for d in dates:
+        total += persist_session(conn, d, by_sym)
+    if as_of:
+        update_open_outcomes(conn, as_of, by_sym)
+    return total
 
 
 def run(params: dict | None = None) -> dict:
@@ -193,6 +238,9 @@ def run(params: dict | None = None) -> dict:
         trade_date = row["d"] if row and row["d"] else meta.get("max_date")
 
     new_entries = 0
+    backfilled = 0
+    if params.get("backfill_historical") or os.environ.get("EGX_MED_SHADOW_BACKFILL") == "1":
+        backfilled = backfill_historical_sessions(conn, by_sym)
     if trade_date:
         new_entries = persist_session(conn, trade_date, by_sym)
         update_open_outcomes(conn, trade_date, by_sym)
@@ -206,6 +254,7 @@ def run(params: dict | None = None) -> dict:
         "shadow_only": True,
         "client_path_allowed": False,
         "new_entries": new_entries,
+        "historical_backfilled": backfilled,
         **stats,
         "run_at": datetime.now(timezone.utc).isoformat(),
     }

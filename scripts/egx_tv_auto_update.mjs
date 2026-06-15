@@ -626,6 +626,18 @@ async function main() {
         'MDE behavior memory shadow pilot',
         { critical: false, timeoutMs: 60_000 },
       );
+      run(
+        `${PYTHON3} scripts/python/mde_pilot_stability.py '${JSON.stringify({ trade_date: signalDate })}'`,
+        'MDE pilot stability tracker (Phase 14)',
+        { critical: false, timeoutMs: 30_000 },
+      );
+    }
+    if (process.env.EGX_MED_CLIENT_SHADOW !== '0') {
+      run(
+        `${rePrefix} ${PYTHON3} scripts/python/med_client_signal_probe.py '${JSON.stringify({ trade_date: signalDate })}'`,
+        'MED client signal probe (Phase 14)',
+        { critical: false, timeoutMs: 60_000 },
+      );
     }
   }
   run(

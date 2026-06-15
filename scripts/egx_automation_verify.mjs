@@ -200,8 +200,13 @@ ok('npm egx:phase13:live-validation', npmScripts['egx:phase13:live-validation']?
 ok('script med_client_signal_shadow.py', existsSync(join(PROJECT_ROOT, 'scripts/python/med_client_signal_shadow.py')));
 ok('script med_feed_ab_pilot.py', existsSync(join(PROJECT_ROOT, 'scripts/python/med_feed_ab_pilot.py')));
 ok('script p6_live_kpi.mjs', existsSync(join(PROJECT_ROOT, 'scripts/lib/p6_live_kpi.mjs')));
+ok('npm egx:phase14:graduation', npmScripts['egx:phase14:graduation']?.includes('egx_phase14_graduation.mjs'));
+ok('npm egx:env:activate-phase14', npmScripts['egx:env:activate-phase14']?.includes('egx_env_activate_phase14.mjs'));
+ok('script phase14_graduation.mjs', existsSync(join(PROJECT_ROOT, 'scripts/lib/phase14_graduation.mjs')));
+ok('script med_client_signal_probe.py', existsSync(join(PROJECT_ROOT, 'scripts/python/med_client_signal_probe.py')));
+ok('ops digest p6 kpi', readFileSync(join(PROJECT_ROOT, 'scripts/lib/ops_digest.mjs'), 'utf8').includes('loadP6LiveKpiDigest'));
 ok('eod med daily chain', tvAuto.includes('med_0_3_daily_chain.py'));
-ok('eod med client shadow', tvAuto.includes('med_client_signal_shadow.py'));
+ok('eod med client probe', tvAuto.includes('med_client_signal_probe.py'));
 ok('registry med', reg.includes('med_daily_chain'));
 
 const fail = checks.filter(c => !c.pass).length;
