@@ -608,6 +608,25 @@ async function main() {
       'MED-0.3 status + discovery feed health',
       { critical: false, timeoutMs: 60_000 },
     );
+    if (process.env.EGX_MED_CLIENT_SHADOW !== '0') {
+      run(
+        `${rePrefix} ${PYTHON3} scripts/python/med_client_signal_shadow.py '${JSON.stringify({ trade_date: signalDate })}'`,
+        'MED client signal shadow ledger (Phase 13)',
+        { critical: false, timeoutMs: 60_000 },
+      );
+      run(
+        `${rePrefix} ${PYTHON3} scripts/python/med_feed_ab_pilot.py '${JSON.stringify({ trade_date: signalDate })}'`,
+        'MED feed boost vs penalize A/B pilot',
+        { critical: false, timeoutMs: 60_000 },
+      );
+    }
+    if (process.env.EGX_MDE_PILOT_PROMOTE === '1') {
+      run(
+        `${PYTHON3} scripts/python/mde_pilot_shadow.py '${JSON.stringify({ trade_date: signalDate })}'`,
+        'MDE behavior memory shadow pilot',
+        { critical: false, timeoutMs: 60_000 },
+      );
+    }
   }
   run(
     `${PYTHON3} scripts/python/counterfactual_atom_miner.py`,

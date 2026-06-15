@@ -167,6 +167,12 @@ try {
   console.log(`⚠️  Phase 12 bootstrap: ${e.message?.slice(0, 80)}`);
 }
 
+try {
+  execSync(`"${NODE}" scripts/egx_phase13_live_validation.mjs --skip-phase12`, { cwd: PROJECT_ROOT, stdio: 'inherit', timeout: 180_000 });
+} catch (e) {
+  console.log(`⚠️  Phase 13 live validation: ${e.message?.slice(0, 80)}`);
+}
+
 const digest = { ...buildDeliveryDigest(signalDate), proof_loop: proof };
 const mlBoost = existsSync(join(PROJECT_ROOT, 'data/ml_boost_last.json'))
   ? JSON.parse(readFileSync(join(PROJECT_ROOT, 'data/ml_boost_last.json'), 'utf8'))

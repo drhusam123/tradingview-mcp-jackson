@@ -74,11 +74,11 @@ npm run egx:prod:prepare-send
 
 ---
 
-## Phase 13 — Next
+## Phase 14 — Next (when shadow pilots accumulate)
 
-1. MED client signal shadow ledger (5 sessions forward validation)
-2. MED_FEED_BOOST A/B when MED graduation met
-3. MDE behavior memory pilot after shadow stability
-4. Live KPI dashboard: track 3→30 ULTRA without blocking sends
+1. MED client shadow validation PASS → live MED_CLIENT_SIGNAL probe
+2. MED_FEED_BOOST enable when A/B boost wins ≥5 sessions
+3. MDE behavior memory after 2-week pilot stability
+4. Ops digest live KPI line
 
-**Phase 12 complete. Platform proceeds without waiting for future sessions.**
+**Phase 12 complete. Phase 13 runs automatically.**

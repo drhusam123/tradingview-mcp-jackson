@@ -358,6 +358,8 @@ def score_symbol(
     universe_market_ret20: float,
     opp_tuning: Optional[Dict[str, Any]] = None,
     tv_features: Optional[Dict[str, Any]] = None,
+    lre_feed: Optional[Dict[str, Any]] = None,
+    med_feed: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     if len(rows) < 80 or symbol.startswith("EGX"):
         return None
@@ -494,8 +496,8 @@ def score_symbol(
     # TRADING_LESSONS #2 / A5 — post-breakout session volume collapse
     post_breakout_vol_collapse = False
     if len(rows) >= 6:
-        prior_vols = [float(b.get("volume") or 0) for b in rows[-6:-1]]
-        today_vol = float(rows[-1].get("volume") or 0)
+        prior_vols = [float(b["volume"] or 0) for b in rows[-6:-1]]
+        today_vol = float(rows[-1]["volume"] or 0)
         avg20v = avg_volume(rows, 20) or 0.0
         if prior_vols and avg20v > 0:
             peak = max(prior_vols)
@@ -565,6 +567,30 @@ def score_symbol(
 
     quality_boost = 3.5 if symbol in QUALITY_SYMBOLS_V3 else 0.0
 
+    lre_boost = 0.0
+    lre_evidence: Dict[str, Any] = {}
+    try:
+        from lre_opp_bridge import apply_lre_research_boost
+
+        lre_boost, lre_flags, lre_evidence = apply_lre_research_boost(symbol, lre_feed)
+    except Exception:
+        lre_flags = []
+
+    med_penalty = 0.0
+    med_boost = 0.0
+    med_evidence: Dict[str, Any] = {}
+    med_track = "off"
+    try:
+        from med_opp_bridge import apply_med_research_effect
+
+        med_delta, med_flags, med_evidence, med_track = apply_med_research_effect(symbol, med_feed)
+        if med_track == "boost":
+            med_boost = med_delta
+        else:
+            med_penalty = abs(med_delta)
+    except Exception:
+        med_flags = []
+
     opportunity_score = (
         market_score * 0.10
         + sector_score * 0.14
@@ -578,7 +604,10 @@ def score_symbol(
         + final_boost
         + tv_boost
         + quality_boost
+        + lre_boost
+        + med_boost
         - failure_penalty * 0.38
+        - med_penalty
     )
     opportunity_score = clamp(opportunity_score)
 
@@ -620,6 +649,12 @@ def score_symbol(
             flags.append(flag)
     if symbol in QUALITY_SYMBOLS_V3:
         flags.append("QUALITY_V3")
+    for lf in lre_flags:
+        if lf not in flags:
+            flags.append(lf)
+    for mf in med_flags:
+        if mf not in flags:
+            flags.append(mf)
     if recent_wick_fail:
         flags.append("RECENT_WICK_FAIL")
     if post_breakout_vol_collapse:
@@ -668,6 +703,10 @@ def score_symbol(
         "tv_score": safe_float(tv_features["tv_score"] if tv_features and "tv_score" in tv_features.keys() else None, None),
         "quality_v3": symbol in QUALITY_SYMBOLS_V3,
     }
+    if lre_evidence:
+        evidence["lre_research_feed"] = lre_evidence
+    if med_evidence:
+        evidence["med_research_feed"] = med_evidence
 
     return {
         "trade_date": bar_date(latest["bar_time"]),
@@ -768,6 +807,22 @@ def run(params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     universe_market_ret20 = median([x for x in rets if x is not None]) if rets else 0.0
 
     hn_syms = opp_tuning.get("hard_negative_symbols") or set()
+    lre_feed_map: Dict[str, dict] = {}
+    try:
+        from lre_opp_bridge import load_lre_feed_map
+
+        lre_feed_map = load_lre_feed_map(db, trade_date)
+    except Exception:
+        lre_feed_map = {}
+
+    med_feed_map: Dict[str, dict] = {}
+    try:
+        from med_opp_bridge import load_med_feed_map
+
+        med_feed_map = load_med_feed_map(db, trade_date)
+    except Exception:
+        med_feed_map = {}
+
     rows_out = []
     for symbol, rows in by_symbol.items():
         if symbol in hn_syms:
@@ -786,6 +841,8 @@ def run(params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
             universe_market_ret20,
             opp_tuning=opp_tuning,
             tv_features=tv_feat.get(symbol),
+            lre_feed=lre_feed_map.get(symbol),
+            med_feed=med_feed_map.get(symbol),
         )
         if item:
             rows_out.append(item)

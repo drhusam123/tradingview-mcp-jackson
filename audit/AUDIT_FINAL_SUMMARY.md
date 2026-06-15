@@ -21,6 +21,7 @@
 | 10 | [PHASE_10_CLIENT_BETA_READINESS_REPORT.md](./PHASE_10_CLIENT_BETA_READINESS_REPORT.md) | Graduation gates · phase10 bundle · post-session wired |
 | 11 | [PHASE_11_RESEARCH_CLIENT_PROMOTION_REPORT.md](./PHASE_11_RESEARCH_CLIENT_PROMOTION_REPORT.md) | Dynamic research env · MDE shadow bridge · phase11 promotion |
 | 12 | [PHASE_12_HISTORICAL_BOOTSTRAP_REPORT.md](./PHASE_12_HISTORICAL_BOOTSTRAP_REPORT.md) | OHLCV bootstrap graduation · no live-session wait |
+| 13 | [PHASE_13_LIVE_VALIDATION_REPORT.md](./PHASE_13_LIVE_VALIDATION_REPORT.md) | MED shadow ledger · feed A/B · MDE pilot · live KPI |
 
 ---
 

@@ -196,7 +196,12 @@ ok('npm egx:med:run', Boolean(npmScripts['egx:med:run']));
 ok('npm egx:ohlcv:catchup', Boolean(npmScripts['egx:ohlcv:catchup']));
 ok('npm egx:ohlcv:hygiene', Boolean(npmScripts['egx:ohlcv:hygiene']));
 ok('npm egx:notify:correction', Boolean(npmScripts['egx:notify:correction']));
+ok('npm egx:phase13:live-validation', npmScripts['egx:phase13:live-validation']?.includes('egx_phase13_live_validation.mjs'));
+ok('script med_client_signal_shadow.py', existsSync(join(PROJECT_ROOT, 'scripts/python/med_client_signal_shadow.py')));
+ok('script med_feed_ab_pilot.py', existsSync(join(PROJECT_ROOT, 'scripts/python/med_feed_ab_pilot.py')));
+ok('script p6_live_kpi.mjs', existsSync(join(PROJECT_ROOT, 'scripts/lib/p6_live_kpi.mjs')));
 ok('eod med daily chain', tvAuto.includes('med_0_3_daily_chain.py'));
+ok('eod med client shadow', tvAuto.includes('med_client_signal_shadow.py'));
 ok('registry med', reg.includes('med_daily_chain'));
 
 const fail = checks.filter(c => !c.pass).length;
